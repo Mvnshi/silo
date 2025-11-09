@@ -31,6 +31,7 @@ import {
   Platform,
   TextInput,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -59,7 +60,7 @@ import { requestCalendarPermissions, scheduleItemReview } from '@/lib/scheduler'
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-type ViewMode = 'calendar' | 'map';
+type ViewMode = 'calendar' | 'map' | 'bucketlist';
 type CalendarViewMode = 'day' | 'week';
 
 interface CalendarEvent {
@@ -79,6 +80,7 @@ export default function CalendarScreen() {
   const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>('day');
   const [items, setItems] = useState<Item[]>([]);
   const [allItems, setAllItems] = useState<Item[]>([]);
+  const [bucketlistItems, setBucketlistItems] = useState<Item[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 0 }));
@@ -140,6 +142,12 @@ export default function CalendarScreen() {
         item => item.scheduled_date && !item.archived
       );
       setItems(scheduledItems);
+
+      // Filter bucket list items
+      const bucketItems = loadedItems.filter(
+        item => item.bucketlist && !item.archived
+      );
+      setBucketlistItems(bucketItems);
 
       // Load calendar events (after items are set)
       await loadCalendarEvents();
@@ -238,10 +246,66 @@ export default function CalendarScreen() {
 
   /**
    * Get items with location data for map view
+   * Also geocode items that have addresses but no coordinates
    */
-  const itemsWithLocations = allItems.filter(
-    item => (item.place_name || item.place_address) && item.place_latitude && item.place_longitude
-  );
+  const [itemsWithLocations, setItemsWithLocations] = useState<Item[]>([]);
+
+  // Geocode items with addresses but no coordinates
+  useEffect(() => {
+    async function geocodeItems() {
+      const itemsToGeocode = allItems.filter(
+        item => (item.place_name || item.place_address) && !item.place_latitude && !item.place_longitude
+      );
+
+      if (itemsToGeocode.length === 0) {
+        // No items to geocode, just set the locations list
+        const itemsWithCoords = allItems.filter(
+          item => (item.place_name || item.place_address) && item.place_latitude && item.place_longitude
+        );
+        setItemsWithLocations(itemsWithCoords);
+        return;
+      }
+
+      // Geocode items that need coordinates
+      let geocodedCount = 0;
+      for (const item of itemsToGeocode) {
+        try {
+          const addressToGeocode = item.place_address || item.place_name || '';
+          if (addressToGeocode) {
+            const geocoded = await Location.geocodeAsync(addressToGeocode);
+            if (geocoded && geocoded.length > 0) {
+              const { latitude, longitude } = geocoded[0];
+              await updateItem(item.id, {
+                place_latitude: latitude,
+                place_longitude: longitude,
+              });
+              console.log(`📍 Geocoded ${addressToGeocode}: ${latitude}, ${longitude}`);
+              geocodedCount++;
+            }
+          }
+        } catch (error) {
+          console.warn(`Failed to geocode ${item.title}:`, error);
+        }
+      }
+
+      // Reload items if we geocoded any
+      if (geocodedCount > 0) {
+        const reloadedItems = await getItems();
+        setAllItems(reloadedItems.filter(item => !item.archived));
+      }
+
+      // Update items with locations (now includes newly geocoded items)
+      const reloadedItems = geocodedCount > 0 ? await getItems() : allItems;
+      const itemsWithCoords = reloadedItems.filter(
+        item => (item.place_name || item.place_address) && item.place_latitude && item.place_longitude
+      );
+      setItemsWithLocations(itemsWithCoords);
+    }
+
+    if (allItems.length > 0) {
+      geocodeItems();
+    }
+  }, [allItems]);
 
   /**
    * Get items scheduled for a specific date
@@ -330,10 +394,68 @@ export default function CalendarScreen() {
     router.push(`/item/${itemId}?from=calendar`);
   }
 
+  /**
+   * Toggle bucket list status for an item
+   */
+  async function handleToggleBucketlist(itemId: string) {
+    try {
+      const item = allItems.find(i => i.id === itemId);
+      if (!item) return;
+
+      const newBucketlistStatus = !item.bucketlist;
+      await updateItem(itemId, { bucketlist: newBucketlistStatus });
+      await loadItems();
+      
+      Haptics.notificationAsync(
+        newBucketlistStatus 
+          ? Haptics.NotificationFeedbackType.Success 
+          : Haptics.NotificationFeedbackType.Warning
+      );
+    } catch (error) {
+      console.error('Failed to toggle bucket list:', error);
+      Alert.alert('Error', 'Failed to update bucket list');
+    }
+  }
+
+  /**
+   * Toggle bucket list completion status for an item
+   */
+  async function handleToggleBucketlistComplete(itemId: string) {
+    try {
+      const item = bucketlistItems.find(i => i.id === itemId);
+      if (!item) return;
+
+      const newCompletedStatus = !item.bucketlist_completed;
+      await updateItem(itemId, { bucketlist_completed: newCompletedStatus });
+      await loadItems();
+      
+      if (newCompletedStatus) {
+        // Celebration haptic for completion
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch (error) {
+      console.error('Failed to toggle bucket list completion:', error);
+      Alert.alert('Error', 'Failed to update completion status');
+    }
+  }
+
   const weekDays = getWeekDays();
 
   return (
     <View style={styles.container}>
+      {/* Gradient Background */}
+      <LinearGradient
+        colors={['#B4E8F5', '#D7F5FF', '#F0F9FF']}
+        style={StyleSheet.absoluteFill}
+      />
       {/* Header with Segmented Control */}
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <View style={styles.segmentedControl}>
@@ -386,10 +508,35 @@ export default function CalendarScreen() {
               Map
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.segment,
+              viewMode === 'bucketlist' && styles.segmentActive,
+            ]}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setViewMode('bucketlist');
+            }}
+          >
+            <Ionicons
+              name="list-outline"
+              size={18}
+              color={viewMode === 'bucketlist' ? '#fff' : '#666'}
+            />
+            <Text
+              style={[
+                styles.segmentText,
+                viewMode === 'bucketlist' && styles.segmentTextActive,
+              ]}
+            >
+              Bucket List
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
 
-      {viewMode === 'calendar' ? (
+      {viewMode === 'calendar' && (
         <View style={styles.calendarContainer}>
           {/* View Mode Toggle (Day/Week) */}
           <View style={styles.viewModeToggle}>
@@ -732,7 +879,9 @@ export default function CalendarScreen() {
             })()}
           </View>
         </View>
-      ) : (
+      )}
+
+      {viewMode === 'map' && (
         /* Map View */
         <View style={styles.mapContainer}>
           <MapView
@@ -815,6 +964,61 @@ export default function CalendarScreen() {
                 contentInsetAdjustmentBehavior="automatic"
               />
             </View>
+          )}
+        </View>
+      )}
+
+      {viewMode === 'bucketlist' && (
+        <View style={styles.bucketlistContainer}>
+          <View style={styles.bucketlistHeader}>
+            <Text style={styles.bucketlistTitle}>
+              Bucket List ({bucketlistItems.length})
+            </Text>
+            <Text style={styles.bucketlistSubtitle}>
+              Things you want to do when the circumstances are right
+            </Text>
+          </View>
+
+          {bucketlistItems.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="list-outline" size={64} color="#ccc" />
+              <Text style={styles.emptyText}>No bucket list items yet</Text>
+              <Text style={styles.emptySubtext}>
+                Hold down on any card to add it to your bucket list
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={bucketlistItems}
+              renderItem={({ item }) => (
+                <View style={styles.bucketlistItemWrapper}>
+                  <TouchableOpacity
+                    style={styles.bucketlistCheckbox}
+                    onPress={() => handleToggleBucketlistComplete(item.id)}
+                  >
+                    <Ionicons
+                      name={item.bucketlist_completed ? 'checkbox' : 'checkbox-outline'}
+                      size={24}
+                      color={item.bucketlist_completed ? '#4cd964' : '#999'}
+                    />
+                  </TouchableOpacity>
+                  <View style={styles.bucketlistItemContent}>
+                    <ItemCard
+                      item={item}
+                      onPress={handleItemPress}
+                      onLongPress={handleToggleBucketlist}
+                      isCompleted={item.bucketlist_completed}
+                    />
+                  </View>
+                </View>
+              )}
+              keyExtractor={item => item.id}
+              contentContainerStyle={[
+                styles.bucketlistContent,
+                { paddingBottom: insets.bottom + 120 }
+              ]}
+              contentInsetAdjustmentBehavior="automatic"
+            />
           )}
         </View>
       )}
@@ -991,9 +1195,14 @@ const styles = StyleSheet.create({
   },
   segmentedControl: {
     flexDirection: 'row',
-    backgroundColor: '#f0f0f0',
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
     borderRadius: 10,
     padding: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   segment: {
     flex: 1,
@@ -1047,7 +1256,15 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   dayViewContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderRadius: 20,
+    margin: 12,
+    marginTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   dayHeader: {
     flexDirection: 'row',
@@ -1082,7 +1299,15 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   weekViewContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderRadius: 20,
+    margin: 12,
+    marginTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   weekViewHeader: {
     flexDirection: 'row',
@@ -1193,10 +1418,15 @@ const styles = StyleSheet.create({
   eventCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
     padding: 12,
     borderRadius: 12,
     marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   eventCardIcon: {
     width: 40,
@@ -1259,13 +1489,13 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     maxHeight: SCREEN_HEIGHT * 0.4,
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 8,
   },
@@ -1371,6 +1601,59 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  bucketlistContainer: {
+    flex: 1,
+  },
+  bucketlistHeader: {
+    padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  bucketlistTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 4,
+  },
+  bucketlistSubtitle: {
+    fontSize: 14,
+    color: '#666',
+  },
+  bucketlistContent: {
+    padding: 16,
+  },
+  bucketlistItemWrapper: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  bucketlistCheckbox: {
+    marginRight: 12,
+    marginTop: 8,
+    padding: 4,
+  },
+  bucketlistItemContent: {
+    flex: 1,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
   },
 });
 

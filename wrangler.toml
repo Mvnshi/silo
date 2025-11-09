@@ -6,14 +6,8 @@ name = "silo-api"
 main = "workers/index.ts"
 compatibility_date = "2024-01-01"
 
-# Production environment configuration
-[env.production]
-# Public variables (non-sensitive)
-vars = { 
-  GEMINI_API_KEY = ""  # Set this via Cloudflare dashboard or CLI
-}
-
 # Secrets (set via: wrangler secret put SECRET_NAME)
+# All API keys and credentials should be set as secrets, not public variables
 # - ELEVENLABS_API_KEY: ElevenLabs API key for text-to-speech
 # - ELEVENLABS_VOICE_ID: Voice ID for ElevenLabs TTS
 # - VULTR_ACCESS_KEY: Vultr Object Storage access key

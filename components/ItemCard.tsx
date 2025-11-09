@@ -44,9 +44,10 @@ interface ItemCardProps {
   onSwipeLeft?: (itemId: string) => void;
   onSwipeRight?: (itemId: string) => void;
   showStack?: boolean;
+  isCompleted?: boolean;
 }
 
-export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSwipeRight, showStack = false }: ItemCardProps) {
+export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSwipeRight, showStack = false, isCompleted = false }: ItemCardProps) {
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
 
@@ -216,13 +217,13 @@ export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSw
         </View>
 
         {/* Title */}
-        <Text style={styles.title} numberOfLines={2}>
+        <Text style={[styles.title, isCompleted && styles.titleCompleted]} numberOfLines={2}>
           {item.title}
         </Text>
 
         {/* Description */}
         {item.description && (
-          <Text style={styles.description} numberOfLines={2}>
+          <Text style={[styles.description, isCompleted && styles.descriptionCompleted]} numberOfLines={2}>
             {item.description}
           </Text>
         )}
@@ -263,6 +264,14 @@ export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSw
                 name="checkmark-circle" 
                 size={16} 
                 color="#4cd964" 
+                style={{ marginLeft: 8 }}
+              />
+            )}
+            {item.bucketlist && (
+              <Ionicons 
+                name="list" 
+                size={16} 
+                color="#FF6B6B" 
                 style={{ marginLeft: 8 }}
               />
             )}
@@ -376,6 +385,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999',
     marginLeft: 2,
+  },
+  titleCompleted: {
+    textDecorationLine: 'line-through',
+    opacity: 0.6,
+  },
+  descriptionCompleted: {
+    textDecorationLine: 'line-through',
+    opacity: 0.6,
   },
 });
 

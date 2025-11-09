@@ -24,6 +24,7 @@ const KEYS = {
   STACKS: '@silo:stacks',
   SETTINGS: '@silo:settings',
   EVENTS: '@silo:events',
+  USER_ID: '@silo:userId',
 };
 
 /**
@@ -215,6 +216,25 @@ export async function saveEvents(events: ScheduledEvent[]): Promise<void> {
   } catch (error) {
     console.error('Failed to save events:', error);
     throw new Error('Failed to save events');
+  }
+}
+
+/**
+ * Get or create user ID
+ */
+export async function getUserId(): Promise<string> {
+  try {
+    let userId = await AsyncStorage.getItem(KEYS.USER_ID);
+    if (!userId) {
+      // Generate a unique user ID
+      userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      await AsyncStorage.setItem(KEYS.USER_ID, userId);
+    }
+    return userId;
+  } catch (error) {
+    console.error('Failed to get user ID:', error);
+    // Fallback to a device-based ID
+    return `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }
 

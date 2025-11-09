@@ -99,13 +99,28 @@ export async function analyzeLink(url: string): Promise<AnalyzeLinkResponse> {
     });
 
     if (!response.ok) {
-      const errorData = (await response.json()) as ApiErrorResponse;
-      throw new Error(errorData.error || 'Failed to analyze link');
+      const errorText = await response.text();
+      let errorData: ApiErrorResponse;
+      try {
+        errorData = JSON.parse(errorText) as ApiErrorResponse;
+          } catch {
+            // If we can't parse the error, use the status code
+            if (response.status === 403) {
+              throw new Error('This website blocks automated requests. Try copying the content manually or use a different URL.');
+            }
+            throw new Error(`Failed to analyze link: ${response.status} ${errorText}`);
+          }
+          // Use the user-friendly error message from the worker
+          throw new Error(errorData.error || 'Failed to analyze link');
     }
 
     return (await response.json()) as AnalyzeLinkResponse;
   } catch (error) {
-    return handleApiError(error);
+    // Don't throw - let caller handle gracefully
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Failed to analyze link');
   }
 }
 
@@ -132,13 +147,25 @@ export async function generateAudio(
     });
 
     if (!response.ok) {
-      const errorData = (await response.json()) as ApiErrorResponse;
+      const errorText = await response.text();
+      let errorData: ApiErrorResponse;
+      try {
+        errorData = JSON.parse(errorText) as ApiErrorResponse;
+      } catch {
+        throw new Error(`Failed to generate audio: ${response.status} ${errorText}`);
+      }
       throw new Error(errorData.error || 'Failed to generate audio');
     }
 
     return (await response.json()) as GenerateAudioResponse;
   } catch (error) {
-    return handleApiError(error);
+    // Don't throw - let caller handle gracefully (audio is optional)
+    console.warn('Audio generation failed (optional feature):', error);
+    // Return a promise that rejects, but caller should catch it
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Failed to generate audio');
   }
 }
 
@@ -272,6 +299,137 @@ export async function downloadInstagram(
     return (await response.json()) as InstagramDownloadResponse;
   } catch (error) {
     return handleApiError(error);
+  }
+}
+
+/**
+ * Generate embedding for a content item
+ * 
+ * @param userId - User ID (device ID or user identifier)
+ * @param itemId - Item ID
+ * @param title - Item title
+ * @param description - Item description (optional)
+ * @param tags - Item tags (optional)
+ * @returns Embedding vector and storage status
+ */
+export async function generateEmbedding(data: {
+  userId: string;
+  itemId: string;
+  title: string;
+  description?: string;
+  tags?: string[];
+}): Promise<{ embedding: number[]; stored: boolean }> {
+  try {
+    if (!isApiConfigured()) {
+      throw new Error('API base URL not configured');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/generate-embedding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorData: ApiErrorResponse;
+      try {
+        errorData = JSON.parse(errorText) as ApiErrorResponse;
+      } catch {
+        // If quota exceeded, return empty embedding instead of throwing
+        if (response.status === 429) {
+          return { embedding: [], stored: false };
+        }
+        throw new Error(`Failed to generate embedding: ${response.status} ${errorText}`);
+      }
+      // If quota exceeded, return empty embedding instead of throwing
+      if (response.status === 429 || errorData.details?.includes('quota')) {
+        return { embedding: [], stored: false };
+      }
+      throw new Error(errorData.error || 'Failed to generate embedding');
+    }
+
+    return (await response.json()) as { embedding: number[]; stored: boolean };
+  } catch (error) {
+    // Don't throw - return empty embedding for graceful failure
+    console.warn('Embedding generation failed (optional feature):', error);
+    return { embedding: [], stored: false };
+  }
+}
+
+/**
+ * Query personal RAG model
+ * 
+ * @param userId - User ID
+ * @param query - User's question
+ * @param suggestEvent - Whether to suggest calendar events
+ * @returns Answer, sources, and optional event suggestion
+ */
+export async function ragQuery(data: {
+  userId: string;
+  query: string;
+  suggestEvent?: boolean;
+  items?: Array<{ id: string; title: string; description?: string; tags?: string[]; classification?: string }>; // Optional: send items for fallback
+}): Promise<{
+  answer: string;
+  sources: Array<{
+    itemId: string;
+    title: string;
+    description?: string;
+    relevance: number;
+  }>;
+  suggestedEvent?: {
+    title: string;
+    date: string;
+    time: string;
+    description: string;
+  };
+}> {
+  try {
+    if (!isApiConfigured()) {
+      throw new Error('API base URL not configured');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/rag-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorData: ApiErrorResponse;
+      try {
+        errorData = JSON.parse(errorText) as ApiErrorResponse;
+      } catch {
+        throw new Error(`Failed to process query: ${response.status} ${errorText}`);
+      }
+      // If it's a quota error, the worker should handle it with fallback
+      // But if we get here, the worker already failed, so just throw
+      throw new Error(errorData.error || 'Failed to process query');
+    }
+
+    return (await response.json()) as {
+      answer: string;
+      sources: Array<{
+        itemId: string;
+        title: string;
+        description?: string;
+        relevance: number;
+      }>;
+      suggestedEvent?: {
+        title: string;
+        date: string;
+        time: string;
+        description: string;
+      };
+    };
+  } catch (error) {
+    // Don't throw - let caller handle gracefully
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Failed to process query');
   }
 }
 

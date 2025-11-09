@@ -16,7 +16,7 @@
  * - expo-image-picker: Image selection
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -27,6 +27,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -46,9 +47,10 @@ import {
   getMimeTypeFromFilename,
   Screenshot,
 } from '@/lib/screenshots';
-import { analyzeImage, generateAudio } from '@/lib/api';
-import { addItem } from '@/lib/storage';
+import { analyzeImage, generateAudio, suggestScheduleTime, generateEmbedding } from '@/lib/api';
+import { addItem, getUserId } from '@/lib/storage';
 import { Item } from '@/lib/types';
+import { scheduleItemReview } from '@/lib/scheduler';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
@@ -66,6 +68,10 @@ export default function ScreenshotsScreen() {
   const translateY = useSharedValue(0);
   const rotate = useSharedValue(0);
   const opacity = useSharedValue(1);
+  
+  // Haptic feedback - use shared values to avoid worklet warnings
+  const hapticIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastHapticTime = useSharedValue(0);
 
   /**
    * Load recent screenshots from device
@@ -137,10 +143,48 @@ export default function ScreenshotsScreen() {
   async function handleSwipeRight(screenshot: Screenshot) {
     try {
       setLoading(true);
-      await importScreenshot(screenshot);
+      const item = await importScreenshot(screenshot);
       moveToNext();
       // Celebration haptic for successful import
       celebrationHaptic();
+      
+      // Suggest calendar event
+      try {
+        const suggestion = await suggestScheduleTime({
+          title: item.title,
+          classification: item.classification || 'other',
+          description: item.description,
+          duration: item.duration,
+        });
+        
+        // Show alert with suggestion
+        Alert.alert(
+          'Schedule this item?',
+          `${suggestion.reason}\n\nDate: ${suggestion.date}\nTime: ${suggestion.time}`,
+          [
+            {
+              text: 'No thanks',
+              style: 'cancel',
+            },
+            {
+              text: 'Add to Calendar',
+              onPress: async () => {
+                try {
+                  await scheduleItemReview(item, suggestion.date, suggestion.time, item.duration || 15);
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  Alert.alert('Success', 'Event added to calendar');
+                } catch (error) {
+                  console.error('Failed to schedule event:', error);
+                  Alert.alert('Error', 'Failed to add event to calendar');
+                }
+              },
+            },
+          ]
+        );
+      } catch (error) {
+        console.warn('Failed to suggest schedule:', error);
+        // Don't show error - schedule suggestion is optional
+      }
     } catch (error) {
       console.error('Failed to import screenshot:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -188,22 +232,83 @@ export default function ScreenshotsScreen() {
         archived: false,
       };
 
-      // Generate audio if script is available
+      // Generate audio if script is available (optional - fail gracefully)
       if (analysis.script) {
         try {
           const audioResponse = await generateAudio(analysis.script, item.id);
           item.audio_url = audioResponse.audioUrl;
         } catch (error) {
-          console.error('Failed to generate audio:', error);
-          // Continue without audio
+          console.warn('Audio generation failed (continuing without audio):', error instanceof Error ? error.message : error);
+          // Continue without audio - this is optional functionality
         }
+      }
+
+      // Generate embedding for RAG (async, don't wait)
+      try {
+        const userId = await getUserId();
+        generateEmbedding({
+          userId,
+          itemId: item.id,
+          title: item.title,
+          description: item.description,
+          tags: item.tags,
+        }).catch(error => {
+          console.warn('Failed to generate embedding:', error);
+          // Don't show error to user, embedding is optional
+        });
+      } catch (error) {
+        console.warn('Failed to generate embedding:', error);
       }
 
       // Save item
       await addItem(item);
+
+      // Suggest calendar event after import
+      return item;
     } catch (error) {
       console.error('Failed to import screenshot:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Progressive haptic feedback - gets faster as card is dragged further
+   * Creates a "stretching" vibration feeling that intensifies with distance
+   */
+  function triggerProgressiveHaptic(dragDistance: number, lastTime: number) {
+    const absDistance = Math.abs(dragDistance);
+    
+    // Only trigger haptics if dragging significantly
+    if (absDistance < 15) {
+      return;
+    }
+
+    // Calculate haptic frequency based on distance
+    // Closer to center = slower, further = faster
+    // Max distance is about SCREEN_WIDTH/2, so we map that to intervals
+    const maxDistance = SCREEN_WIDTH * 0.4;
+    const normalizedDistance = Math.min(absDistance / maxDistance, 1);
+    
+    // Interval ranges from 120ms (slow) to 30ms (fast) as you drag further
+    // This creates the "stretching" effect - faster vibration = more tension
+    const interval = 120 - (normalizedDistance * 90);
+    
+    // Use different haptic intensities based on distance
+    // Light for small drags, medium for medium, heavy for large
+    let hapticStyle: Haptics.ImpactFeedbackStyle;
+    if (normalizedDistance < 0.33) {
+      hapticStyle = Haptics.ImpactFeedbackStyle.Light;
+    } else if (normalizedDistance < 0.66) {
+      hapticStyle = Haptics.ImpactFeedbackStyle.Medium;
+    } else {
+      hapticStyle = Haptics.ImpactFeedbackStyle.Heavy;
+    }
+    
+    const now = Date.now();
+    if (now - lastTime >= interval) {
+      // Use impact haptic for the "stretching" feel - more tactile
+      Haptics.impactAsync(hapticStyle);
+      lastHapticTime.value = now;
     }
   }
 
@@ -213,9 +318,22 @@ export default function ScreenshotsScreen() {
   let panGesture: ReturnType<typeof Gesture.Pan> | null = null;
   try {
     panGesture = Gesture.Pan()
+      .onStart(() => {
+        // Clear any existing haptic interval
+        if (hapticIntervalRef.current) {
+          clearInterval(hapticIntervalRef.current);
+          hapticIntervalRef.current = null;
+        }
+        lastHapticTime.value = 0;
+      })
       .onUpdate((event) => {
         translateX.value = event.translationX;
         translateY.value = event.translationY;
+        
+        // Progressive haptic feedback - gets faster as you drag
+        // Pass the shared value's current value to avoid worklet warnings
+        runOnJS(triggerProgressiveHaptic)(event.translationX, lastHapticTime.value);
+        
         // More natural rotation like Tinder
         rotate.value = interpolate(
           event.translationX,
@@ -225,6 +343,11 @@ export default function ScreenshotsScreen() {
         );
       })
       .onEnd((event) => {
+        // Clear haptic interval when gesture ends
+        if (hapticIntervalRef.current) {
+          clearInterval(hapticIntervalRef.current);
+          hapticIntervalRef.current = null;
+        }
         const shouldSwipeRight = event.translationX > SWIPE_THRESHOLD;
         const shouldSwipeLeft = event.translationX < -SWIPE_THRESHOLD;
 
@@ -388,6 +511,12 @@ export default function ScreenshotsScreen() {
 
   return (
     <GestureHandlerRootView style={styles.container}>
+      {/* Gradient Background */}
+      <LinearGradient
+        colors={['#E8B4E8', '#F5D7F5', '#FFF0F5']}
+        style={StyleSheet.absoluteFill}
+      />
+      
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <Text style={styles.headerTitle}>
@@ -401,12 +530,12 @@ export default function ScreenshotsScreen() {
       {/* Swipeable Cards */}
       {loading && currentIndex === 0 ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color="#E8B4E8" />
           <Text style={styles.loadingText}>Loading screenshots...</Text>
         </View>
       ) : screenshots.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="images-outline" size={64} color="#ccc" />
+          <Ionicons name="images-outline" size={64} color="#D4A5D4" />
           <Text style={styles.emptyText}>No screenshots found</Text>
           <Text style={styles.emptySubtext}>
             Take screenshots to import them here
@@ -424,23 +553,20 @@ export default function ScreenshotsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   header: {
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
     alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    color: '#333',
+    color: '#5A3A5A',
   },
   headerSubtitle: {
     fontSize: 14,
-    color: '#666',
+    color: '#8B6B8B',
     marginTop: 4,
   },
   cardContainer: {
@@ -453,25 +579,26 @@ const styles = StyleSheet.create({
   card: {
     width: CARD_WIDTH,
     height: CARD_HEIGHT,
-    borderRadius: 16,
+    borderRadius: 24,
     backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 10,
+    shadowColor: '#E8B4E8',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 12,
     position: 'absolute',
     top: 0,
+    overflow: 'hidden',
   },
   cardImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 16,
-    backgroundColor: '#e0e0e0',
+    borderRadius: 24,
+    backgroundColor: '#f0f0f0',
   },
   swipeOverlay: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: 16,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -511,23 +638,28 @@ const styles = StyleSheet.create({
   emptyCard: {
     width: CARD_WIDTH,
     height: CARD_HEIGHT,
-    borderRadius: 16,
+    borderRadius: 24,
     backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 32,
     position: 'absolute',
     top: 0,
+    shadowColor: '#E8B4E8',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 12,
   },
   emptyCardText: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#333',
+    color: '#5A3A5A',
     marginTop: 16,
   },
   emptyCardSubtext: {
     fontSize: 16,
-    color: '#666',
+    color: '#8B6B8B',
     marginTop: 8,
     textAlign: 'center',
   },
@@ -538,7 +670,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
-    color: '#666',
+    color: '#8B6B8B',
     marginTop: 16,
   },
   emptyContainer: {
@@ -550,12 +682,12 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#666',
+    color: '#5A3A5A',
     marginTop: 16,
   },
   emptySubtext: {
     fontSize: 14,
-    color: '#999',
+    color: '#8B6B8B',
     marginTop: 8,
     textAlign: 'center',
   },

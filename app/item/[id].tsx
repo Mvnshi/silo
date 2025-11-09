@@ -31,6 +31,8 @@ import {
   Modal,
   Platform,
   Dimensions,
+  TextInput,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -40,13 +42,14 @@ import { format } from 'date-fns';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
   runOnJS,
 } from 'react-native-reanimated';
-import { Item } from '@/lib/types';
+import { Item, ChecklistItem } from '@/lib/types';
 import { getItemById, updateItem, deleteItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
 
@@ -63,6 +66,13 @@ export default function ItemDetailScreen() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showScheduleModal, setShowScheduleModal] = useState(schedule === 'true');
+  
+  // Editing state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [editingDescription, setEditingDescription] = useState('');
+  const [editingNotes, setEditingNotes] = useState('');
+  const [saving, setSaving] = useState(false);
   
   // Swipe gesture values
   const translateX = useSharedValue(0);
@@ -91,6 +101,13 @@ export default function ItemDetailScreen() {
       const loadedItem = await getItemById(id);
       setItem(loadedItem);
       
+      // Initialize editing state
+      if (loadedItem) {
+        setEditingTitle(loadedItem.title);
+        setEditingDescription(loadedItem.description || '');
+        setEditingNotes(loadedItem.notes || '');
+      }
+      
       // Don't auto-mark as viewed - user marks as done via swipe
       
       // If schedule param is true, open schedule modal after item loads
@@ -117,6 +134,60 @@ export default function ItemDetailScreen() {
       Alert.alert('Error', 'Failed to load item');
     } finally {
       setLoading(false);
+    }
+  }
+
+  /**
+   * Start editing mode
+   */
+  function handleStartEdit() {
+    if (item) {
+      setIsEditing(true);
+      setEditingTitle(item.title);
+      setEditingDescription(item.description || '');
+      setEditingNotes(item.notes || '');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }
+
+  /**
+   * Cancel editing
+   */
+  function handleCancelEdit() {
+    if (item) {
+      setIsEditing(false);
+      setEditingTitle(item.title);
+      setEditingDescription(item.description || '');
+      setEditingNotes(item.notes || '');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }
+
+  /**
+   * Save edits
+   */
+  async function handleSaveEdit() {
+    if (!item || !editingTitle.trim()) {
+      Alert.alert('Error', 'Title cannot be empty');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await updateItem(id, {
+        title: editingTitle.trim(),
+        description: editingDescription.trim() || undefined,
+        notes: editingNotes.trim() || undefined,
+      });
+      await loadItem();
+      setIsEditing(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Success', 'Changes saved');
+    } catch (error) {
+      console.error('Failed to save edits:', error);
+      Alert.alert('Error', 'Failed to save changes');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -389,18 +460,53 @@ export default function ItemDetailScreen() {
           >
             <Ionicons name="arrow-back" size={24} color="#333" />
           </TouchableOpacity>
-            <Text style={styles.headerTitle}>Item Details</Text>
-            <View style={styles.headerSpacer} />
-          </View>
+          <Text style={styles.headerTitle}>Item Details</Text>
+          {!isEditing ? (
+            <TouchableOpacity
+              style={styles.editButton}
+              onPress={handleStartEdit}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="create-outline" size={24} color="#007AFF" />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.editActions}>
+              <TouchableOpacity
+                style={styles.editActionButton}
+                onPress={handleCancelEdit}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.editActionText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.editActionButton, styles.saveButtonHeader]}
+                onPress={handleSaveEdit}
+                disabled={saving}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                {saving ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonTextHeader}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
 
         {/* Gesture detector only wraps the scrollable content, not the header */}
         <GestureDetector gesture={panGesture}>
-          <View style={{ flex: 1 }}>
+          <KeyboardAvoidingView 
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={insets.top + 60}
+          >
             <ScrollView 
               style={styles.scrollView} 
               contentContainerStyle={styles.content}
               bounces={true}
               showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
             >
         {/* Image */}
         {item.imageUri && (
@@ -418,11 +524,41 @@ export default function ItemDetailScreen() {
       </View>
 
       {/* Title */}
-      <Text style={styles.title}>{item.title}</Text>
+      {isEditing ? (
+        <View style={styles.editingSection}>
+          <Text style={styles.editingLabel}>Title</Text>
+          <TextInput
+            style={styles.editingInput}
+            value={editingTitle}
+            onChangeText={setEditingTitle}
+            placeholder="Item title"
+            placeholderTextColor="#999"
+            multiline={false}
+          />
+        </View>
+      ) : (
+        <Text style={styles.title}>{item.title}</Text>
+      )}
 
       {/* Description */}
-      {item.description && (
-        <Text style={styles.description}>{item.description}</Text>
+      {isEditing ? (
+        <View style={styles.editingSection}>
+          <Text style={styles.editingLabel}>Description</Text>
+          <TextInput
+            style={[styles.editingInput, styles.editingTextArea]}
+            value={editingDescription}
+            onChangeText={setEditingDescription}
+            placeholder="Add a description..."
+            placeholderTextColor="#999"
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+          />
+        </View>
+      ) : (
+        item.description && (
+          <Text style={styles.description}>{item.description}</Text>
+        )
       )}
 
       {/* Audio Player */}
@@ -476,6 +612,96 @@ export default function ItemDetailScreen() {
           </View>
         </View>
       )}
+
+      {/* Checklist Section */}
+      {item.checklist && item.checklist.length > 0 && (
+        <View style={styles.checklistSection}>
+          <View style={styles.checklistHeader}>
+            <Ionicons 
+              name={item.classification === 'fitness' ? 'fitness-outline' : 
+                    item.classification === 'food' ? 'restaurant-outline' :
+                    item.classification === 'academia' ? 'school-outline' :
+                    item.classification === 'career' ? 'briefcase-outline' : 'checkmark-circle-outline'} 
+              size={20} 
+              color="#666" 
+            />
+            <Text style={styles.sectionTitle}>
+              {item.classification === 'fitness' ? 'Workout Steps' :
+               item.classification === 'food' ? 'Ingredients' :
+               item.classification === 'academia' ? 'Study Checklist' :
+               item.classification === 'career' ? 'Preparation Checklist' : 'Checklist'}
+            </Text>
+            {item.checklist.filter(c => c.completed).length > 0 && (
+              <Text style={styles.checklistProgress}>
+                {item.checklist.filter(c => c.completed).length} / {item.checklist.length}
+              </Text>
+            )}
+          </View>
+          <View style={styles.checklistItems}>
+            {item.checklist.map((checklistItem) => (
+              <TouchableOpacity
+                key={checklistItem.id}
+                style={styles.checklistItem}
+                onPress={async () => {
+                  if (!item) return;
+                  const updatedChecklist = item.checklist!.map(c =>
+                    c.id === checklistItem.id ? { ...c, completed: !c.completed } : c
+                  );
+                  await updateItem(id, { checklist: updatedChecklist });
+                  await loadItem();
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[
+                  styles.checklistCheckbox,
+                  checklistItem.completed && styles.checklistCheckboxCompleted
+                ]}>
+                  {checklistItem.completed && (
+                    <Ionicons name="checkmark" size={16} color="#fff" />
+                  )}
+                </View>
+                <Text style={[
+                  styles.checklistText,
+                  checklistItem.completed && styles.checklistTextCompleted
+                ]}>
+                  {checklistItem.text}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Notes Section */}
+      <View style={styles.notesSection}>
+        <View style={styles.notesHeader}>
+          <Ionicons name="document-text-outline" size={20} color="#666" />
+          <Text style={styles.sectionTitle}>Personal Notes</Text>
+        </View>
+        {isEditing ? (
+          <TextInput
+            style={[styles.notesInput, styles.editingTextArea]}
+            value={editingNotes}
+            onChangeText={setEditingNotes}
+            placeholder="Add your personal notes, thoughts, or comments here..."
+            placeholderTextColor="#999"
+            multiline
+            numberOfLines={6}
+            textAlignVertical="top"
+          />
+        ) : (
+          <View style={styles.notesContent}>
+            {item.notes ? (
+              <Text style={styles.notesText}>{item.notes}</Text>
+            ) : (
+              <Text style={styles.notesPlaceholder}>
+                Tap the edit button to add personal notes
+              </Text>
+            )}
+          </View>
+        )}
+      </View>
 
       {/* Scheduled Info */}
       {item.scheduled_date && (
@@ -646,7 +872,7 @@ export default function ItemDetailScreen() {
           </View>
         </View>
             </Modal>
-          </View>
+          </KeyboardAvoidingView>
         </GestureDetector>
       </Animated.View>
     </GestureHandlerRootView>
@@ -692,8 +918,34 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginLeft: -32, // Center by offsetting back button
   },
-  headerSpacer: {
-    width: 32,
+  editButton: {
+    padding: 8,
+    marginRight: -8,
+  },
+  editActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginRight: -8,
+  },
+  editActionButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  saveButtonHeader: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 16,
+  },
+  editActionText: {
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '600',
+  },
+  saveButtonTextHeader: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
@@ -979,6 +1231,118 @@ const styles = StyleSheet.create({
   },
   durationOptionTextActive: {
     color: '#fff',
+  },
+  editingSection: {
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  editingLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  editingInput: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    color: '#333',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  editingTextArea: {
+    minHeight: 100,
+    maxHeight: 200,
+  },
+  notesSection: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 16,
+    borderRadius: 12,
+  },
+  notesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  notesInput: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: '#333',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    minHeight: 120,
+  },
+  notesContent: {
+    minHeight: 60,
+  },
+  notesText: {
+    fontSize: 16,
+    color: '#333',
+    lineHeight: 24,
+  },
+  notesPlaceholder: {
+    fontSize: 14,
+    color: '#999',
+    fontStyle: 'italic',
+  },
+  checklistSection: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 16,
+    borderRadius: 12,
+  },
+  checklistHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  checklistProgress: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '600',
+    marginLeft: 'auto',
+  },
+  checklistItems: {
+    gap: 8,
+  },
+  checklistItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    gap: 12,
+  },
+  checklistCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#ddd',
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checklistCheckboxCompleted: {
+    backgroundColor: '#4cd964',
+    borderColor: '#4cd964',
+  },
+  checklistText: {
+    flex: 1,
+    fontSize: 16,
+    color: '#333',
+    lineHeight: 22,
+  },
+  checklistTextCompleted: {
+    textDecorationLine: 'line-through',
+    color: '#999',
   },
 });
 

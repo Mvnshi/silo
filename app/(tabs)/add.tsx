@@ -32,15 +32,19 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import TagPicker from '@/components/TagPicker';
-import { analyzeLink, analyzeImage, generateAudio, suggestScheduleTime } from '@/lib/api';
-import { addItem } from '@/lib/storage';
+import ChatBot from '@/components/ChatBot';
+import { analyzeLink, analyzeImage, generateAudio, suggestScheduleTime, generateEmbedding } from '@/lib/api';
+import { addItem, getUserId, updateItem } from '@/lib/storage';
+import { scheduleItemReview } from '@/lib/scheduler';
 import { Item, Classification } from '@/lib/types';
 import { imageUriToBase64 } from '@/lib/screenshots';
+import * as Location from 'expo-location';
 
 export default function AddScreen() {
   const insets = useSafeAreaInsets();
@@ -53,6 +57,8 @@ export default function AddScreen() {
   const [classification, setClassification] = useState<Classification>('other');
   const [tags, setTags] = useState<string[]>([]);
   const [script, setScript] = useState<string>(''); // AI-generated script for audio
+  const [placeName, setPlaceName] = useState<string>(''); // Place name from AI
+  const [placeAddress, setPlaceAddress] = useState<string>(''); // Place address from AI
   const [loading, setLoading] = useState(false);
 
   /**
@@ -66,16 +72,32 @@ export default function AddScreen() {
 
     try {
       setLoading(true);
-      const analysis = await analyzeLink(url.trim());
+      // Validate URL format before sending
+      const urlToAnalyze = url.trim();
+      try {
+        new URL(urlToAnalyze);
+      } catch {
+        Alert.alert('Invalid URL', 'Please enter a valid URL (e.g., https://example.com)');
+        setLoading(false);
+        return;
+      }
+
+      const analysis = await analyzeLink(urlToAnalyze);
       
       setTitle(analysis.title);
       setDescription(analysis.description || '');
       setClassification(analysis.classification);
       setTags(analysis.tags || []);
       setScript(analysis.script || ''); // Store script for audio generation
+      // Store place data if detected
+      setPlaceName(analysis.place_name || '');
+      setPlaceAddress(analysis.place_address || '');
     } catch (error) {
       console.error('Failed to analyze URL:', error);
-      Alert.alert('Error', 'Failed to analyze URL. Please try again.');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to analyze URL';
+      Alert.alert('Error', errorMessage.includes('Invalid URL') 
+        ? 'Please enter a valid URL (e.g., https://example.com)'
+        : 'Failed to analyze URL. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -166,6 +188,9 @@ export default function AddScreen() {
         imageUri: imageUri || undefined,
         script: script.trim() || undefined, // Store AI-generated script
         tags,
+        // Include location data if detected by AI or if classification is 'place'
+        place_name: placeName.trim() || (classification === 'place' ? title.trim() : undefined),
+        place_address: placeAddress.trim() || (classification === 'place' ? description.trim() : undefined),
         created_at: new Date().toISOString(),
         viewed: false,
         archived: false,
@@ -178,31 +203,160 @@ export default function AddScreen() {
           const audioResponse = await generateAudio(audioText, item.id);
           item.audio_url = audioResponse.audioUrl;
         } catch (error) {
-          console.error('Failed to generate audio:', error);
-          // Continue without audio - will work once API keys are set up
+          // Silently fail - audio is optional
+          console.warn('Audio generation skipped (optional feature):', error instanceof Error ? error.message : error);
         }
       }
 
       // Save item
       await addItem(item);
 
-      Alert.alert('Success', 'Item added successfully', [
-        {
-          text: 'OK',
-          onPress: () => {
-            // Reset form
-            setInputType(null);
-            setUrl('');
-            setNoteText('');
-            setImageUri(null);
-            setTitle('');
-            setDescription('');
-            setClassification('other');
-            setTags([]);
-            setScript('');
+      // If it's a place with address but no coordinates, geocode it
+      if ((item.place_name || item.place_address) && !item.place_latitude && !item.place_longitude) {
+        try {
+          const addressToGeocode = item.place_address || item.place_name || '';
+          if (addressToGeocode) {
+            const geocoded = await Location.geocodeAsync(addressToGeocode);
+            if (geocoded && geocoded.length > 0) {
+              const { latitude, longitude } = geocoded[0];
+              // Update item with coordinates
+              await updateItem(item.id, {
+                place_latitude: latitude,
+                place_longitude: longitude,
+              });
+              console.log(`📍 Geocoded ${addressToGeocode}: ${latitude}, ${longitude}`);
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to geocode address (continuing without coordinates):', error);
+          // Don't show error - geocoding is optional
+        }
+      }
+
+      // Generate embedding for RAG (async, don't wait - optional feature)
+      try {
+        const userId = await getUserId();
+        generateEmbedding({
+          userId,
+          itemId: item.id,
+          title: item.title,
+          description: item.description,
+          tags: item.tags,
+        }).catch(error => {
+          // Silently fail - embedding is optional (quota limits on free tier)
+          console.warn('Embedding generation skipped (optional feature):', error instanceof Error ? error.message : error);
+        });
+      } catch (error) {
+        // Silently fail - embedding is optional
+        console.warn('Embedding generation skipped (optional feature):', error instanceof Error ? error.message : error);
+      }
+
+      // Suggest scheduling (like screenshots tab)
+      try {
+        const suggestion = await suggestScheduleTime({
+          title: item.title,
+          classification: item.classification || 'other',
+          description: item.description,
+          duration: item.duration,
+        });
+        
+        // Show alert with suggestion
+        Alert.alert(
+          'Schedule this item?',
+          `${suggestion.reason}\n\nDate: ${suggestion.date}\nTime: ${suggestion.time}`,
+          [
+            {
+              text: 'No thanks',
+              style: 'cancel',
+              onPress: () => {
+                // Reset form
+                setInputType(null);
+                setUrl('');
+                setNoteText('');
+                setImageUri(null);
+                setTitle('');
+                setDescription('');
+                setClassification('other');
+                setTags([]);
+                setScript('');
+                setPlaceName('');
+                setPlaceAddress('');
+              },
+            },
+            {
+              text: 'Add to Calendar',
+              onPress: async () => {
+                try {
+                  await scheduleItemReview(item, suggestion.date, suggestion.time, item.duration || 15);
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  Alert.alert('Success', 'Event added to calendar', [
+                    {
+                      text: 'OK',
+                      onPress: () => {
+                        // Reset form
+                        setInputType(null);
+                        setUrl('');
+                        setNoteText('');
+                        setImageUri(null);
+                        setTitle('');
+                        setDescription('');
+                        setClassification('other');
+                        setTags([]);
+                        setScript('');
+                        setPlaceName('');
+                        setPlaceAddress('');
+                      },
+                    },
+                  ]);
+                } catch (error) {
+                  console.error('Failed to schedule event:', error);
+                  Alert.alert('Error', 'Failed to add event to calendar', [
+                    {
+                      text: 'OK',
+                      onPress: () => {
+                        // Reset form
+                        setInputType(null);
+                        setUrl('');
+                        setNoteText('');
+                        setImageUri(null);
+                        setTitle('');
+                        setDescription('');
+                        setClassification('other');
+                        setTags([]);
+                        setScript('');
+                        setPlaceName('');
+                        setPlaceAddress('');
+                      },
+                    },
+                  ]);
+                }
+              },
+            },
+          ]
+        );
+      } catch (error) {
+        console.warn('Failed to suggest schedule (continuing without suggestion):', error);
+        // Don't show error - schedule suggestion is optional
+        Alert.alert('Success', 'Item added successfully', [
+          {
+            text: 'OK',
+            onPress: () => {
+              // Reset form
+              setInputType(null);
+              setUrl('');
+              setNoteText('');
+              setImageUri(null);
+              setTitle('');
+              setDescription('');
+              setClassification('other');
+              setTags([]);
+              setScript('');
+              setPlaceName('');
+              setPlaceAddress('');
+            },
           },
-        },
-      ]);
+        ]);
+      }
     } catch (error) {
       console.error('Failed to save item:', error);
       Alert.alert('Error', 'Failed to save item');
@@ -216,6 +370,12 @@ export default function AddScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      {/* Gradient Background */}
+      <LinearGradient
+        colors={['#B4F5E8', '#D7FFF5', '#F0FFF9']}
+        style={StyleSheet.absoluteFill}
+      />
+      <ChatBot onClose={() => {}} />
       <ScrollView 
         contentContainerStyle={[
           styles.content,
@@ -270,7 +430,25 @@ export default function AddScreen() {
         {inputType === 'url' && (
           <View style={styles.form}>
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>URL</Text>
+              <View style={styles.urlHeader}>
+                <TouchableOpacity
+                  style={styles.backButton}
+                  onPress={() => {
+                    setInputType(null);
+                    setUrl('');
+                    setTitle('');
+                    setDescription('');
+                    setClassification('other');
+                    setTags([]);
+                    setScript('');
+                    setPlaceName('');
+                    setPlaceAddress('');
+                  }}
+                >
+                  <Ionicons name="arrow-back" size={24} color="#333" />
+                </TouchableOpacity>
+                <Text style={styles.label}>URL</Text>
+              </View>
               <TextInput
                 style={styles.input}
                 placeholder="https://example.com"
@@ -286,7 +464,11 @@ export default function AddScreen() {
                 onPress={handleAnalyzeUrl}
                 disabled={loading}
               >
-                <Text style={styles.analyzeButtonText}>Analyze with AI</Text>
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.analyzeButtonText}>Analyze with AI</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -405,7 +587,6 @@ export default function AddScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   content: {
     padding: 16,
@@ -422,10 +603,15 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
   typeButton: {
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   typeButtonText: {
     fontSize: 18,
@@ -450,13 +636,23 @@ const styles = StyleSheet.create({
   inputGroup: {
     gap: 8,
   },
+  urlHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 4,
+  },
+  backButton: {
+    padding: 4,
+    marginLeft: -4,
+  },
   label: {
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
   },
   input: {
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
@@ -478,13 +674,18 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   classificationChip: {
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     marginRight: 8,
     borderWidth: 1,
     borderColor: '#e0e0e0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   classificationChipActive: {
     backgroundColor: '#007AFF',

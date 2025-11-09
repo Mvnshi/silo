@@ -27,6 +27,7 @@ import {
   TextInput,
   Alert,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -251,6 +252,23 @@ export default function StacksScreen() {
     if (!item) return;
 
     const actions = [
+      {
+        text: item.bucketlist ? 'Remove from Bucket List' : 'Add to Bucket List',
+        onPress: async () => {
+          try {
+            await updateItem(itemId, { bucketlist: !item.bucketlist });
+            await loadData();
+            Haptics.notificationAsync(
+              item.bucketlist 
+                ? Haptics.NotificationFeedbackType.Warning 
+                : Haptics.NotificationFeedbackType.Success
+            );
+          } catch (error) {
+            console.error('Failed to update bucket list:', error);
+            Alert.alert('Error', 'Failed to update bucket list');
+          }
+        },
+      },
       {
         text: item.viewed ? 'Mark as Not Done' : 'Mark as Done',
         onPress: async () => {
@@ -484,8 +502,13 @@ export default function StacksScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={styles.container}>
-      {/* Sticky Search and Stacks Bar */}
-      <View style={[styles.stickyHeader, { paddingTop: insets.top + 8 }]}>
+        {/* Gradient Background */}
+        <LinearGradient
+          colors={['#E8D4F5', '#F5E7FF', '#FFF0FF']}
+          style={StyleSheet.absoluteFill}
+        />
+        {/* Sticky Search and Stacks Bar */}
+        <View style={[styles.stickyHeader, { paddingTop: insets.top + 8 }]}>
         {/* Search Bar */}
         <View style={styles.searchContainer}>
           <Ionicons name="search" size={20} color="#999" />
@@ -664,7 +687,6 @@ export default function StacksScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   stickyHeader: {
     position: 'absolute',
@@ -672,11 +694,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 10,
-    backgroundColor: '#F7F8FA',
+    backgroundColor: 'transparent',
     paddingHorizontal: 16,
     paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
   },
   headerSpacer: {
     height: 120, // Space for sticky header
@@ -684,11 +704,16 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     marginBottom: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   searchInput: {
     flex: 1,
@@ -702,12 +727,17 @@ const styles = StyleSheet.create({
   stackChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     marginRight: 8,
     minWidth: 60,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   stackChipActive: {
     backgroundColor: '#007AFF',

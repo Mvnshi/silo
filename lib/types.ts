@@ -58,6 +58,19 @@ export interface Item {
   created_at: string;
   viewed: boolean;
   archived: boolean;
+  bucketlist?: boolean;
+  bucketlist_completed?: boolean;
+  notes?: string;
+  checklist?: ChecklistItem[];
+}
+
+/**
+ * Checklist item for workouts, recipes, tasks, etc.
+ */
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  completed: boolean;
 }
 
 /**
@@ -121,6 +134,8 @@ export interface AnalyzeLinkResponse {
   script?: string;
   tags?: string[];
   duration?: number;
+  place_name?: string;
+  place_address?: string;
 }
 
 /**

@@ -18,6 +18,8 @@ import analyzeLink from './analyze-link';
 import generateAudio from './generate-audio';
 import suggestSchedule from './suggest-schedule';
 import instagramDownload from './instagram-download';
+import generateEmbedding from './generate-embedding';
+import ragQuery from './rag-query';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -56,6 +58,12 @@ export default {
       case '/api/instagram-download':
         return instagramDownload.fetch(request, env);
       
+      case '/api/generate-embedding':
+        return generateEmbedding.fetch(request, env);
+      
+      case '/api/rag-query':
+        return ragQuery.fetch(request, env);
+      
       case '/':
       case '/api':
         // Health check endpoint
@@ -69,7 +77,9 @@ export default {
               '/api/analyze-link',
               '/api/generate-audio',
               '/api/suggest-schedule',
-              '/api/instagram-download'
+              '/api/instagram-download',
+              '/api/generate-embedding',
+              '/api/rag-query'
             ]
           }),
           {
