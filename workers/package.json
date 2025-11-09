@@ -1,0 +1,17 @@
+{
+  "name": "silo-workers",
+  "version": "1.0.0",
+  "description": "Cloudflare Workers backend for Silo app",
+  "main": "index.ts",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^3.96.0"
+  }
+}
+

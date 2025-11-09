@@ -1,0 +1,24 @@
+# Cloudflare Workers Configuration for Silo Backend
+# This file configures the Cloudflare Workers deployment for AI processing,
+# audio generation, and schedule suggestions.
+
+name = "silo-api"
+main = "workers/index.ts"
+compatibility_date = "2024-01-01"
+
+# Production environment configuration
+[env.production]
+# Public variables (non-sensitive)
+vars = { 
+  GEMINI_API_KEY = ""  # Set this via Cloudflare dashboard or CLI
+}
+
+# Secrets (set via: wrangler secret put SECRET_NAME)
+# - ELEVENLABS_API_KEY: ElevenLabs API key for text-to-speech
+# - ELEVENLABS_VOICE_ID: Voice ID for ElevenLabs TTS
+# - VULTR_ACCESS_KEY: Vultr Object Storage access key
+# - VULTR_SECRET_KEY: Vultr Object Storage secret key
+# - VULTR_BUCKET: Vultr bucket name
+# - VULTR_ENDPOINT: Vultr Object Storage endpoint (e.g., ewr1.vultrobjects.com)
+# - VULTR_CDN_DOMAIN: Vultr CDN domain for audio delivery
+

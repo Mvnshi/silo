@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Silo",
+    "slug": "silo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "silo",
+    "newArchEnabled": true,
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.silo.app",
+      "infoPlist": {
+        "NSCalendarsUsageDescription": "Silo needs calendar access to schedule content review sessions.",
+        "NSPhotoLibraryUsageDescription": "Silo needs photo library access to detect and analyze screenshots.",
+        "NSCameraUsageDescription": "Silo needs camera access to capture content."
+      }
+    },
+    "android": {
+      "package": "com.silo.app",
+      "permissions": [
+        "READ_CALENDAR",
+        "WRITE_CALENDAR",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "CAMERA"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-av",
+      "expo-calendar",
+      "expo-file-system",
+      "expo-image-picker",
+      "expo-media-library"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
+
