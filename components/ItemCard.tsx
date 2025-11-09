@@ -21,19 +21,93 @@ import {
   StyleSheet,
   TouchableOpacity,
   Platform,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  runOnJS,
+} from 'react-native-reanimated';
 import { Item } from '@/lib/types';
 import { format } from 'date-fns';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const SWIPE_THRESHOLD = 80;
 
 interface ItemCardProps {
   item: Item;
   onPress: (itemId: string) => void;
   onLongPress?: (itemId: string) => void;
+  onSwipeLeft?: (itemId: string) => void;
+  onSwipeRight?: (itemId: string) => void;
   showStack?: boolean;
 }
 
-export default function ItemCard({ item, onPress, onLongPress, showStack = false }: ItemCardProps) {
+export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSwipeRight, showStack = false }: ItemCardProps) {
+  const translateX = useSharedValue(0);
+  const opacity = useSharedValue(1);
+
+  /**
+   * Pan gesture for swipe left (mark as done) and swipe right (unmark as done)
+   */
+  const panGesture = Gesture.Pan()
+    .activeOffsetX([-5, 5]) // Very small threshold to activate quickly
+    .failOffsetY([-30, 30]) // More lenient vertical threshold
+    .onStart(() => {
+      // Reset values on start
+      translateX.value = 0;
+      opacity.value = 1;
+    })
+    .onUpdate((event) => {
+      translateX.value = event.translationX;
+      // Slight fade as we swipe
+      if (event.translationX < 0) {
+        // Swiping left
+        opacity.value = Math.max(0.7, 1 + event.translationX / SWIPE_THRESHOLD);
+      } else {
+        // Swiping right
+        opacity.value = Math.max(0.7, 1 - event.translationX / SWIPE_THRESHOLD);
+      }
+    })
+    .onEnd((event) => {
+      if (event.translationX < -SWIPE_THRESHOLD) {
+        // Swipe left was far enough, mark as done and spring back
+        if (onSwipeLeft) {
+          runOnJS(onSwipeLeft)(item.id);
+        }
+        // Spring back to original position
+        translateX.value = withSpring(0, {
+          damping: 20,
+          stiffness: 90,
+        });
+        opacity.value = withSpring(1);
+      } else if (event.translationX > SWIPE_THRESHOLD) {
+        // Swipe right was far enough, unmark as done and spring back
+        if (onSwipeRight) {
+          runOnJS(onSwipeRight)(item.id);
+        }
+        // Spring back to original position
+        translateX.value = withSpring(0, {
+          damping: 20,
+          stiffness: 90,
+        });
+        opacity.value = withSpring(1);
+      } else {
+        // Swipe wasn't far enough, spring back
+        translateX.value = withSpring(0);
+        opacity.value = withSpring(1);
+      }
+    });
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ translateX: translateX.value }],
+      opacity: opacity.value,
+    };
+  });
   /**
    * Get icon for classification type
    */
@@ -97,12 +171,15 @@ export default function ItemCard({ item, onPress, onLongPress, showStack = false
   }
 
   return (
-    <TouchableOpacity
-      style={styles.container}
-      onPress={() => onPress(item.id)}
-      onLongPress={() => onLongPress?.(item.id)}
-      activeOpacity={0.7}
-    >
+    <GestureHandlerRootView>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={animatedStyle}>
+          <TouchableOpacity
+            style={styles.container}
+            onPress={() => onPress(item.id)}
+            onLongPress={() => onLongPress?.(item.id)}
+            activeOpacity={0.7}
+          >
       {/* Left Color Bar */}
       <View 
         style={[
@@ -199,6 +276,9 @@ export default function ItemCard({ item, onPress, onLongPress, showStack = false
         </View>
       </View>
     </TouchableOpacity>
+        </Animated.View>
+      </GestureDetector>
+    </GestureHandlerRootView>
   );
 }
 

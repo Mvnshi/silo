@@ -30,6 +30,7 @@ import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -92,6 +93,8 @@ export default function ScreenshotsScreen() {
   useFocusEffect(
     useCallback(() => {
       loadScreenshots();
+      // Haptic feedback when tab is focused
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }, [])
   );
 
@@ -110,6 +113,25 @@ export default function ScreenshotsScreen() {
   }
 
   /**
+   * Celebration haptic - accelerated vibration pattern
+   */
+  async function celebrationHaptic() {
+    try {
+      // Pattern: light -> medium -> heavy -> success notification
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      // Fallback if haptics fail
+      console.error('Haptic error:', error);
+    }
+  }
+
+  /**
    * Handle swipe right (import)
    */
   async function handleSwipeRight(screenshot: Screenshot) {
@@ -117,8 +139,11 @@ export default function ScreenshotsScreen() {
       setLoading(true);
       await importScreenshot(screenshot);
       moveToNext();
+      // Celebration haptic for successful import
+      celebrationHaptic();
     } catch (error) {
       console.error('Failed to import screenshot:', error);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Error', 'Failed to import screenshot');
     } finally {
       setLoading(false);
@@ -129,6 +154,7 @@ export default function ScreenshotsScreen() {
    * Handle swipe left (skip)
    */
   function handleSwipeLeft() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     moveToNext();
   }
 

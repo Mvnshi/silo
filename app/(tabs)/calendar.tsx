@@ -50,6 +50,7 @@ import {
 } from 'date-fns';
 import * as Calendar from 'expo-calendar';
 import * as Location from 'expo-location';
+import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import ItemCard from '@/components/ItemCard';
 import { Item } from '@/lib/types';
@@ -230,6 +231,8 @@ export default function CalendarScreen() {
   useFocusEffect(
     useCallback(() => {
       loadItems();
+      // Haptic feedback when tab is focused
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }, [])
   );
 
@@ -339,7 +342,10 @@ export default function CalendarScreen() {
               styles.segment,
               viewMode === 'calendar' && styles.segmentActive,
             ]}
-            onPress={() => setViewMode('calendar')}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setViewMode('calendar');
+            }}
           >
             <Ionicons
               name="calendar-outline"
@@ -361,7 +367,10 @@ export default function CalendarScreen() {
               styles.segment,
               viewMode === 'map' && styles.segmentActive,
             ]}
-            onPress={() => setViewMode('map')}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setViewMode('map');
+            }}
           >
             <Ionicons
               name="map-outline"

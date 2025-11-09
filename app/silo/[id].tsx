@@ -28,9 +28,10 @@ import {
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import ItemCard from '@/components/ItemCard';
 import { Stack, Item } from '@/lib/types';
-import { getStackById, getItems, updateStack, deleteStack } from '@/lib/storage';
+import { getStackById, getItems, updateStack, deleteStack, updateItem } from '@/lib/storage';
 
 export default function StackDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -83,7 +84,62 @@ export default function StackDetailScreen() {
    * Handle item press
    */
   function handleItemPress(itemId: string) {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push(`/item/${itemId}?from=stacks`);
+  }
+
+  /**
+   * Celebration haptic - accelerated vibration pattern
+   */
+  async function celebrationHaptic() {
+    try {
+      // Pattern: light -> medium -> heavy -> success notification
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      // Fallback if haptics fail
+      console.error('Haptic error:', error);
+    }
+  }
+
+  /**
+   * Handle swipe left - mark as done
+   */
+  async function handleSwipeLeft(itemId: string) {
+    try {
+      const item = items.find(i => i.id === itemId);
+      if (!item || item.viewed) return; // Already done
+      
+      await updateItem(itemId, { viewed: true });
+      await loadData();
+      // Celebration haptic for completion
+      celebrationHaptic();
+    } catch (error) {
+      console.error('Failed to mark item as done:', error);
+      Alert.alert('Error', 'Failed to mark item as done');
+    }
+  }
+
+  /**
+   * Handle swipe right - unmark as done
+   */
+  async function handleSwipeRight(itemId: string) {
+    try {
+      const item = items.find(i => i.id === itemId);
+      if (!item || !item.viewed) return; // Not done
+      
+      await updateItem(itemId, { viewed: false });
+      await loadData();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (error) {
+      console.error('Failed to unmark item as done:', error);
+      Alert.alert('Error', 'Failed to unmark item as done');
+    }
   }
 
   /**
@@ -189,7 +245,12 @@ export default function StackDetailScreen() {
       <FlatList
         data={items}
         renderItem={({ item }) => (
-          <ItemCard item={item} onPress={handleItemPress} />
+          <ItemCard 
+            item={item} 
+            onPress={handleItemPress}
+            onSwipeLeft={handleSwipeLeft}
+            onSwipeRight={handleSwipeRight}
+          />
         )}
         keyExtractor={item => item.id}
         contentContainerStyle={[

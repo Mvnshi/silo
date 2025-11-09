@@ -20,8 +20,21 @@
  */
 
 import { NativeTabs, Label, Icon } from 'expo-router/unstable-native-tabs';
+import { useEffect } from 'react';
+import { usePathname } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 
 export default function TabsLayout() {
+  const pathname = usePathname();
+  
+  // Haptic feedback on tab switch
+  useEffect(() => {
+    // Only trigger on tab routes, not nested routes
+    if (pathname && pathname.match(/^\/(tabs)\/(reel|index|add|calendar|screenshots)$/)) {
+      Haptics.selectionAsync();
+    }
+  }, [pathname]);
+
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="reel">
@@ -48,13 +61,13 @@ export default function TabsLayout() {
         />
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="calendar">
-        <Label>Calendar</Label>
-        <Icon
-          sf="brain"
-          drawable="ic_menu_my_calendar"
-        />
-      </NativeTabs.Trigger>
+            <NativeTabs.Trigger name="calendar">
+              <Label>Silo</Label>
+              <Icon
+                sf="brain"
+                drawable="ic_menu_my_calendar"
+              />
+            </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="screenshots">
         <Label>Screenshots</Label>

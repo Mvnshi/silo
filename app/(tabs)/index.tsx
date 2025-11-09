@@ -30,12 +30,36 @@ import {
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { format } from 'date-fns';
 import ItemCard from '@/components/ItemCard';
+import CompactCard from '@/components/CompactCard';
 import { Item, Stack } from '@/lib/types';
 import { getItems, getStacks, addStack, updateItem, deleteItem } from '@/lib/storage';
 import { aiSearch } from '@/lib/api';
 import { scheduleItemReview } from '@/lib/scheduler';
+
+/**
+ * Celebration haptic - accelerated vibration pattern
+ */
+async function celebrationHaptic() {
+  try {
+    // Pattern: light -> medium -> heavy -> success notification
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  } catch (error) {
+    // Fallback if haptics fail
+    console.error('Haptic error:', error);
+  }
+}
+
+type ViewMode = 'list' | 'grid';
 
 export default function StacksScreen() {
   const router = useRouter();
@@ -46,6 +70,7 @@ export default function StacksScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isAiSearching, setIsAiSearching] = useState(false);
   const [aiSearchResults, setAiSearchResults] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
 
   /**
    * Load stacks and items from storage
@@ -94,6 +119,8 @@ export default function StacksScreen() {
   useFocusEffect(
     useCallback(() => {
       loadData();
+      // Haptic feedback when tab is focused
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }, [])
   );
 
@@ -177,7 +204,43 @@ export default function StacksScreen() {
    * Handle item press
    */
   function handleItemPress(itemId: string) {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push(`/item/${itemId}?from=stacks`);
+  }
+
+  /**
+   * Handle swipe left - mark as done
+   */
+  async function handleSwipeLeft(itemId: string) {
+    try {
+      const item = items.find(i => i.id === itemId);
+      if (!item || item.viewed) return; // Already done
+      
+      await updateItem(itemId, { viewed: true });
+      await loadData();
+      // Celebration haptic for completion
+      celebrationHaptic();
+    } catch (error) {
+      console.error('Failed to mark item as done:', error);
+      Alert.alert('Error', 'Failed to mark item as done');
+    }
+  }
+
+  /**
+   * Handle swipe right - unmark as done
+   */
+  async function handleSwipeRight(itemId: string) {
+    try {
+      const item = items.find(i => i.id === itemId);
+      if (!item || !item.viewed) return; // Not done
+      
+      await updateItem(itemId, { viewed: false });
+      await loadData();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (error) {
+      console.error('Failed to unmark item as done:', error);
+      Alert.alert('Error', 'Failed to unmark item as done');
+    }
   }
 
   /**
@@ -189,11 +252,17 @@ export default function StacksScreen() {
 
     const actions = [
       {
-        text: item.archived ? 'Unarchive' : 'Archive',
+        text: item.viewed ? 'Mark as Not Done' : 'Mark as Done',
         onPress: async () => {
           try {
-            await updateItem(itemId, { archived: !item.archived });
+            const wasViewed = item.viewed;
+            await updateItem(itemId, { viewed: !item.viewed });
             await loadData();
+            if (!wasViewed) {
+              celebrationHaptic();
+            } else {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }
           } catch (error) {
             console.error('Failed to update item:', error);
             Alert.alert('Error', 'Failed to update item');
@@ -201,10 +270,10 @@ export default function StacksScreen() {
         },
       },
       {
-        text: item.viewed ? 'Mark Unviewed' : 'Mark Viewed',
+        text: item.archived ? 'Unarchive' : 'Archive',
         onPress: async () => {
           try {
-            await updateItem(itemId, { viewed: !item.viewed });
+            await updateItem(itemId, { archived: !item.archived });
             await loadData();
           } catch (error) {
             console.error('Failed to update item:', error);
@@ -413,7 +482,8 @@ export default function StacksScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <View style={styles.container}>
       {/* Sticky Search and Stacks Bar */}
       <View style={[styles.stickyHeader, { paddingTop: insets.top + 8 }]}>
         {/* Search Bar */}
@@ -436,6 +506,20 @@ export default function StacksScreen() {
               <Ionicons name="close-circle" size={20} color="#999" />
             </TouchableOpacity>
           )}
+          {/* View Mode Toggle */}
+          <TouchableOpacity
+            style={styles.viewModeButton}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setViewMode(viewMode === 'list' ? 'grid' : 'list');
+            }}
+          >
+            <Ionicons 
+              name={viewMode === 'list' ? 'grid' : 'list'} 
+              size={20} 
+              color="#007AFF" 
+            />
+          </TouchableOpacity>
         </View>
 
         {/* Stacks Horizontal Scroll */}
@@ -469,7 +553,10 @@ export default function StacksScreen() {
                 styles.stackChip,
                 selectedStackId === stack.id && styles.stackChipActive,
               ]}
-              onPress={() => setSelectedStackId(stack.id)}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setSelectedStackId(stack.id);
+              }}
               onLongPress={() => handleStackLongPress(stack.id)}
             >
               <View
@@ -488,7 +575,10 @@ export default function StacksScreen() {
 
           <TouchableOpacity
             style={styles.createStackButton}
-            onPress={handleCreateStack}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              handleCreateStack();
+            }}
           >
             <Ionicons name="add-circle-outline" size={20} color="#007AFF" />
           </TouchableOpacity>
@@ -505,32 +595,69 @@ export default function StacksScreen() {
         </ScrollView>
       </View>
 
-      <FlatList
-        data={filteredItems}
-        renderItem={({ item }) => (
-          <ItemCard 
-            item={item} 
-            onPress={handleItemPress}
-            onLongPress={handleItemLongPress}
-          />
-        )}
-        keyExtractor={item => item.id}
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{
-          paddingTop: 120, // Space for sticky header
-          paddingBottom: insets.bottom + 120,
-        }}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Ionicons name="folder-open-outline" size={64} color="#ccc" />
-            <Text style={styles.emptyText}>No items found</Text>
-            <Text style={styles.emptySubtext}>
-              Add content to get started
-            </Text>
-          </View>
-        }
-      />
+      {viewMode === 'list' ? (
+        <FlatList
+          key="list-view"
+          data={filteredItems}
+          renderItem={({ item }) => (
+            <ItemCard 
+              item={item} 
+              onPress={handleItemPress}
+              onLongPress={handleItemLongPress}
+              onSwipeLeft={handleSwipeLeft}
+              onSwipeRight={handleSwipeRight}
+            />
+          )}
+          keyExtractor={item => item.id}
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={{
+            paddingTop: 120, // Space for sticky header
+            paddingBottom: insets.bottom + 120,
+            paddingHorizontal: 16,
+          }}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="folder-open-outline" size={64} color="#ccc" />
+              <Text style={styles.emptyText}>No items found</Text>
+              <Text style={styles.emptySubtext}>
+                Add content to get started
+              </Text>
+            </View>
+          }
+        />
+      ) : (
+        <FlatList
+          key="grid-view"
+          data={filteredItems}
+          renderItem={({ item }) => (
+            <CompactCard 
+              item={item} 
+              onPress={handleItemPress}
+              onSwipeLeft={handleSwipeLeft}
+              onSwipeRight={handleSwipeRight}
+            />
+          )}
+          keyExtractor={item => item.id}
+          numColumns={2}
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={{
+            paddingTop: 120, // Space for sticky header
+            paddingBottom: insets.bottom + 120,
+            paddingHorizontal: 8,
+          }}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="folder-open-outline" size={64} color="#ccc" />
+              <Text style={styles.emptyText}>No items found</Text>
+              <Text style={styles.emptySubtext}>
+                Add content to get started
+              </Text>
+            </View>
+          }
+        />
+      )}
     </View>
+    </GestureHandlerRootView>
   );
 }
 
@@ -604,6 +731,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 8,
+  },
+  viewModeButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 4,
+    marginLeft: 8,
   },
   listContent: {
     paddingHorizontal: 16,

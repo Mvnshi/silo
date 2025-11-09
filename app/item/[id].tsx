@@ -91,10 +91,7 @@ export default function ItemDetailScreen() {
       const loadedItem = await getItemById(id);
       setItem(loadedItem);
       
-      // Mark as viewed
-      if (loadedItem && !loadedItem.viewed) {
-        await updateItem(id, { viewed: true });
-      }
+      // Don't auto-mark as viewed - user marks as done via swipe
       
       // If schedule param is true, open schedule modal after item loads
       if (schedule === 'true' && loadedItem) {
