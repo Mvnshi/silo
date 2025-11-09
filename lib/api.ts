@@ -175,3 +175,71 @@ export async function suggestScheduleTime(data: {
   }
 }
 
+/**
+ * AI-powered semantic search
+ * Uses semantic matching to find relevant content based on meaning, not just keywords
+ * 
+ * @param query - Search query
+ * @param items - Array of items to search through
+ * @returns Array of items sorted by relevance
+ */
+export async function aiSearch(
+  query: string,
+  items: Array<{ id?: string; title: string; description?: string; tags: string[]; classification: string }>
+): Promise<string[]> {
+  try {
+    if (!isApiConfigured() || !query.trim()) {
+      // Fallback to keyword search if API not configured
+      return items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => {
+          const q = query.toLowerCase();
+          return (
+            item.title.toLowerCase().includes(q) ||
+            item.description?.toLowerCase().includes(q) ||
+            item.tags.some(tag => tag.toLowerCase().includes(q)) ||
+            item.classification.toLowerCase().includes(q)
+          );
+        })
+        .map(({ index }) => index.toString());
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/ai-search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, items }),
+    });
+
+    if (!response.ok) {
+      // Fallback to keyword search on error
+      return items
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => {
+          const q = query.toLowerCase();
+          return (
+            item.title.toLowerCase().includes(q) ||
+            item.description?.toLowerCase().includes(q) ||
+            item.tags.some(tag => tag.toLowerCase().includes(q))
+          );
+        })
+        .map(({ index }) => index.toString());
+    }
+
+    const result = await response.json() as { itemIds: string[] };
+    return result.itemIds;
+  } catch (error) {
+    // Fallback to keyword search on error
+    return items
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => {
+        const q = query.toLowerCase();
+        return (
+          item.title.toLowerCase().includes(q) ||
+          item.description?.toLowerCase().includes(q) ||
+          item.tags.some(tag => tag.toLowerCase().includes(q))
+        );
+      })
+      .map(({ index }) => index.toString());
+  }
+}
+

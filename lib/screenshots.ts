@@ -125,10 +125,51 @@ export async function getRecentScreenshots(limit: number = 20): Promise<Screensh
  */
 export async function imageUriToBase64(uri: string): Promise<string> {
   try {
-    const base64 = await FileSystem.readAsStringAsync(uri, {
-      encoding: FileSystem.EncodingType.Base64,
+    // Handle different URI schemes
+    let fileUri = uri;
+    
+    // If it's a media library URI (ph:// or assets-library://), we need to get the actual file path
+    if (uri.startsWith('ph://') || uri.startsWith('assets-library://')) {
+      // Extract asset ID from URI
+      const assetId = uri.replace(/^(ph:\/\/|assets-library:\/\/)/, '').split('/')[0];
+      
+      // Get asset info to get the proper URI
+      const asset = await MediaLibrary.getAssetInfoAsync(assetId);
+      if (asset.localUri) {
+        fileUri = asset.localUri;
+      } else if (asset.uri) {
+        fileUri = asset.uri;
+      }
+    }
+    
+    // Use fetch to get the file as a blob, then convert to base64
+    // This works for both file:// URIs and other URI schemes
+    const response = await fetch(fileUri);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.statusText}`);
+    }
+    
+    const blob = await response.blob();
+    
+    // Convert blob to base64 using FileReader
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        try {
+          const base64String = reader.result as string;
+          // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+          const base64 = base64String.includes(',') 
+            ? base64String.split(',')[1] 
+            : base64String;
+          resolve(base64);
+        } catch (error) {
+          reject(new Error('Failed to parse base64 string'));
+        }
+      };
+      reader.onerror = () => reject(new Error('Failed to read blob'));
+      reader.readAsDataURL(blob);
     });
-    return base64;
   } catch (error) {
     console.error('Failed to convert image to base64:', error);
     throw new Error('Failed to process image');

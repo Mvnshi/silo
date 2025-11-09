@@ -24,10 +24,12 @@ import {
   Dimensions,
   ScrollView,
 } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/lib/types';
+import { isInstagramReel, extractInstagramReelId, getInstagramEmbedUrl } from '@/lib/instagram';
 
 const { width, height } = Dimensions.get('window');
 
@@ -35,17 +37,29 @@ interface StreamCardProps {
   item: Item;
   onArchive: (itemId: string) => void;
   onSchedule: (itemId: string) => void;
-  onAddToStack: (itemId: string) => void;
+  onComplete: (itemId: string) => void;
 }
 
 export default function StreamCard({ 
   item, 
   onArchive, 
   onSchedule, 
-  onAddToStack 
+  onComplete 
 }: StreamCardProps) {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Check if this is an Instagram reel
+  const isReel = item.url ? isInstagramReel(item.url) : false;
+  const reelId = item.url ? extractInstagramReelId(item.url) : null;
+  const embedUrl = reelId ? getInstagramEmbedUrl(reelId) : null;
+  
+  // Debug logging
+  useEffect(() => {
+    if (isReel && embedUrl) {
+      console.log('Instagram Reel detected:', { originalUrl: item.url, reelId, embedUrl });
+    }
+  }, [isReel, embedUrl, item.url, reelId]);
 
   /**
    * Load and play audio when component mounts
@@ -108,7 +122,8 @@ export default function StreamCard({
    * Get icon for classification type
    */
   function getClassificationIcon(): keyof typeof Ionicons.glyphMap {
-    switch (item.classification) {
+    const classification = item.classification || 'other';
+    switch (classification) {
       case 'article': return 'newspaper-outline';
       case 'video': return 'play-circle-outline';
       case 'recipe': return 'restaurant-outline';
@@ -116,6 +131,10 @@ export default function StreamCard({
       case 'event': return 'calendar-outline';
       case 'place': return 'location-outline';
       case 'idea': return 'bulb-outline';
+      case 'fitness': return 'fitness-outline';
+      case 'food': return 'restaurant-outline';
+      case 'career': return 'briefcase-outline';
+      case 'academia': return 'school-outline';
       default: return 'document-outline';
     }
   }
@@ -123,8 +142,9 @@ export default function StreamCard({
   /**
    * Get background color for classification type
    */
-  function getClassificationColor(): string[] {
-    switch (item.classification) {
+  function getClassificationColor(): [string, string] {
+    const classification = item.classification || 'other';
+    switch (classification) {
       case 'article': return ['#667eea', '#764ba2'];
       case 'video': return ['#f093fb', '#f5576c'];
       case 'recipe': return ['#4facfe', '#00f2fe'];
@@ -132,10 +152,96 @@ export default function StreamCard({
       case 'event': return ['#fa709a', '#fee140'];
       case 'place': return ['#30cfd0', '#330867'];
       case 'idea': return ['#a8edea', '#fed6e3'];
+      case 'fitness': return ['#FF6B6B', '#FF8E8E'];
+      case 'food': return ['#FFA07A', '#FFB88C'];
+      case 'career': return ['#4ECDC4', '#6EDDD6'];
+      case 'academia': return ['#95E1D3', '#B4F0E4'];
       default: return ['#667eea', '#764ba2'];
     }
   }
 
+  // If this is an Instagram reel, show the embedded video
+  if (isReel && embedUrl) {
+    return (
+      <View style={styles.container}>
+        <WebView
+          source={{ uri: embedUrl }}
+          style={styles.webview}
+          allowsFullscreenVideo={true}
+          mediaPlaybackRequiresUserAction={false}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          startInLoadingState={true}
+          scalesPageToFit={false}
+          allowsInlineMediaPlayback={true}
+          mixedContentMode="always"
+          originWhitelist={['*']}
+          onShouldStartLoadWithRequest={(request) => {
+            // Only allow loading the embed URL, block Instagram redirects
+            if (request.url.includes('eeinstagram.com')) {
+              return true;
+            }
+            if (request.url.includes('instagram.com')) {
+              return false; // Block Instagram redirects
+            }
+            return true;
+          }}
+          onError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.error('WebView error: ', nativeEvent);
+          }}
+          onHttpError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.error('WebView HTTP error: ', nativeEvent);
+          }}
+        />
+        {/* Overlay with title and actions */}
+        <View style={styles.reelOverlay}>
+          <View style={styles.reelHeader}>
+            <View style={styles.badge}>
+              <Ionicons name="logo-instagram" size={20} color="#fff" />
+              <Text style={styles.badgeText}>INSTAGRAM REEL</Text>
+            </View>
+            {item.title && (
+              <Text style={styles.reelTitle}>{item.title}</Text>
+            )}
+          </View>
+        </View>
+        
+        {/* Action Buttons */}
+        <View style={styles.actions}>
+          {/* Schedule */}
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => onSchedule(item.id)}
+          >
+            <Ionicons name="calendar" size={32} color="#fff" />
+            <Text style={styles.actionLabel}>Schedule</Text>
+          </TouchableOpacity>
+
+          {/* Mark as Completed */}
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => onComplete(item.id)}
+          >
+            <Ionicons name="checkmark-circle" size={32} color="#fff" />
+            <Text style={styles.actionLabel}>Done</Text>
+          </TouchableOpacity>
+
+          {/* Archive */}
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => onArchive(item.id)}
+          >
+            <Ionicons name="archive" size={32} color="#fff" />
+            <Text style={styles.actionLabel}>Archive</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // Regular content card
   return (
     <View style={styles.container}>
       <LinearGradient
@@ -146,20 +252,20 @@ export default function StreamCard({
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          {/* Classification Badge */}
-          <View style={styles.badge}>
-            <Ionicons 
-              name={getClassificationIcon()} 
-              size={20} 
-              color="#fff" 
-            />
-            <Text style={styles.badgeText}>
-              {item.classification.toUpperCase()}
-            </Text>
+          {/* Title with Classification Badge */}
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>{item.title}</Text>
+            <View style={styles.badge}>
+              <Ionicons 
+                name={getClassificationIcon()} 
+                size={14} 
+                color="#fff" 
+              />
+              <Text style={styles.badgeText}>
+                {(item.classification || 'other').toUpperCase()}
+              </Text>
+            </View>
           </View>
-
-          {/* Title */}
-          <Text style={styles.title}>{item.title}</Text>
 
           {/* Description */}
           {item.description && (
@@ -219,13 +325,13 @@ export default function StreamCard({
             <Text style={styles.actionLabel}>Schedule</Text>
           </TouchableOpacity>
 
-          {/* Add to Stack */}
+          {/* Mark as Completed */}
           <TouchableOpacity 
             style={styles.actionButton}
-            onPress={() => onAddToStack(item.id)}
+            onPress={() => onComplete(item.id)}
           >
-            <Ionicons name="folder" size={32} color="#fff" />
-            <Text style={styles.actionLabel}>Stack</Text>
+            <Ionicons name="checkmark-circle" size={32} color="#fff" />
+            <Text style={styles.actionLabel}>Done</Text>
           </TouchableOpacity>
 
           {/* Archive */}
@@ -247,6 +353,31 @@ const styles = StyleSheet.create({
     width: width,
     height: height,
   },
+  webview: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  reelOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingTop: 60,
+    paddingHorizontal: 20,
+    zIndex: 1,
+  },
+  reelHeader: {
+    alignItems: 'flex-start',
+  },
+  reelTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#fff',
+    marginTop: 12,
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
   gradient: {
     flex: 1,
     padding: 20,
@@ -255,32 +386,38 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+    paddingTop: 80,
     paddingBottom: 120,
   },
-  badge: {
+  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginBottom: 20,
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
-    marginLeft: 6,
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 16,
   },
   title: {
     fontSize: 32,
     fontWeight: '800',
     color: '#fff',
-    marginBottom: 16,
+    flex: 1,
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
+  },
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 16,
+    gap: 4,
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
   },
   description: {
     fontSize: 18,
@@ -328,7 +465,7 @@ const styles = StyleSheet.create({
   },
   actions: {
     position: 'absolute',
-    bottom: 40,
+    bottom: 100,
     right: 20,
     alignItems: 'center',
   },

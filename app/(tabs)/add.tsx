@@ -32,6 +32,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import TagPicker from '@/components/TagPicker';
@@ -41,7 +42,8 @@ import { Item, Classification } from '@/lib/types';
 import { imageUriToBase64 } from '@/lib/screenshots';
 
 export default function AddScreen() {
-  const [inputType, setInputType] = useState<'url' | 'note' | 'image' | null>(null);
+  const insets = useSafeAreaInsets();
+  const [inputType, setInputType] = useState<'url' | 'note' | 'image' | 'instagram' | null>(null);
   const [url, setUrl] = useState('');
   const [noteText, setNoteText] = useState('');
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -90,7 +92,7 @@ export default function AddScreen() {
           return;
         }
         result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          mediaTypes: ['images'],
           quality: 0.8,
         });
       } else {
@@ -100,7 +102,7 @@ export default function AddScreen() {
           return;
         }
         result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          mediaTypes: ['images'],
           quality: 0.8,
         });
       }
@@ -141,8 +143,13 @@ export default function AddScreen() {
    * Save the item to storage
    */
   async function handleSave() {
-    if (!title.trim()) {
+    if (!title.trim() && inputType !== 'instagram') {
       Alert.alert('Error', 'Please enter a title');
+      return;
+    }
+    
+    if (inputType === 'instagram' && !url.trim()) {
+      Alert.alert('Error', 'Please enter an Instagram reel URL');
       return;
     }
 
@@ -152,11 +159,11 @@ export default function AddScreen() {
       // Create item
       const item: Item = {
         id: `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type: inputType === 'url' ? 'link' : inputType === 'image' ? 'screenshot' : 'note',
-        classification,
-        title: title.trim(),
+        type: inputType === 'url' || inputType === 'instagram' ? 'link' : inputType === 'image' ? 'screenshot' : 'note',
+        classification: inputType === 'instagram' ? 'video' : classification,
+        title: title.trim() || (inputType === 'instagram' ? 'Instagram Reel' : ''),
         description: description.trim() || undefined,
-        url: inputType === 'url' ? url.trim() : undefined,
+        url: (inputType === 'url' || inputType === 'instagram') ? url.trim() : undefined,
         imageUri: imageUri || undefined,
         tags,
         created_at: new Date().toISOString(),
@@ -207,7 +214,13 @@ export default function AddScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView 
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 120 }
+        ]}
+        contentInsetAdjustmentBehavior="automatic"
+      >
         {/* Input Type Selection */}
         {!inputType && (
           <View style={styles.typeSelection}>
@@ -248,6 +261,15 @@ export default function AddScreen() {
               <Text style={styles.typeButtonText}>Note</Text>
               <Text style={styles.typeButtonSubtext}>Write a text note</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.typeButton}
+              onPress={() => setInputType('instagram')}
+            >
+              <Ionicons name="logo-instagram" size={32} color="#007AFF" />
+              <Text style={styles.typeButtonText}>Instagram Reel</Text>
+              <Text style={styles.typeButtonSubtext}>Add Instagram reel link</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -277,6 +299,28 @@ export default function AddScreen() {
           </View>
         )}
 
+        {/* Instagram Reel Input */}
+        {inputType === 'instagram' && (
+          <View style={styles.form}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Instagram Reel URL</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="https://www.instagram.com/reel/DOE-opugX2H/"
+                placeholderTextColor="#999"
+                value={url}
+                onChangeText={setUrl}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+              />
+              <Text style={styles.helpText}>
+                Paste an Instagram reel link. It will be embedded without AI processing.
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* Note Input */}
         {inputType === 'note' && (
           <View style={styles.form}>
@@ -299,7 +343,7 @@ export default function AddScreen() {
         )}
 
         {/* Common Fields (shown after analysis or for manual entry) */}
-        {(title || inputType === 'note') && (
+        {(title || inputType === 'note' || inputType === 'instagram') && (
           <View style={styles.form}>
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Title</Text>
@@ -328,7 +372,7 @@ export default function AddScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Classification</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {['article', 'video', 'recipe', 'product', 'event', 'place', 'idea', 'other'].map(type => (
+                {['article', 'video', 'recipe', 'product', 'event', 'place', 'idea', 'fitness', 'food', 'career', 'academia', 'other'].map(type => (
                   <TouchableOpacity
                     key={type}
                     style={[
@@ -420,6 +464,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#999',
     marginTop: 4,
+  },
+  helpText: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 8,
+    fontStyle: 'italic',
   },
   form: {
     gap: 20,

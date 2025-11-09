@@ -141,7 +141,7 @@ export default {
       const pageContent = await fetchPageContent(url);
 
       // Construct prompt for Gemini
-      const analysisPrompt = `Analyze this webpage content and classify it into one of these categories: article, video, recipe, product, event, idea, or other.
+      const analysisPrompt = `Analyze this webpage content and classify it into one of these categories: article, video, recipe, product, event, place, idea, fitness, food, career, academia, or other.
 
 URL: ${url}
 

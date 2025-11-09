@@ -26,6 +26,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import ItemCard from '@/components/ItemCard';
 import { Stack, Item } from '@/lib/types';
@@ -34,6 +35,7 @@ import { getStackById, getItems, updateStack, deleteStack } from '@/lib/storage'
 export default function StackDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [stack, setStack] = useState<Stack | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
@@ -81,7 +83,7 @@ export default function StackDetailScreen() {
    * Handle item press
    */
   function handleItemPress(itemId: string) {
-    router.push(`/item/${itemId}`);
+    router.push(`/item/${itemId}?from=stacks`);
   }
 
   /**
@@ -155,7 +157,7 @@ export default function StackDetailScreen() {
   return (
     <View style={styles.container}>
       {/* Stack Header */}
-      <View style={[styles.header, { backgroundColor: stack.color }]}>
+      <View style={[styles.header, { backgroundColor: stack.color, paddingTop: insets.top + 12 }]}>
         <View style={styles.headerContent}>
           <Text style={styles.stackName}>{stack.name}</Text>
           {stack.description && (
@@ -190,7 +192,11 @@ export default function StackDetailScreen() {
           <ItemCard item={item} onPress={handleItemPress} />
         )}
         keyExtractor={item => item.id}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: insets.bottom + 120 }
+        ]}
+        contentInsetAdjustmentBehavior="automatic"
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="folder-open-outline" size={64} color="#ccc" />
@@ -227,7 +233,6 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 20,
-    paddingTop: 32,
   },
   headerContent: {
     marginBottom: 16,

@@ -21,7 +21,11 @@ export type Classification =
   | 'product' 
   | 'event' 
   | 'place' 
-  | 'idea' 
+  | 'idea'
+  | 'fitness'
+  | 'food'
+  | 'career'
+  | 'academia'
   | 'other';
 
 /**
@@ -49,6 +53,8 @@ export interface Item {
   duration?: number;
   place_name?: string;
   place_address?: string;
+  place_latitude?: number;
+  place_longitude?: number;
   created_at: string;
   viewed: boolean;
   archived: boolean;

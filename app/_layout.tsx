@@ -13,8 +13,10 @@
  */
 
 import { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import { Slot } from 'expo-router';
 import { Audio } from 'expo-av';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import { seedData, shouldSeedData } from '@/lib/seed';
 
 export default function RootLayout() {
@@ -36,12 +38,15 @@ export default function RootLayout() {
     async function checkAndSeedData() {
       try {
         const needsSeeding = await shouldSeedData();
+        console.log('🔍 Checking if seed data needed...', needsSeeding);
         if (needsSeeding) {
-          console.log('First launch detected, seeding data...');
+          console.log('🌱 First launch detected, seeding data...');
           await seedData();
+        } else {
+          console.log('✅ Seed data already exists, skipping...');
         }
       } catch (error) {
-        console.error('Failed to check/seed data:', error);
+        console.error('❌ Failed to check/seed data:', error);
       }
     }
 
@@ -50,29 +55,10 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        animation: 'default',
-      }}
-    >
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen 
-        name="item/[id]" 
-        options={{
-          presentation: 'modal' as any,
-          headerShown: true,
-          headerTitle: 'Item Details',
-        }}
-      />
-      <Stack.Screen 
-        name="silo/[id]" 
-        options={{
-          headerShown: true,
-          headerTitle: 'Stack',
-        }}
-      />
-    </Stack>
+    <SafeAreaProvider>
+      <StatusBar style="light" translucent={false} />
+      <Slot />
+    </SafeAreaProvider>
   );
 }
 

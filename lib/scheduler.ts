@@ -98,7 +98,6 @@ export async function scheduleItemReview(
       notes: item.description || `Review ${item.type} content`,
       startDate,
       endDate,
-      timeZone: 'default',
       alarms: [{ relativeOffset: -15 }], // Remind 15 min before
     });
 

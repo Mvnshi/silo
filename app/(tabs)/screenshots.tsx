@@ -21,14 +21,24 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  runOnJS,
+  interpolate,
+  Extrapolate,
+} from 'react-native-reanimated';
 import {
   getRecentScreenshots,
   imageUriToBase64,
@@ -39,10 +49,22 @@ import { analyzeImage, generateAudio } from '@/lib/api';
 import { addItem } from '@/lib/storage';
 import { Item } from '@/lib/types';
 
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
+const CARD_WIDTH = SCREEN_WIDTH - 20;
+const CARD_HEIGHT = SCREEN_HEIGHT * 0.75;
+
 export default function ScreenshotsScreen() {
+  const insets = useSafeAreaInsets();
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(false);
+  
+  // Animation values for current card
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const rotate = useSharedValue(0);
+  const opacity = useSharedValue(1);
 
   /**
    * Load recent screenshots from device
@@ -52,6 +74,12 @@ export default function ScreenshotsScreen() {
       setLoading(true);
       const recentScreenshots = await getRecentScreenshots(30);
       setScreenshots(recentScreenshots);
+      setCurrentIndex(0);
+      // Reset animation values
+      translateX.value = 0;
+      translateY.value = 0;
+      rotate.value = 0;
+      opacity.value = 1;
     } catch (error) {
       console.error('Failed to load screenshots:', error);
       Alert.alert('Error', 'Failed to load screenshots. Please check permissions.');
@@ -68,59 +96,40 @@ export default function ScreenshotsScreen() {
   );
 
   /**
-   * Toggle screenshot selection
+   * Move to next card
    */
-  function toggleSelection(id: string) {
-    setSelectedIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
+  function moveToNext() {
+    if (currentIndex < screenshots.length - 1) {
+      setCurrentIndex(currentIndex + 1);
+      // Reset animation values
+      translateX.value = 0;
+      translateY.value = 0;
+      rotate.value = 0;
+      opacity.value = 1;
+    }
   }
 
   /**
-   * Import selected screenshots
+   * Handle swipe right (import)
    */
-  async function handleImport() {
-    if (selectedIds.size === 0) {
-      Alert.alert('No Selection', 'Please select screenshots to import');
-      return;
-    }
-
+  async function handleSwipeRight(screenshot: Screenshot) {
     try {
       setLoading(true);
-
-      const selectedScreenshots = screenshots.filter(s => selectedIds.has(s.id));
-
-      Alert.alert(
-        'Import Screenshots',
-        `Import ${selectedScreenshots.length} screenshot(s)?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Import',
-            onPress: async () => {
-              for (const screenshot of selectedScreenshots) {
-                await importScreenshot(screenshot);
-              }
-
-              Alert.alert('Success', 'Screenshots imported successfully');
-              setSelectedIds(new Set());
-              await loadScreenshots();
-            },
-          },
-        ]
-      );
+      await importScreenshot(screenshot);
+      moveToNext();
     } catch (error) {
-      console.error('Failed to import screenshots:', error);
-      Alert.alert('Error', 'Failed to import screenshots');
+      console.error('Failed to import screenshot:', error);
+      Alert.alert('Error', 'Failed to import screenshot');
     } finally {
       setLoading(false);
     }
+  }
+
+  /**
+   * Handle swipe left (skip)
+   */
+  function handleSwipeLeft() {
+    moveToNext();
   }
 
   /**
@@ -173,63 +182,198 @@ export default function ScreenshotsScreen() {
   }
 
   /**
-   * Render screenshot item
+   * Pan gesture handler
    */
-  function renderScreenshot({ item }: { item: Screenshot }) {
-    const isSelected = selectedIds.has(item.id);
+  let panGesture: ReturnType<typeof Gesture.Pan> | null = null;
+  try {
+    panGesture = Gesture.Pan()
+      .onUpdate((event) => {
+        translateX.value = event.translationX;
+        translateY.value = event.translationY;
+        // More natural rotation like Tinder
+        rotate.value = interpolate(
+          event.translationX,
+          [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
+          [-20, 0, 20],
+          Extrapolate.CLAMP
+        );
+      })
+      .onEnd((event) => {
+        const shouldSwipeRight = event.translationX > SWIPE_THRESHOLD;
+        const shouldSwipeLeft = event.translationX < -SWIPE_THRESHOLD;
 
-    return (
-      <TouchableOpacity
-        style={styles.screenshotContainer}
-        onPress={() => toggleSelection(item.id)}
-        activeOpacity={0.8}
-      >
-        <Image source={{ uri: item.uri }} style={styles.screenshot} />
-        
-        {/* Selection Overlay */}
-        {isSelected && (
-          <View style={styles.selectionOverlay}>
-            <View style={styles.checkmark}>
-              <Ionicons name="checkmark" size={20} color="#fff" />
-            </View>
-          </View>
-        )}
-      </TouchableOpacity>
+        if (shouldSwipeRight) {
+          // Swipe right - import (more springy like Tinder)
+          translateX.value = withSpring(SCREEN_WIDTH * 1.5, {
+            damping: 15,
+            stiffness: 150,
+          });
+          opacity.value = withSpring(0, {
+            damping: 15,
+            stiffness: 150,
+          });
+          if (screenshots[currentIndex]) {
+            runOnJS(handleSwipeRight)(screenshots[currentIndex]);
+          }
+        } else if (shouldSwipeLeft) {
+          // Swipe left - skip
+          translateX.value = withSpring(-SCREEN_WIDTH * 1.5, {
+            damping: 15,
+            stiffness: 150,
+          });
+          opacity.value = withSpring(0, {
+            damping: 15,
+            stiffness: 150,
+          });
+          runOnJS(handleSwipeLeft)();
+        } else {
+          // Return to center (snappy spring)
+          translateX.value = withSpring(0, {
+            damping: 20,
+            stiffness: 300,
+          });
+          translateY.value = withSpring(0, {
+            damping: 20,
+            stiffness: 300,
+          });
+          rotate.value = withSpring(0, {
+            damping: 20,
+            stiffness: 300,
+          });
+        }
+      });
+  } catch (error) {
+    console.warn('Gesture handler not available:', error);
+    panGesture = null;
+  }
+
+  /**
+   * Animated style for card
+   */
+  const cardStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        { translateX: translateX.value },
+        { translateY: translateY.value },
+        { rotate: `${rotate.value}deg` },
+      ],
+      opacity: opacity.value,
+    };
+  });
+
+  /**
+   * Animated style for overlay (green for right, red for left)
+   * More subtle like Tinder
+   */
+  const overlayStyle = useAnimatedStyle(() => {
+    const overlayOpacity = interpolate(
+      Math.abs(translateX.value),
+      [0, SWIPE_THRESHOLD],
+      [0, 0.5],
+      Extrapolate.CLAMP
     );
+    
+    const isRight = translateX.value > 0;
+    
+    return {
+      opacity: overlayOpacity,
+      backgroundColor: isRight ? 'rgba(76, 175, 80, 0.6)' : 'rgba(244, 67, 54, 0.6)',
+    };
+  });
+
+  /**
+   * Animated style for import indicator (only show when swiping right)
+   */
+  const importIndicatorStyle = useAnimatedStyle(() => {
+    const indicatorOpacity = interpolate(
+      translateX.value,
+      [0, SWIPE_THRESHOLD],
+      [0, 1],
+      Extrapolate.CLAMP
+    );
+    
+    return {
+      opacity: indicatorOpacity,
+    };
+  });
+
+  /**
+   * Animated style for skip indicator (only show when swiping left)
+   */
+  const skipIndicatorStyle = useAnimatedStyle(() => {
+    const indicatorOpacity = interpolate(
+      -translateX.value,
+      [0, SWIPE_THRESHOLD],
+      [0, 1],
+      Extrapolate.CLAMP
+    );
+    
+    return {
+      opacity: indicatorOpacity,
+    };
+  });
+
+  /**
+   * Render swipeable card
+   */
+  function renderCard() {
+    if (currentIndex >= screenshots.length) {
+      return (
+        <View style={styles.emptyCard}>
+          <Ionicons name="checkmark-circle" size={64} color="#4CAF50" />
+          <Text style={styles.emptyCardText}>All done!</Text>
+          <Text style={styles.emptyCardSubtext}>
+            Swipe right on screenshots to import them
+          </Text>
+        </View>
+      );
+    }
+
+    const screenshot = screenshots[currentIndex];
+
+    const cardContent = (
+      <Animated.View style={[styles.card, cardStyle]}>
+        <Image source={{ uri: screenshot.uri }} style={styles.cardImage} />
+        
+        {/* Swipe overlay - Tinder style indicators */}
+        <Animated.View style={[styles.swipeOverlay, overlayStyle]}>
+          <Animated.View style={[styles.swipeIndicator, importIndicatorStyle, styles.importIndicator]}>
+            <Ionicons name="checkmark-circle" size={80} color="#fff" />
+            <Text style={styles.swipeText}>LIKE</Text>
+          </Animated.View>
+          <Animated.View style={[styles.swipeIndicator, skipIndicatorStyle, styles.skipIndicator]}>
+            <Ionicons name="close-circle" size={80} color="#fff" />
+            <Text style={styles.swipeText}>NOPE</Text>
+          </Animated.View>
+        </Animated.View>
+      </Animated.View>
+    );
+
+    if (panGesture) {
+      return (
+        <GestureDetector gesture={panGesture}>
+          {cardContent}
+        </GestureDetector>
+      );
+    }
+
+    return cardContent;
   }
 
   return (
-    <View style={styles.container}>
+    <GestureHandlerRootView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <Text style={styles.headerTitle}>
-          {selectedIds.size > 0 
-            ? `${selectedIds.size} selected` 
-            : 'Recent Screenshots'}
+          {currentIndex < screenshots.length
+            ? `${currentIndex + 1} / ${screenshots.length}`
+            : 'Screenshots'}
         </Text>
-        
-        {selectedIds.size > 0 && (
-          <View style={styles.headerActions}>
-            <TouchableOpacity
-              style={styles.clearButton}
-              onPress={() => setSelectedIds(new Set())}
-            >
-              <Text style={styles.clearButtonText}>Clear</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.importButton}
-              onPress={handleImport}
-              disabled={loading}
-            >
-              <Text style={styles.importButtonText}>Import</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        <Text style={styles.headerSubtitle}>Swipe right to import</Text>
       </View>
 
-      {/* Screenshots Grid */}
-      {loading ? (
+      {/* Swipeable Cards */}
+      {loading && currentIndex === 0 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
           <Text style={styles.loadingText}>Loading screenshots...</Text>
@@ -243,15 +387,11 @@ export default function ScreenshotsScreen() {
           </Text>
         </View>
       ) : (
-        <FlatList
-          data={screenshots}
-          renderItem={renderScreenshot}
-          keyExtractor={item => item.id}
-          numColumns={3}
-          contentContainerStyle={styles.grid}
-        />
+        <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 100 }]}>
+          {renderCard()}
+        </View>
       )}
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
@@ -261,69 +401,109 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     backgroundColor: '#fff',
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
+    alignItems: 'center',
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#333',
   },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 12,
+  headerSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
   },
-  clearButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  clearButtonText: {
-    fontSize: 16,
-    color: '#007AFF',
-  },
-  importButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  importButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  grid: {
-    padding: 2,
-  },
-  screenshotContainer: {
+  cardContainer: {
     flex: 1,
-    margin: 2,
-    aspectRatio: 0.75,
-    position: 'relative',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingTop: 20,
   },
-  screenshot: {
+  card: {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 10,
+    position: 'absolute',
+    top: 0,
+  },
+  cardImage: {
     width: '100%',
     height: '100%',
+    borderRadius: 16,
     backgroundColor: '#e0e0e0',
   },
-  selectionOverlay: {
+  swipeOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 122, 255, 0.3)',
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  checkmark: {
-    width: 32,
-    height: 32,
+  swipeIndicator: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  importIndicator: {
+    top: 60,
+    left: 20,
+    borderWidth: 4,
+    borderColor: '#fff',
+    borderRadius: 12,
+    padding: 8,
+    transform: [{ rotate: '-15deg' }],
+  },
+  skipIndicator: {
+    top: 60,
+    right: 20,
+    borderWidth: 4,
+    borderColor: '#fff',
+    borderRadius: 12,
+    padding: 8,
+    transform: [{ rotate: '15deg' }],
+  },
+  swipeText: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#fff',
+    marginTop: 4,
+    letterSpacing: 2,
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
+  },
+  emptyCard: {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
     borderRadius: 16,
-    backgroundColor: '#007AFF',
+    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 32,
+    position: 'absolute',
+    top: 0,
+  },
+  emptyCardText: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#333',
+    marginTop: 16,
+  },
+  emptyCardSubtext: {
+    fontSize: 16,
+    color: '#666',
+    marginTop: 8,
+    textAlign: 'center',
   },
   loadingContainer: {
     flex: 1,

@@ -29,7 +29,7 @@ export interface Env {
  * Classification result returned by AI analysis
  */
 export interface ClassificationResult {
-  classification: 'article' | 'video' | 'recipe' | 'product' | 'event' | 'place' | 'idea' | 'other';
+  classification: 'article' | 'video' | 'recipe' | 'product' | 'event' | 'place' | 'idea' | 'fitness' | 'food' | 'career' | 'academia' | 'other';
   title: string;
   description?: string;
   script?: string;

@@ -29,10 +29,11 @@ import { format } from 'date-fns';
 interface ItemCardProps {
   item: Item;
   onPress: (itemId: string) => void;
+  onLongPress?: (itemId: string) => void;
   showStack?: boolean;
 }
 
-export default function ItemCard({ item, onPress, showStack = false }: ItemCardProps) {
+export default function ItemCard({ item, onPress, onLongPress, showStack = false }: ItemCardProps) {
   /**
    * Get icon for classification type
    */
@@ -45,6 +46,10 @@ export default function ItemCard({ item, onPress, showStack = false }: ItemCardP
       case 'event': return 'calendar';
       case 'place': return 'location';
       case 'idea': return 'bulb';
+      case 'fitness': return 'fitness';
+      case 'food': return 'restaurant';
+      case 'career': return 'briefcase';
+      case 'academia': return 'school';
       default: return 'document';
     }
   }
@@ -61,6 +66,10 @@ export default function ItemCard({ item, onPress, showStack = false }: ItemCardP
       case 'event': return '#fa709a';
       case 'place': return '#30cfd0';
       case 'idea': return '#a8edea';
+      case 'fitness': return '#FF6B6B';
+      case 'food': return '#FFA07A';
+      case 'career': return '#4ECDC4';
+      case 'academia': return '#95E1D3';
       default: return '#667eea';
     }
   }
@@ -91,6 +100,7 @@ export default function ItemCard({ item, onPress, showStack = false }: ItemCardP
     <TouchableOpacity
       style={styles.container}
       onPress={() => onPress(item.id)}
+      onLongPress={() => onLongPress?.(item.id)}
       activeOpacity={0.7}
     >
       {/* Left Color Bar */}
