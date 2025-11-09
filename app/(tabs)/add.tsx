@@ -52,6 +52,7 @@ export default function AddScreen() {
   const [description, setDescription] = useState('');
   const [classification, setClassification] = useState<Classification>('other');
   const [tags, setTags] = useState<string[]>([]);
+  const [script, setScript] = useState<string>(''); // AI-generated script for audio
   const [loading, setLoading] = useState(false);
 
   /**
@@ -71,6 +72,7 @@ export default function AddScreen() {
       setDescription(analysis.description || '');
       setClassification(analysis.classification);
       setTags(analysis.tags || []);
+      setScript(analysis.script || ''); // Store script for audio generation
     } catch (error) {
       console.error('Failed to analyze URL:', error);
       Alert.alert('Error', 'Failed to analyze URL. Please try again.');
@@ -132,6 +134,7 @@ export default function AddScreen() {
       setDescription(analysis.description || '');
       setClassification(analysis.classification);
       setTags(analysis.tags || []);
+      setScript(analysis.script || ''); // Store script for audio generation
     } catch (error) {
       console.error('Failed to analyze image:', error);
       Alert.alert('Error', 'Failed to analyze image. Please enter details manually.');
@@ -161,20 +164,22 @@ export default function AddScreen() {
         description: description.trim() || undefined,
         url: inputType === 'url' ? url.trim() : undefined,
         imageUri: imageUri || undefined,
+        script: script.trim() || undefined, // Store AI-generated script
         tags,
         created_at: new Date().toISOString(),
         viewed: false,
         archived: false,
       };
 
-      // Generate audio narration if description exists
-      if (description.trim()) {
+      // Generate audio narration using script (from AI analysis) or fallback to description
+      const audioText = script.trim() || description.trim();
+      if (audioText) {
         try {
-          const audioResponse = await generateAudio(description.trim(), item.id);
+          const audioResponse = await generateAudio(audioText, item.id);
           item.audio_url = audioResponse.audioUrl;
         } catch (error) {
           console.error('Failed to generate audio:', error);
-          // Continue without audio
+          // Continue without audio - will work once API keys are set up
         }
       }
 
@@ -194,6 +199,7 @@ export default function AddScreen() {
             setDescription('');
             setClassification('other');
             setTags([]);
+            setScript('');
           },
         },
       ]);

@@ -113,14 +113,14 @@ Return a JSON object with the following structure:
   "classification": "category",
   "title": "brief title",
   "description": "detailed description (2-3 sentences)",
-  "script": "natural spoken summary for text-to-speech (1-2 sentences)",
+  "script": "contextual spoken summary for text-to-speech (10-30 seconds when read aloud, max 150 words). Make it contextual: if fitness-related, mention key benefits and main points; if food-related, describe taste, main ingredients, and prep time if applicable; if a tool/product, highlight key benefits and use cases; if an article/idea, summarize main takeaways. Keep it conversational and natural.",
   "tags": ["tag1", "tag2", "tag3"],
   "duration": estimated_minutes_to_review,
   "place_name": "if it's a place/location",
   "place_address": "if it's a place/location"
 }
 
-Be concise and accurate. The script should sound natural when spoken aloud.`;
+Be concise and accurate. The script should sound natural when spoken aloud and be contextual to the classification type.`;
 
       // Call Gemini API
       const geminiResponse = await fetch(

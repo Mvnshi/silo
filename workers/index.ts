@@ -17,6 +17,7 @@ import analyzeImage from './analyze-image';
 import analyzeLink from './analyze-link';
 import generateAudio from './generate-audio';
 import suggestSchedule from './suggest-schedule';
+import instagramDownload from './instagram-download';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -52,6 +53,9 @@ export default {
       case '/api/suggest-schedule':
         return suggestSchedule.fetch(request, env);
       
+      case '/api/instagram-download':
+        return instagramDownload.fetch(request, env);
+      
       case '/':
       case '/api':
         // Health check endpoint
@@ -64,7 +68,8 @@ export default {
               '/api/analyze-image',
               '/api/analyze-link',
               '/api/generate-audio',
-              '/api/suggest-schedule'
+              '/api/suggest-schedule',
+              '/api/instagram-download'
             ]
           }),
           {

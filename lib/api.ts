@@ -23,6 +23,7 @@ import {
   AnalyzeLinkResponse,
   GenerateAudioResponse,
   ScheduleSuggestionResponse,
+  InstagramDownloadResponse,
   ApiErrorResponse,
 } from './types';
 
@@ -240,6 +241,37 @@ export async function aiSearch(
         );
       })
       .map(({ index }) => index.toString());
+  }
+}
+
+/**
+ * Download Instagram post/video content
+ * 
+ * @param url - Instagram post/reel URL
+ * @returns Instagram content data (video URL, image URL, caption, etc.)
+ */
+export async function downloadInstagram(
+  url: string
+): Promise<InstagramDownloadResponse> {
+  try {
+    if (!isApiConfigured()) {
+      throw new Error('API base URL not configured');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/instagram-download`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+
+    if (!response.ok) {
+      const errorData = (await response.json()) as ApiErrorResponse;
+      throw new Error(errorData.error || 'Failed to download Instagram content');
+    }
+
+    return (await response.json()) as InstagramDownloadResponse;
+  } catch (error) {
+    return handleApiError(error);
   }
 }
 

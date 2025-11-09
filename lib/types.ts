@@ -140,6 +140,18 @@ export interface ScheduleSuggestionResponse {
 }
 
 /**
+ * API response from Instagram download
+ */
+export interface InstagramDownloadResponse {
+  success: boolean;
+  videoUrl?: string;
+  imageUrl?: string;
+  caption?: string;
+  username?: string;
+  type: 'video' | 'image' | 'carousel';
+}
+
+/**
  * Error response from API
  */
 export interface ApiErrorResponse {

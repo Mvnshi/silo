@@ -23,6 +23,7 @@ import {
   TouchableOpacity,
   Dimensions,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Audio } from 'expo-av';
@@ -48,6 +49,8 @@ export default function StreamCard({
 }: StreamCardProps) {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [webViewError, setWebViewError] = useState(false);
+  const [webViewLoading, setWebViewLoading] = useState(true);
   
   // Check if this is an Instagram reel
   const isReel = item.url ? isInstagramReel(item.url) : false;
@@ -72,10 +75,26 @@ export default function StreamCard({
     return () => {
       // Cleanup audio on unmount
       if (sound) {
-        sound.unloadAsync();
+        sound.unloadAsync().catch(console.error);
       }
     };
   }, [item.audio_url]);
+
+  /**
+   * Handle audio playback end
+   */
+  useEffect(() => {
+    if (!sound) return;
+
+    sound.setOnPlaybackStatusUpdate((status) => {
+      if (status.isLoaded) {
+        setIsPlaying(status.isPlaying);
+        if (status.didJustFinish) {
+          setIsPlaying(false);
+        }
+      }
+    });
+  }, [sound]);
 
   /**
    * Load audio from Vultr CDN URL
@@ -164,37 +183,90 @@ export default function StreamCard({
   if (isReel && embedUrl) {
     return (
       <View style={styles.container}>
-        <WebView
-          source={{ uri: embedUrl }}
-          style={styles.webview}
-          allowsFullscreenVideo={true}
-          mediaPlaybackRequiresUserAction={false}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          startInLoadingState={true}
-          scalesPageToFit={false}
-          allowsInlineMediaPlayback={true}
-          mixedContentMode="always"
-          originWhitelist={['*']}
-          onShouldStartLoadWithRequest={(request) => {
-            // Only allow loading the embed URL, block Instagram redirects
-            if (request.url.includes('eeinstagram.com')) {
+        {webViewError ? (
+          // Fallback UI if WebView fails
+          <View style={[styles.webview, { backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }]}>
+            <Ionicons name="logo-instagram" size={64} color="#E4405F" />
+            <Text style={{ color: '#fff', marginTop: 16, fontSize: 16, fontWeight: '600' }}>
+              Instagram Reel
+            </Text>
+            <Text style={{ color: '#999', marginTop: 8, fontSize: 14, textAlign: 'center', paddingHorizontal: 32 }}>
+              {item.title || 'Tap to view on Instagram'}
+            </Text>
+            <TouchableOpacity
+              style={{ marginTop: 24, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#E4405F', borderRadius: 8 }}
+              onPress={() => {
+                // Open in browser as fallback
+                if (item.url) {
+                  // You could use Linking.openURL here if needed
+                  console.log('Would open:', item.url);
+                }
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '600' }}>Open in Instagram</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <WebView
+            source={{ uri: embedUrl }}
+            style={styles.webview}
+            allowsFullscreenVideo={true}
+            mediaPlaybackRequiresUserAction={false}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            startInLoadingState={true}
+            scalesPageToFit={true}
+            allowsInlineMediaPlayback={true}
+            mixedContentMode="always"
+            originWhitelist={['*']}
+            onLoadStart={() => {
+              setWebViewLoading(true);
+              setWebViewError(false);
+            }}
+            onLoadEnd={() => {
+              setWebViewLoading(false);
+            }}
+            onShouldStartLoadWithRequest={(request) => {
+              // Only allow loading the embed URL, block Instagram redirects
+              if (request.url.includes('eeinstagram.com')) {
+                return true;
+              }
+              if (request.url.includes('instagram.com')) {
+                return false; // Block Instagram redirects
+              }
               return true;
-            }
-            if (request.url.includes('instagram.com')) {
-              return false; // Block Instagram redirects
-            }
-            return true;
-          }}
-          onError={(syntheticEvent) => {
-            const { nativeEvent } = syntheticEvent;
-            console.error('WebView error: ', nativeEvent);
-          }}
-          onHttpError={(syntheticEvent) => {
-            const { nativeEvent } = syntheticEvent;
-            console.error('WebView HTTP error: ', nativeEvent);
-          }}
-        />
+            }}
+            onError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              console.error('WebView error: ', nativeEvent);
+              setWebViewError(true);
+              setWebViewLoading(false);
+            }}
+            onHttpError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              console.error('WebView HTTP error: ', nativeEvent);
+              // Don't set error on HTTP errors, might still work
+            }}
+            renderError={() => {
+              setWebViewError(true);
+              setWebViewLoading(false);
+              return (
+                <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
+                  <Ionicons name="logo-instagram" size={64} color="#E4405F" />
+                  <Text style={{ color: '#fff', marginTop: 16 }}>Failed to load reel</Text>
+                </View>
+              );
+            }}
+          />
+        )}
+        
+        {webViewLoading && !webViewError && (
+          <View style={[styles.webview, { position: 'absolute', backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }]}>
+            <ActivityIndicator size="large" color="#E4405F" />
+            <Text style={{ color: '#fff', marginTop: 16 }}>Loading reel...</Text>
+          </View>
+        )}
+        
         {/* Overlay with title and actions */}
         <View style={styles.reelOverlay}>
           <View style={styles.reelHeader}>
@@ -302,8 +374,8 @@ export default function StreamCard({
 
         {/* Action Buttons */}
         <View style={styles.actions}>
-          {/* Audio Playback */}
-          {item.audio_url && (
+          {/* Audio Playback / Read Button */}
+          {item.audio_url ? (
             <TouchableOpacity 
               style={styles.actionButton}
               onPress={togglePlayback}
@@ -313,8 +385,27 @@ export default function StreamCard({
                 size={48} 
                 color="#fff" 
               />
+              <Text style={styles.actionLabel}>
+                {isPlaying ? 'Pause' : 'Read'}
+              </Text>
             </TouchableOpacity>
-          )}
+          ) : item.script ? (
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => {
+                // If no audio but script exists, could generate on-demand
+                // For now, just show that script exists
+                console.log('Script available but no audio:', item.script);
+              }}
+            >
+              <Ionicons 
+                name="volume-mute" 
+                size={32} 
+                color="#fff" 
+              />
+              <Text style={styles.actionLabel}>No Audio</Text>
+            </TouchableOpacity>
+          ) : null}
 
           {/* Schedule */}
           <TouchableOpacity 
