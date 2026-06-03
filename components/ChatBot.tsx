@@ -25,7 +25,7 @@ import { ragQuery } from '@/lib/api';
 import { getUserId, getItems } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { addItem } from '@/lib/storage';
-import { Item } from '@/lib/types';
+import { createItem } from '@/lib/items';
 import { format } from 'date-fns';
 import { Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -185,9 +185,9 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
     try {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // Create item for the event
-      const eventItem: Item = {
-        id: `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      // Create item for the event — createItem fills id/created_at/updated_at;
+      // status derives to 'scheduled' from scheduled_date.
+      const eventItem = createItem({
         type: 'note',
         classification: 'event',
         title: event.title,
@@ -195,10 +195,7 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
         scheduled_date: event.date,
         scheduled_time: event.time,
         tags: ['ai-suggested', 'event'],
-        created_at: new Date().toISOString(),
-        viewed: false,
-        archived: false,
-      };
+      });
 
       await addItem(eventItem);
       await scheduleItemReview(eventItem, event.date, event.time, 30);

@@ -20,25 +20,26 @@ import suggestSchedule from './suggest-schedule';
 import instagramDownload from './instagram-download';
 import generateEmbedding from './generate-embedding';
 import ragQuery from './rag-query';
+import { applySecurity, corsHeaders } from './middleware';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Enable CORS for all routes
-    const corsHeaders = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    };
-
-    // Handle preflight requests
+    // Handle preflight requests (corsHeaders imported from ./middleware)
     if (request.method === 'OPTIONS') {
-      return new Response(null, { 
+      return new Response(null, {
         status: 204,
-        headers: corsHeaders 
+        headers: corsHeaders,
       });
+    }
+
+    // Apply security (method + body-size + shared-token + per-IP rate limit) to
+    // the processing endpoints. Health checks ('/' and '/api') stay open.
+    if (path.startsWith('/api/')) {
+      const blocked = await applySecurity(request, env, path);
+      if (blocked) return blocked;
     }
 
     // Route to appropriate handler

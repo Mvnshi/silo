@@ -17,6 +17,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Item, Stack, UserSettings, ScheduledEvent } from './types';
+import { normalizeItem } from './items';
 
 // Storage keys
 const KEYS = {
@@ -25,7 +26,26 @@ const KEYS = {
   SETTINGS: '@silo:settings',
   EVENTS: '@silo:events',
   USER_ID: '@silo:userId',
+  SCHEMA_VERSION: '@silo:schemaVersion',
 };
+
+/** Bump when the persisted Item/Stack shape changes; drives runMigrations(). */
+export const CURRENT_SCHEMA_VERSION = 2;
+
+/**
+ * Serialize all item read-modify-write mutations so concurrent callers (e.g. two
+ * rapid swipes) cannot interleave and lose updates. Each mutation waits for the
+ * previous to settle. Errors are isolated so one failure doesn't wedge the queue.
+ */
+let itemsWriteChain: Promise<unknown> = Promise.resolve();
+function withItemsLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = itemsWriteChain.then(fn, fn);
+  itemsWriteChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
 
 /**
  * Get all items from storage
@@ -33,7 +53,10 @@ const KEYS = {
 export async function getItems(): Promise<Item[]> {
   try {
     const json = await AsyncStorage.getItem(KEYS.ITEMS);
-    return json ? JSON.parse(json) : [];
+    if (!json) return [];
+    const raw = JSON.parse(json) as Item[];
+    // Idempotently upgrade legacy/partial items to the unified schema on every read.
+    return Array.isArray(raw) ? raw.map(normalizeItem) : [];
   } catch (error) {
     console.error('Failed to load items:', error);
     return [];
@@ -64,30 +87,47 @@ export async function getItemById(id: string): Promise<Item | null> {
  * Add a new item
  */
 export async function addItem(item: Item): Promise<void> {
-  const items = await getItems();
-  items.unshift(item); // Add to beginning
-  await saveItems(items);
+  return withItemsLock(async () => {
+    const items = await getItems();
+    items.unshift(normalizeItem(item)); // Add to beginning
+    await saveItems(items);
+  });
 }
 
 /**
  * Update an existing item
  */
 export async function updateItem(id: string, updates: Partial<Item>): Promise<void> {
-  const items = await getItems();
-  const index = items.findIndex(item => item.id === id);
-  if (index >= 0) {
-    items[index] = { ...items[index], ...updates };
-    await saveItems(items);
-  }
+  return withItemsLock(async () => {
+    const items = await getItems();
+    const index = items.findIndex(item => item.id === id);
+    if (index >= 0) {
+      const merged: Item = {
+        ...items[index],
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
+      // Maintain completed_at when an item transitions to done.
+      const becameDone =
+        updates.status === 'done' || updates.bucketlist_completed === true;
+      if (becameDone && !merged.completed_at) {
+        merged.completed_at = merged.updated_at;
+      }
+      items[index] = merged;
+      await saveItems(items);
+    }
+  });
 }
 
 /**
  * Delete an item
  */
 export async function deleteItem(id: string): Promise<void> {
-  const items = await getItems();
-  const filtered = items.filter(item => item.id !== id);
-  await saveItems(filtered);
+  return withItemsLock(async () => {
+    const items = await getItems();
+    const filtered = items.filter(item => item.id !== id);
+    await saveItems(filtered);
+  });
 }
 
 /**
@@ -252,6 +292,34 @@ export async function clearAll(): Promise<void> {
   } catch (error) {
     console.error('Failed to clear storage:', error);
     throw new Error('Failed to clear storage');
+  }
+}
+
+/**
+ * One-time data migration: normalize all stored items to the current schema and
+ * persist the result, then record the schema version so this only runs after an
+ * upgrade. Safe to call on every app launch (no-op once migrated). getItems()
+ * normalizes on read regardless, so correctness never depends on this — it just
+ * writes the upgraded shape back once and avoids repeated work.
+ */
+export async function runMigrations(): Promise<void> {
+  try {
+    const stored = await AsyncStorage.getItem(KEYS.SCHEMA_VERSION);
+    const version = stored ? parseInt(stored, 10) : 0;
+    if (version >= CURRENT_SCHEMA_VERSION) return;
+
+    await withItemsLock(async () => {
+      const items = await getItems(); // getItems() already normalizes
+      await saveItems(items);
+      await AsyncStorage.setItem(
+        KEYS.SCHEMA_VERSION,
+        String(CURRENT_SCHEMA_VERSION)
+      );
+    });
+    console.log(`[silo] storage migrated ${version} -> ${CURRENT_SCHEMA_VERSION}`);
+  } catch (error) {
+    // Never block app start on a migration failure; getItems() still normalizes on read.
+    console.error('Storage migration failed (non-fatal):', error);
   }
 }
 

@@ -30,6 +30,17 @@ import {
 // Get API base URL from environment variable
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || '';
 
+// Optional shared client token. When set (and matched by APP_CLIENT_TOKEN on the
+// worker), it gates the backend against anonymous abuse. Sent as X-Silo-Client.
+const CLIENT_TOKEN = process.env.EXPO_PUBLIC_CLIENT_TOKEN || '';
+
+/** Common request headers: JSON content type + optional shared client token. */
+function apiHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (CLIENT_TOKEN) headers['X-Silo-Client'] = CLIENT_TOKEN;
+  return headers;
+}
+
 /**
  * Check if API is configured
  */
@@ -65,7 +76,7 @@ export async function analyzeImage(
 
     const response = await fetch(`${API_BASE_URL}/api/analyze-image`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(),
       body: JSON.stringify({ imageBase64, mimeType }),
     });
 
@@ -94,7 +105,7 @@ export async function analyzeLink(url: string): Promise<AnalyzeLinkResponse> {
 
     const response = await fetch(`${API_BASE_URL}/api/analyze-link`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(),
       body: JSON.stringify({ url }),
     });
 
@@ -142,7 +153,7 @@ export async function generateAudio(
 
     const response = await fetch(`${API_BASE_URL}/api/generate-audio`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(),
       body: JSON.stringify({ text, itemId }),
     });
 
@@ -188,7 +199,7 @@ export async function suggestScheduleTime(data: {
 
     const response = await fetch(`${API_BASE_URL}/api/suggest-schedule`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(),
       body: JSON.stringify(data),
     });
 
@@ -234,7 +245,7 @@ export async function aiSearch(
 
     const response = await fetch(`${API_BASE_URL}/api/ai-search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(),
       body: JSON.stringify({ query, items }),
     });
 
@@ -287,7 +298,7 @@ export async function downloadInstagram(
 
     const response = await fetch(`${API_BASE_URL}/api/instagram-download`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(),
       body: JSON.stringify({ url }),
     });
 
@@ -326,7 +337,7 @@ export async function generateEmbedding(data: {
 
     const response = await fetch(`${API_BASE_URL}/api/generate-embedding`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(),
       body: JSON.stringify(data),
     });
 
@@ -392,7 +403,7 @@ export async function ragQuery(data: {
 
     const response = await fetch(`${API_BASE_URL}/api/rag-query`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders(),
       body: JSON.stringify(data),
     });
 

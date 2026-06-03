@@ -83,33 +83,8 @@ export default function StacksScreen() {
         getStacks(),
       ]);
       
-      console.log(`📊 Loaded ${allItems.length} items and ${allStacks.length} stacks`);
-      if (allStacks.length > 0) {
-        console.log('📦 Stacks:', allStacks.map(s => s.name).join(', '));
-      }
-      
       setItems(allItems.filter(item => !item.archived));
       setStacks(allStacks);
-      
-      // Check if we have the expected stacks (Fitness, Food, Tech, Places)
-      const expectedStackIds = ['stack_fitness', 'stack_food', 'stack_tech', 'stack_places'];
-      const existingStackIds = new Set(allStacks.map(s => s.id));
-      const missingStacks = expectedStackIds.filter(id => !existingStackIds.has(id));
-      
-      if (missingStacks.length > 0) {
-        console.log(`⚠️ Missing expected stacks: ${missingStacks.join(', ')}, attempting to seed...`);
-        const { seedData } = await import('@/lib/seed');
-        await seedData();
-        // Reload after seeding
-        const [newItems, newStacks] = await Promise.all([
-          getItems(),
-          getStacks(),
-        ]);
-        setItems(newItems.filter(item => !item.archived));
-        setStacks(newStacks);
-        console.log(`✅ After seeding: ${newStacks.length} stacks and ${newItems.length} items`);
-        console.log('📦 Stacks now:', newStacks.map(s => s.name).join(', '));
-      }
     } catch (error) {
       console.error('Failed to load data:', error);
       Alert.alert('Error', 'Failed to load data');
@@ -484,21 +459,6 @@ export default function StacksScreen() {
     );
   }
 
-  /**
-   * Force seed data (dev helper)
-   */
-  async function handleForceSeed() {
-    try {
-      const { seedData } = await import('@/lib/seed');
-      await seedData();
-      await loadData();
-      Alert.alert('Success', 'Seed data loaded!');
-    } catch (error) {
-      console.error('Failed to force seed:', error);
-      Alert.alert('Error', 'Failed to load seed data');
-    }
-  }
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={styles.container}>
@@ -605,16 +565,6 @@ export default function StacksScreen() {
           >
             <Ionicons name="add-circle-outline" size={20} color="#007AFF" />
           </TouchableOpacity>
-          
-          {/* Dev: Force seed button (only show if no stacks) */}
-          {stacks.length === 0 && (
-            <TouchableOpacity
-              style={[styles.createStackButton, { marginLeft: 8 }]}
-              onPress={handleForceSeed}
-            >
-              <Ionicons name="refresh" size={20} color="#4CAF50" />
-            </TouchableOpacity>
-          )}
         </ScrollView>
       </View>
 

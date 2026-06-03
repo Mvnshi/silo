@@ -42,7 +42,8 @@ import ChatBot from '@/components/ChatBot';
 import { analyzeLink, analyzeImage, generateAudio, suggestScheduleTime, generateEmbedding } from '@/lib/api';
 import { addItem, getUserId, updateItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
-import { Item, Classification } from '@/lib/types';
+import { Classification } from '@/lib/types';
+import { createItem } from '@/lib/items';
 import { imageUriToBase64 } from '@/lib/screenshots';
 import * as Location from 'expo-location';
 
@@ -177,11 +178,11 @@ export default function AddScreen() {
     try {
       setLoading(true);
 
-      // Create item
-      const item: Item = {
-        id: `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      // Create item — createItem fills id/created_at/updated_at/status + defaults
+      // and derives `location`/status from the fields below.
+      const item = createItem({
         type: inputType === 'url' ? 'link' : inputType === 'image' ? 'screenshot' : 'note',
-        classification: classification,
+        classification,
         title: title.trim(),
         description: description.trim() || undefined,
         url: inputType === 'url' ? url.trim() : undefined,
@@ -191,10 +192,7 @@ export default function AddScreen() {
         // Include location data if detected by AI or if classification is 'place'
         place_name: placeName.trim() || (classification === 'place' ? title.trim() : undefined),
         place_address: placeAddress.trim() || (classification === 'place' ? description.trim() : undefined),
-        created_at: new Date().toISOString(),
-        viewed: false,
-        archived: false,
-      };
+      });
 
       // Generate audio narration using script (from AI analysis) or fallback to description
       const audioText = script.trim() || description.trim();

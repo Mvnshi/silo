@@ -49,7 +49,7 @@ import {
 } from '@/lib/screenshots';
 import { analyzeImage, generateAudio, suggestScheduleTime, generateEmbedding } from '@/lib/api';
 import { addItem, getUserId } from '@/lib/storage';
-import { Item } from '@/lib/types';
+import { createItem } from '@/lib/items';
 import { scheduleItemReview } from '@/lib/scheduler';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -214,9 +214,8 @@ export default function ScreenshotsScreen() {
       // Analyze with backend API
       const analysis = await analyzeImage(base64, mimeType);
 
-      // Create item
-      const item: Item = {
-        id: `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      // Create item — createItem fills id/created_at/updated_at/status + defaults.
+      const item = createItem({
         type: 'screenshot',
         classification: analysis.classification,
         title: analysis.title,
@@ -227,10 +226,7 @@ export default function ScreenshotsScreen() {
         duration: analysis.duration,
         place_name: analysis.place_name,
         place_address: analysis.place_address,
-        created_at: new Date().toISOString(),
-        viewed: false,
-        archived: false,
-      };
+      });
 
       // Generate audio if script is available (optional - fail gracefully)
       if (analysis.script) {

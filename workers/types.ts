@@ -23,6 +23,19 @@ export interface Env {
   VULTR_BUCKET: string;
   VULTR_ENDPOINT: string;
   VULTR_CDN_DOMAIN: string;
+
+  // --- Security (Phase 3) ---
+  // Shared client token. When set, /api/* requests must send a matching
+  // `X-Silo-Client` header (set EXPO_PUBLIC_CLIENT_TOKEN to the same value in
+  // the app). Optional so existing deploys keep working until configured;
+  // set it in production to gate the endpoints. Configure via:
+  //   wrangler secret put APP_CLIENT_TOKEN
+  APP_CLIENT_TOKEN?: string;
+
+  // Optional KV namespace for per-IP rate limiting. When bound, all /api/*
+  // routes are rate-limited; when absent, limiting is skipped (logged). Bind in
+  // wrangler.toml: [[kv_namespaces]] binding = "RATE_LIMIT_KV", id = "<id>".
+  RATE_LIMIT_KV?: KVNamespace;
 }
 
 /**
