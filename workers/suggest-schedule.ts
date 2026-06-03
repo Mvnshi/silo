@@ -73,10 +73,6 @@ export default {
       'Content-Type': 'application/json',
     };
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
-
     try {
       const { title, classification, description, duration } = await request.json() as {
         title: string;

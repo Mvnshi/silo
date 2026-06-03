@@ -1,7 +1,7 @@
 # Silo — Launch Readiness Report
 
 > Running status. Finalized at the end of the engagement. Pairs with [`AUDIT.md`](AUDIT.md) and [`TODO.md`](TODO.md).
-> **Status as of 2026-06-03: 🔴 NOT launch-ready** — discovery + audit complete; remediation not yet started.
+> **Status as of 2026-06-03: 🔴 NOT launch-ready** — but now building/running/typechecking on a real Mac. Task Zero (app loads clean in sim, zero red screens, all 5 tabs) ✅ and Task One (Phase 2 `tsc --noEmit` EXIT 0) ✅ both verified. Remediation of the Phase 3+ feature blockers not yet started.
 
 ---
 
@@ -9,12 +9,13 @@
 
 | Area | Status | Notes |
 |---|---|---|
-| Builds & runs (iOS) | ⬜ UNVERIFIED | No Mac/Xcode + no Node here. Needs EAS or a Mac. |
-| Builds & runs (Android) | ⬜ UNVERIFIED | No Node/Android SDK confirmed here. |
-| Type-check / lint clean | ⬜ UNVERIFIED | No Node toolchain on this machine — cannot run `tsc`/`eslint`. |
-| Core navigation | 🟡 Likely works | 5 native tabs (static read); runtime UNVERIFIED. |
+| Builds & runs (iOS) | 🟢 VERIFIED (sim) | Builds + runs on iPhone 17 Pro (iOS 26.2) sim, zero red screens. Fixes: regenerated stale Podfile.lock; installed iOS 26.5 sim platform. EAS/device build still pending founder Expo projectId. |
+| Builds & runs (Android) | ⬜ UNVERIFIED | iOS-first; Android deferred. |
+| Type-check clean | 🟢 VERIFIED | `npx tsc --noEmit` EXIT 0 (after `tsconfig moduleResolution`→`bundler` fix). |
+| Lint clean | 🟡 Blocked | ESLint 9 needs flat `eslint.config.js` (none) + `eslint-config-expo`; `npm run lint` errors. Deferred to QA. |
+| Core navigation | 🟢 VERIFIED | All 5 native tabs (Streams/Stacks/Add/Silo/Screenshots) tapped + render clean at runtime. |
 | Add / import / save | 🟡 Real, gaps | Works; no stack assignment; no cancel; image-fail strands form. |
-| Persistence | 🟡 Hardened (uncompiled) | Added schema versioning + migration + write-mutex + auto `updated_at`/`completed_at` (`lib/items.ts`, `lib/storage.ts`). UNVERIFIED — no toolchain to type-check. |
+| Persistence | 🟢 Hardened + verified | Schema versioning + migration + write-mutex + auto `updated_at`/`completed_at` (`lib/items.ts`, `lib/storage.ts`). Type-checks clean; migration ran at runtime (`storage migrated 0 -> 2`) and seeded items render. |
 | Stacks / categories | 🔴 Demo-only | User content can't be assigned to a stack. |
 | Streams feed | 🟡 Real, gaps | No detail nav; WebView memory risk. |
 | Screenshot swipe | 🟡 Real, gaps | No OCR/undo/dedupe; wrong iOS detection. |
@@ -24,7 +25,7 @@
 | AI assistant (RAG) | 🔴 Failed | Retrieval broken; degrades to prompt-stuffing; can hallucinate. |
 | Share extension | 🔴 Missing | First-class deliverable; no native infra. |
 | Monetization / paywall | 🔴 Missing | No IAP/RevenueCat dependency. |
-| Backend security | 🟡 Gated (uncompiled) | Shared-token auth + per-IP rate limit + method/body-size added (`workers/middleware.ts`). SSRF in `analyze-link` still open; real attestation pending. Needs founder to set `APP_CLIENT_TOKEN`/KV. UNVERIFIED. |
+| Backend security | 🟡 Gated (typecheck ✅, not deployed) | Shared-token auth + per-IP rate limit + method/body-size (`workers/middleware.ts`); worker `tsc --noEmit` EXIT 0. **SSRF in `analyze-link`/`instagram-download` still open** (next P0 item); real attestation pending. Needs founder: `APP_CLIENT_TOKEN` secret + `RATE_LIMIT_KV`. Not runtime-verified (no deploy). |
 | Committed secrets | 🟢 Clean | Verified via full git-history scan; keys server-side. |
 | Permissions / privacy strings | 🟡 Partial | Generic strings; missing background-location + notifications config. |
 | Privacy Policy / ToS | 🔴 Missing | Mandatory for auto-renew subscriptions. |
@@ -38,6 +39,8 @@ Legend: 🟢 ready · 🟡 partial/needs work · 🔴 blocker/missing · ⬜ unv
 1. **Unauthenticated backend** (quota theft / SSRF). 2. **Calendar timezone off-by-one + one-way sync + duplicate events.** 3. **Stacks demo-only** (no `stack_id` assignment). 4. **Seed/fake data ships in production.** 5. **RAG/assistant broken** (no real retrieval). 6. **Audio pipeline likely broken** (Vultr signing + crashing fallback). 7. **No paywall.** 8. **No share extension.** 9. **Bucket-list engine missing.** 10. **Native gaps** (background location, notifications, Android Maps key, share intents).
 
 ## 3. What's been done
+- **Task Zero (2026-06-03, on Mac) — app loads clean.** reanimated already at SDK-54 4.1.7; real blockers were a stale `Podfile.lock` (regenerated via clean `pod install`) and the missing iOS 26.5 simulator platform (installed via `xcodebuild -downloadPlatform iOS`). Verified: builds + runs on iPhone 17 Pro (iOS 26.2), zero red screens, all 5 tabs render, `expo start -c` clean.
+- **Task One (2026-06-03) — Phase 2 typecheck green.** `npx tsc --noEmit` EXIT 0 after fixing a `tsconfig` `moduleResolution` conflict (`"node"`→`"bundler"`, TS5098 vs expo base's `customConditions`). Phase 2 schema/storage/items code is clean; migration + `__DEV__`-only seed + `createItem` capture paths confirmed at runtime.
 - Phase 0 stack discovery + Phase 1 full audit (file-by-file, severity-ranked, feature-classified).
 - Verified no committed secret. Mapped native config + Phase 6 gaps.
 - **Phase 2 (closed):** unified `Item` schema + full bucket-list engine data model; new `lib/items.ts`; AsyncStorage schema versioning + one-time migration + concurrency mutex + automatic timestamps. Boot migration wired; **production seeding removed** (dev-only now); all capture sites build items via `createItem`.

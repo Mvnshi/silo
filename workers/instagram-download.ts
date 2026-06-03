@@ -169,10 +169,6 @@ export default {
       'Content-Type': 'application/json',
     };
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
-
     try {
       const { url } = await request.json() as { url: string };
 

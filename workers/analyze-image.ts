@@ -84,11 +84,6 @@ export default {
       'Content-Type': 'application/json',
     };
 
-    // Handle preflight requests
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
-
     try {
       const { imageBase64, mimeType } = await request.json() as {
         imageBase64: string;

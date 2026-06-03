@@ -56,7 +56,7 @@ async function generateEmbedding(text: string, apiKey: string): Promise<number[]
       throw new Error(`Gemini API error: ${error}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as { embedding?: { values?: number[] } };
     return data.embedding?.values || [];
   } catch (error) {
     console.error('Failed to generate embedding:', error);
@@ -147,7 +147,13 @@ export default {
     }
 
     try {
-      const body = await request.json();
+      const body = (await request.json()) as {
+        userId?: string;
+        itemId?: string;
+        title?: string;
+        description?: string;
+        tags?: string[];
+      };
       const { userId, itemId, title, description, tags } = body;
 
       if (!userId || !itemId || !title) {
