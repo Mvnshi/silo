@@ -74,6 +74,8 @@ export default function StacksScreen() {
   const [isAiSearching, setIsAiSearching] = useState(false);
   const [aiSearchResults, setAiSearchResults] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   /**
    * Load stacks and items from storage
@@ -181,7 +183,61 @@ export default function StacksScreen() {
   /**
    * Handle item press
    */
+  function toggleSelect(itemId: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+    Haptics.selectionAsync();
+  }
+
+  function exitSelect() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }
+
+  function bulkDelete() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    Alert.alert(
+      `Delete ${ids.length} item${ids.length > 1 ? 's' : ''}?`,
+      'This permanently removes them from this device and can’t be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            for (const id of ids) {
+              try { await deleteItem(id); } catch (e) { console.warn('delete failed', e); }
+            }
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            exitSelect();
+            await loadData();
+          },
+        },
+      ]
+    );
+  }
+
+  async function bulkMarkDone() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    for (const id of ids) {
+      try { await updateItem(id, { viewed: true }); } catch (e) { console.warn('mark done failed', e); }
+    }
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    exitSelect();
+    await loadData();
+  }
+
   function handleItemPress(itemId: string) {
+    if (selectMode) {
+      toggleSelect(itemId);
+      return;
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push(`/item/${itemId}?from=stacks`);
   }
@@ -474,11 +530,16 @@ export default function StacksScreen() {
         {/* Title + profile/settings entry */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, paddingBottom: 10 }}>
           <Text style={{ fontSize: 28, fontWeight: '800', color: '#0f172a', letterSpacing: -0.5 }}>Stacks</Text>
-          <TouchableOpacity onPress={() => router.push('/settings')} activeOpacity={0.8} accessibilityLabel="Profile and settings">
-            <LinearGradient colors={['#8b5cf6', '#6366f1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="person" size={19} color="#fff" />
-            </LinearGradient>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+            <TouchableOpacity onPress={() => (selectMode ? exitSelect() : setSelectMode(true))} activeOpacity={0.7} hitSlop={8}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#7c3aed' }}>{selectMode ? 'Cancel' : 'Select'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/settings')} activeOpacity={0.8} accessibilityLabel="Profile and settings">
+              <LinearGradient colors={['#8b5cf6', '#6366f1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="person" size={19} color="#fff" />
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
         </View>
         {/* Search Bar */}
         <View style={styles.searchContainer}>
@@ -591,6 +652,8 @@ export default function StacksScreen() {
               onLongPress={handleItemLongPress}
               onSwipeLeft={handleSwipeLeft}
               onSwipeRight={handleSwipeRight}
+              selectMode={selectMode}
+              selected={selectedIds.has(item.id)}
             />
           )}
           keyExtractor={item => item.id}
@@ -636,6 +699,22 @@ export default function StacksScreen() {
             />
           }
         />
+      )}
+
+      {selectMode && (
+        <View style={{ position: 'absolute', left: 16, right: 16, bottom: insets.bottom + 90, flexDirection: 'row', alignItems: 'center', backgroundColor: '#0f172a', borderRadius: 24, paddingVertical: 13, paddingHorizontal: 18, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 16 }}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, flex: 1 }}>
+            {selectedIds.size} selected
+          </Text>
+          <TouchableOpacity onPress={bulkMarkDone} disabled={selectedIds.size === 0} style={{ opacity: selectedIds.size === 0 ? 0.4 : 1, marginRight: 20, flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="checkmark-done" size={18} color="#4ade80" />
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13, marginLeft: 5 }}>Done</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={bulkDelete} disabled={selectedIds.size === 0} style={{ opacity: selectedIds.size === 0 ? 0.4 : 1, flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="trash" size={18} color="#f87171" />
+            <Text style={{ color: '#f87171', fontWeight: '700', fontSize: 13, marginLeft: 5 }}>Delete</Text>
+          </TouchableOpacity>
+        </View>
       )}
     </View>
     </GestureHandlerRootView>

@@ -43,9 +43,18 @@ interface Props {
   onLongPress?: (id: string) => void;
   onSwipeLeft?: (id: string) => void;
   onSwipeRight?: (id: string) => void;
+  selectMode?: boolean;
+  selected?: boolean;
 }
 
-export default function ItemCardPro({ item, index = 0, onPress, onLongPress }: Props) {
+export default function ItemCardPro({
+  item,
+  index = 0,
+  onPress,
+  onLongPress,
+  selectMode = false,
+  selected = false,
+}: Props) {
   const scale = useSharedValue(1);
   const aStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
   const cfg = classConfig(item.classification);
@@ -153,7 +162,25 @@ export default function ItemCardPro({ item, index = 0, onPress, onLongPress }: P
           )}
         </View>
 
-        <Ionicons name="chevron-forward" size={16} color="#cbd5e1" style={{ marginLeft: 4 }} />
+        {selectMode ? (
+          <View
+            style={{
+              marginLeft: 6,
+              width: 24,
+              height: 24,
+              borderRadius: 12,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 2,
+              borderColor: selected ? '#8b5cf6' : '#cbd5e1',
+              backgroundColor: selected ? '#8b5cf6' : 'transparent',
+            }}
+          >
+            {selected && <Ionicons name="checkmark" size={15} color="#ffffff" />}
+          </View>
+        ) : (
+          <Ionicons name="chevron-forward" size={16} color="#cbd5e1" style={{ marginLeft: 4 }} />
+        )}
         </Pressable>
       </Animated.View>
     </Animated.View>
