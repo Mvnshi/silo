@@ -15,6 +15,7 @@ import {
   AnalyzeLinkResponse,
   ScheduleSuggestionResponse,
   ApiErrorResponse,
+  ExtractedLinkResponse,
 } from './types';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || '';
@@ -70,6 +71,19 @@ export async function analyzeImage(
  */
 export async function analyzeLink(url: string, pageText?: string): Promise<AnalyzeLinkResponse> {
   return postGemini<AnalyzeLinkResponse>({ task: 'classify_link', url, pageText });
+}
+
+/**
+ * Universal social-link extractor. Resolves the platform and returns normalized
+ * metadata (title/author/caption/thumbnail/embed) + a category + tags from the
+ * Gemini classify chain — for YouTube/TikTok/X/Vimeo via oEmbed, and
+ * Instagram/Reddit/Threads/Facebook/any URL via Open Graph. Fetching + parsing
+ * happen server-side in the Worker (egress-hardened); the client just posts the
+ * URL. On a dead/private/login-walled link the Worker returns `ok:false` with
+ * whatever it has, so the caller can still save the raw link (never lose a save).
+ */
+export async function extractLink(url: string): Promise<ExtractedLinkResponse> {
+  return postGemini<ExtractedLinkResponse>({ task: 'extract', url });
 }
 
 /** Suggest when to review an item via the Gemini proxy. */

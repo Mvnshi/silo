@@ -29,6 +29,7 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -39,12 +40,13 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import TagPicker from '@/components/TagPicker';
 import ChatBot from '@/components/ChatBot';
-import { analyzeLink, analyzeImage, suggestScheduleTime } from '@/lib/api';
+import { analyzeImage, extractLink, suggestScheduleTime } from '@/lib/api';
 import OptionCard from '@/components/ui/OptionCard';
 import { addItem, getUserId, updateItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
-import { Classification } from '@/lib/types';
+import { Classification, SocialPlatform } from '@/lib/types';
 import { createItem } from '@/lib/items';
+import { detectPlatform } from '@/lib/embed';
 import { imageUriToBase64 } from '@/lib/screenshots';
 import * as Location from 'expo-location';
 
@@ -62,9 +64,37 @@ export default function AddScreen() {
   const [placeName, setPlaceName] = useState<string>(''); // Place name from AI
   const [placeAddress, setPlaceAddress] = useState<string>(''); // Place address from AI
   const [loading, setLoading] = useState(false);
+  // Social-extraction fields (URL captures)
+  const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
+  const [author, setAuthor] = useState('');
+  const [platform, setPlatform] = useState<SocialPlatform | undefined>(undefined);
+  const [sourceUrl, setSourceUrl] = useState(''); // resolved/canonical URL to persist
+
+  /** Reset the entire capture form to its initial state (single source of truth). */
+  function resetForm() {
+    setInputType(null);
+    setUrl('');
+    setNoteText('');
+    setImageUri(null);
+    setTitle('');
+    setDescription('');
+    setClassification('other');
+    setTags([]);
+    setScript('');
+    setPlaceName('');
+    setPlaceAddress('');
+    setThumbnailUri(null);
+    setAuthor('');
+    setPlatform(undefined);
+    setSourceUrl('');
+  }
 
   /**
-   * Handle URL submission for analysis
+   * Resolve + analyze a pasted URL. The universal extractor pulls oEmbed/OG
+   * metadata (title / author / caption / thumbnail) plus a classification + tags
+   * via the Gemini chain. On a private/dead link the Worker returns ok:false with
+   * whatever it has; on a hard failure we still populate the raw URL — either
+   * way the user can save (never lose a save).
    */
   async function handleAnalyzeUrl() {
     if (!url.trim()) {
@@ -72,34 +102,45 @@ export default function AddScreen() {
       return;
     }
 
+    const urlToAnalyze = url.trim();
+    try {
+      new URL(urlToAnalyze);
+    } catch {
+      Alert.alert('Invalid URL', 'Please enter a valid URL (e.g., https://example.com)');
+      return;
+    }
+
     try {
       setLoading(true);
-      // Validate URL format before sending
-      const urlToAnalyze = url.trim();
-      try {
-        new URL(urlToAnalyze);
-      } catch {
-        Alert.alert('Invalid URL', 'Please enter a valid URL (e.g., https://example.com)');
-        setLoading(false);
-        return;
-      }
+      const result = await extractLink(urlToAnalyze);
 
-      const analysis = await analyzeLink(urlToAnalyze);
-      
-      setTitle(analysis.title);
-      setDescription(analysis.description || '');
-      setClassification(analysis.classification);
-      setTags(analysis.tags || []);
-      setScript(analysis.script || ''); // Store script for audio generation
-      // Store place data if detected
-      setPlaceName(analysis.place_name || '');
-      setPlaceAddress(analysis.place_address || '');
+      setTitle(result.title || urlToAnalyze);
+      setDescription(result.description || result.caption || '');
+      setClassification(result.classification);
+      setTags(result.tags || []);
+      setThumbnailUri(result.thumbnailUrl || null);
+      setAuthor(result.author || '');
+      setPlatform(result.platform);
+      setSourceUrl(result.sourceUrl || urlToAnalyze);
+      setScript('');
+
+      if (!result.ok) {
+        // Rich metadata wasn't available (private / login-walled / dead). The form
+        // is still populated with what we have so the user can edit and save.
+        Alert.alert(
+          'Limited preview',
+          'This link is private or couldn’t be fully read, but you can still save it and edit the details below.'
+        );
+      }
     } catch (error) {
-      console.error('Failed to analyze URL:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to analyze URL';
-      Alert.alert('Error', errorMessage.includes('Invalid URL') 
-        ? 'Please enter a valid URL (e.g., https://example.com)'
-        : 'Failed to analyze URL. Please try again.');
+      console.error('Failed to extract URL:', error);
+      // Hard failure (e.g. backend unreachable): fall back to a manually-editable
+      // item from the raw URL so the save is never lost. The embed still works —
+      // platform is detected from the URL itself.
+      setTitle((prev) => prev || urlToAnalyze);
+      setSourceUrl(urlToAnalyze);
+      setPlatform(detectPlatform(urlToAnalyze));
+      Alert.alert('Heads up', 'Couldn’t fetch details for this link, but you can still save it below.');
     } finally {
       setLoading(false);
     }
@@ -186,8 +227,12 @@ export default function AddScreen() {
         classification,
         title: title.trim(),
         description: description.trim() || undefined,
-        url: inputType === 'url' ? url.trim() : undefined,
-        imageUri: imageUri || undefined,
+        // Persist the resolved/canonical URL so embeds + "open" work reliably.
+        url: inputType === 'url' ? (sourceUrl || url).trim() : undefined,
+        // Thumbnail for URL captures; the picked photo for image captures.
+        imageUri: (inputType === 'url' ? thumbnailUri : imageUri) || undefined,
+        platform: inputType === 'url' ? platform : undefined,
+        author: inputType === 'url' ? author.trim() || undefined : undefined,
         script: script.trim() || undefined, // Store AI-generated script
         tags,
         // Include location data if detected by AI or if classification is 'place'
@@ -243,20 +288,7 @@ export default function AddScreen() {
             {
               text: 'No thanks',
               style: 'cancel',
-              onPress: () => {
-                // Reset form
-                setInputType(null);
-                setUrl('');
-                setNoteText('');
-                setImageUri(null);
-                setTitle('');
-                setDescription('');
-                setClassification('other');
-                setTags([]);
-                setScript('');
-                setPlaceName('');
-                setPlaceAddress('');
-              },
+              onPress: () => resetForm(),
             },
             {
               text: 'Add to Calendar',
@@ -265,44 +297,12 @@ export default function AddScreen() {
                   await scheduleItemReview(item, suggestion.date, suggestion.time, item.duration || 15);
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                   Alert.alert('Success', 'Event added to calendar', [
-                    {
-                      text: 'OK',
-                      onPress: () => {
-                        // Reset form
-                        setInputType(null);
-                        setUrl('');
-                        setNoteText('');
-                        setImageUri(null);
-                        setTitle('');
-                        setDescription('');
-                        setClassification('other');
-                        setTags([]);
-                        setScript('');
-                        setPlaceName('');
-                        setPlaceAddress('');
-                      },
-                    },
+                    { text: 'OK', onPress: () => resetForm() },
                   ]);
                 } catch (error) {
                   console.error('Failed to schedule event:', error);
                   Alert.alert('Error', 'Failed to add event to calendar', [
-                    {
-                      text: 'OK',
-                      onPress: () => {
-                        // Reset form
-                        setInputType(null);
-                        setUrl('');
-                        setNoteText('');
-                        setImageUri(null);
-                        setTitle('');
-                        setDescription('');
-                        setClassification('other');
-                        setTags([]);
-                        setScript('');
-                        setPlaceName('');
-                        setPlaceAddress('');
-                      },
-                    },
+                    { text: 'OK', onPress: () => resetForm() },
                   ]);
                 }
               },
@@ -313,23 +313,7 @@ export default function AddScreen() {
         console.warn('Failed to suggest schedule (continuing without suggestion):', error);
         // Don't show error - schedule suggestion is optional
         Alert.alert('Success', 'Item added successfully', [
-          {
-            text: 'OK',
-            onPress: () => {
-              // Reset form
-              setInputType(null);
-              setUrl('');
-              setNoteText('');
-              setImageUri(null);
-              setTitle('');
-              setDescription('');
-              setClassification('other');
-              setTags([]);
-              setScript('');
-              setPlaceName('');
-              setPlaceAddress('');
-            },
-          },
+          { text: 'OK', onPress: () => resetForm() },
         ]);
       }
     } catch (error) {
@@ -406,20 +390,7 @@ export default function AddScreen() {
           <View style={styles.form}>
             <View style={styles.inputGroup}>
               <View style={styles.urlHeader}>
-                <TouchableOpacity
-                  style={styles.backButton}
-                  onPress={() => {
-                    setInputType(null);
-                    setUrl('');
-                    setTitle('');
-                    setDescription('');
-                    setClassification('other');
-                    setTags([]);
-                    setScript('');
-                    setPlaceName('');
-                    setPlaceAddress('');
-                  }}
-                >
+                <TouchableOpacity style={styles.backButton} onPress={() => resetForm()}>
                   <Ionicons name="arrow-back" size={24} color="#333" />
                 </TouchableOpacity>
                 <Text style={styles.label}>URL</Text>
@@ -473,6 +444,30 @@ export default function AddScreen() {
         {/* Common Fields (shown after analysis or for manual entry) */}
         {(title || inputType === 'note') && (
           <View style={styles.form}>
+            {inputType === 'url' && (thumbnailUri || author || platform) ? (
+              <View style={styles.previewCard}>
+                {thumbnailUri ? (
+                  <Image source={{ uri: thumbnailUri }} style={styles.previewThumb} resizeMode="cover" />
+                ) : (
+                  <View style={[styles.previewThumb, styles.previewThumbFallback]}>
+                    <Ionicons name="link" size={22} color="#6366f1" />
+                  </View>
+                )}
+                <View style={styles.previewMeta}>
+                  {platform ? <Text style={styles.previewPlatform}>{platform.toUpperCase()}</Text> : null}
+                  {author ? (
+                    <Text style={styles.previewAuthor} numberOfLines={1}>
+                      {author}
+                    </Text>
+                  ) : null}
+                  {title ? (
+                    <Text style={styles.previewTitle} numberOfLines={2}>
+                      {title}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Title</Text>
               <TextInput
@@ -704,6 +699,43 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     marginTop: 16,
+  },
+  previewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 14,
+    padding: 12,
+  },
+  previewThumb: {
+    width: 64,
+    height: 64,
+    borderRadius: 10,
+    backgroundColor: '#EEF2FF',
+  },
+  previewThumbFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewMeta: {
+    flex: 1,
+    gap: 2,
+  },
+  previewPlatform: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#6366f1',
+    letterSpacing: 0.5,
+  },
+  previewAuthor: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#333',
+  },
+  previewTitle: {
+    fontSize: 13,
+    color: '#666',
   },
 });
 

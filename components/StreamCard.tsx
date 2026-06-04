@@ -24,15 +24,39 @@ import {
   Dimensions,
   ScrollView,
   ActivityIndicator,
+  Image,
+  Linking,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/lib/types';
-import { isInstagramReel, extractInstagramReelId, getInstagramEmbedUrl } from '@/lib/instagram';
+import { getEmbed } from '@/lib/embed';
 
 const { width, height } = Dimensions.get('window');
+
+/** Map a social platform to a brand glyph for the embed badge/fallback. */
+function platformIcon(platform?: string): keyof typeof Ionicons.glyphMap {
+  switch (platform) {
+    case 'instagram':
+      return 'logo-instagram';
+    case 'youtube':
+      return 'logo-youtube';
+    case 'tiktok':
+      return 'logo-tiktok';
+    case 'twitter':
+      return 'logo-twitter';
+    case 'reddit':
+      return 'logo-reddit';
+    case 'facebook':
+      return 'logo-facebook';
+    case 'vimeo':
+      return 'logo-vimeo';
+    default:
+      return 'globe-outline';
+  }
+}
 
 interface StreamCardProps {
   item: Item;
@@ -52,17 +76,8 @@ export default function StreamCard({
   const [webViewError, setWebViewError] = useState(false);
   const [webViewLoading, setWebViewLoading] = useState(true);
   
-  // Check if this is an Instagram reel
-  const isReel = item.url ? isInstagramReel(item.url) : false;
-  const reelId = item.url ? extractInstagramReelId(item.url) : null;
-  const embedUrl = reelId ? getInstagramEmbedUrl(reelId) : null;
-  
-  // Debug logging
-  useEffect(() => {
-    if (isReel && embedUrl) {
-      console.log('Instagram Reel detected:', { originalUrl: item.url, reelId, embedUrl });
-    }
-  }, [isReel, embedUrl, item.url, reelId]);
+  // Inline embed for saved social links (token-free official platform embeds).
+  const embed = getEmbed(item);
 
   /**
    * Load and play audio when component mounts
@@ -179,132 +194,91 @@ export default function StreamCard({
     }
   }
 
-  // If this is an Instagram reel, show the embedded video
-  if (isReel && embedUrl) {
+  // Inline embed for saved social links — render the platform's own player.
+  if (embed.kind !== 'none') {
+    const label = (item.platform || 'link').toUpperCase();
+    const openSource = () => {
+      const u = item.url || '';
+      if (/^https?:\/\//i.test(u)) Linking.openURL(u).catch(() => {});
+    };
     return (
       <View style={styles.container}>
         {webViewError ? (
-          // Fallback UI if WebView fails
-          <View style={[styles.webview, { backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }]}>
-            <Ionicons name="logo-instagram" size={64} color="#E4405F" />
-            <Text style={{ color: '#fff', marginTop: 16, fontSize: 16, fontWeight: '600' }}>
-              Instagram Reel
-            </Text>
-            <Text style={{ color: '#999', marginTop: 8, fontSize: 14, textAlign: 'center', paddingHorizontal: 32 }}>
-              {item.title || 'Tap to view on Instagram'}
-            </Text>
-            <TouchableOpacity
-              style={{ marginTop: 24, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#E4405F', borderRadius: 8 }}
-              onPress={() => {
-                // Open in browser as fallback
-                if (item.url) {
-                  // You could use Linking.openURL here if needed
-                  console.log('Would open:', item.url);
-                }
-              }}
-            >
-              <Text style={{ color: '#fff', fontWeight: '600' }}>Open in Instagram</Text>
+          // Fallback UI if the embed can't load (private / region-locked / deleted).
+          <View style={[styles.webview, styles.embedFallback]}>
+            <Ionicons name={platformIcon(item.platform)} size={64} color="#fff" />
+            <Text style={styles.embedFallbackTitle}>{item.title || 'Open this post'}</Text>
+            <Text style={styles.embedFallbackSub}>Couldn’t load the embed here.</Text>
+            <TouchableOpacity style={styles.embedOpenBtn} onPress={openSource}>
+              <Text style={styles.embedOpenBtnText}>Open link</Text>
             </TouchableOpacity>
           </View>
         ) : (
           <WebView
-            source={{ uri: embedUrl }}
+            source={embed.kind === 'uri' ? { uri: embed.uri } : { html: embed.html, baseUrl: embed.baseUrl }}
             style={styles.webview}
-            allowsFullscreenVideo={true}
+            allowsFullscreenVideo
             mediaPlaybackRequiresUserAction={false}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            startInLoadingState={true}
-            scalesPageToFit={true}
-            allowsInlineMediaPlayback={true}
-            mixedContentMode="always"
-            originWhitelist={['*']}
+            javaScriptEnabled
+            domStorageEnabled
+            startInLoadingState
+            allowsInlineMediaPlayback
+            originWhitelist={['https://*', 'about:*', 'data:*']}
             onLoadStart={() => {
               setWebViewLoading(true);
               setWebViewError(false);
             }}
-            onLoadEnd={() => {
-              setWebViewLoading(false);
-            }}
-            onShouldStartLoadWithRequest={(request) => {
-              // Only allow loading the embed URL, block Instagram redirects
-              if (request.url.includes('eeinstagram.com')) {
-                return true;
-              }
-              if (request.url.includes('instagram.com')) {
-                return false; // Block Instagram redirects
-              }
-              return true;
-            }}
+            onLoadEnd={() => setWebViewLoading(false)}
             onError={(syntheticEvent) => {
-              const { nativeEvent } = syntheticEvent;
-              console.error('WebView error: ', nativeEvent);
+              console.error('Embed WebView error:', syntheticEvent.nativeEvent);
               setWebViewError(true);
               setWebViewLoading(false);
             }}
-            onHttpError={(syntheticEvent) => {
-              const { nativeEvent } = syntheticEvent;
-              console.error('WebView HTTP error: ', nativeEvent);
-              // Don't set error on HTTP errors, might still work
-            }}
-            renderError={() => {
-              setWebViewError(true);
-              setWebViewLoading(false);
-              return (
-                <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
-                  <Ionicons name="logo-instagram" size={64} color="#E4405F" />
-                  <Text style={{ color: '#fff', marginTop: 16 }}>Failed to load reel</Text>
-                </View>
-              );
-            }}
+            renderError={() => (
+              <View style={[styles.webview, styles.embedFallback]}>
+                <Ionicons name={platformIcon(item.platform)} size={64} color="#fff" />
+                <Text style={styles.embedFallbackSub}>Failed to load embed.</Text>
+              </View>
+            )}
           />
         )}
-        
+
         {webViewLoading && !webViewError && (
-          <View style={[styles.webview, { position: 'absolute', backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }]}>
-            <ActivityIndicator size="large" color="#E4405F" />
-            <Text style={{ color: '#fff', marginTop: 16 }}>Loading reel...</Text>
+          <View style={[styles.webview, styles.embedLoading]} pointerEvents="none">
+            {item.imageUri ? (
+              <Image source={{ uri: item.imageUri }} style={StyleSheet.absoluteFill} resizeMode="cover" blurRadius={2} />
+            ) : null}
+            <ActivityIndicator size="large" color="#fff" />
           </View>
         )}
-        
-        {/* Overlay with title and actions */}
-        <View style={styles.reelOverlay}>
+
+        {/* Overlay with platform badge + title */}
+        <View style={styles.reelOverlay} pointerEvents="box-none">
           <View style={styles.reelHeader}>
             <View style={styles.badge}>
-              <Ionicons name="logo-instagram" size={20} color="#fff" />
-              <Text style={styles.badgeText}>INSTAGRAM REEL</Text>
+              <Ionicons name={platformIcon(item.platform)} size={18} color="#fff" />
+              <Text style={styles.badgeText}>{label}</Text>
             </View>
-            {item.title && (
-              <Text style={styles.reelTitle}>{item.title}</Text>
-            )}
+            {item.title ? (
+              <Text style={styles.reelTitle} numberOfLines={3}>
+                {item.title}
+              </Text>
+            ) : null}
+            {item.author ? <Text style={styles.reelAuthor}>{item.author}</Text> : null}
           </View>
         </View>
-        
+
         {/* Action Buttons */}
         <View style={styles.actions}>
-          {/* Schedule */}
-          <TouchableOpacity 
-            style={styles.actionButton}
-            onPress={() => onSchedule(item.id)}
-          >
+          <TouchableOpacity style={styles.actionButton} onPress={() => onSchedule(item.id)}>
             <Ionicons name="calendar" size={32} color="#fff" />
             <Text style={styles.actionLabel}>Schedule</Text>
           </TouchableOpacity>
-
-          {/* Mark as Completed */}
-          <TouchableOpacity 
-            style={styles.actionButton}
-            onPress={() => onComplete(item.id)}
-          >
+          <TouchableOpacity style={styles.actionButton} onPress={() => onComplete(item.id)}>
             <Ionicons name="checkmark-circle" size={32} color="#fff" />
             <Text style={styles.actionLabel}>Done</Text>
           </TouchableOpacity>
-
-          {/* Archive */}
-          <TouchableOpacity 
-            style={styles.actionButton}
-            onPress={() => onArchive(item.id)}
-          >
+          <TouchableOpacity style={styles.actionButton} onPress={() => onArchive(item.id)}>
             <Ionicons name="archive" size={32} color="#fff" />
             <Text style={styles.actionLabel}>Archive</Text>
           </TouchableOpacity>
@@ -569,6 +543,51 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     fontWeight: '600',
+  },
+  reelAuthor: {
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  embedFallback: {
+    backgroundColor: '#0b0b0f',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  embedFallbackTitle: {
+    color: '#fff',
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  embedFallbackSub: {
+    color: '#9aa0a6',
+    marginTop: 8,
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  embedOpenBtn: {
+    marginTop: 24,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: '#6366f1',
+    borderRadius: 10,
+  },
+  embedOpenBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  embedLoading: {
+    position: 'absolute',
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

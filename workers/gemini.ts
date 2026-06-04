@@ -26,6 +26,7 @@
  */
 
 import { Env, ClassificationResult, ScheduleSuggestion, ErrorResponse } from './types';
+import { extractLink, ExtractedLink } from './extract';
 
 const GEMINI_MODEL = 'gemini-2.0-flash';
 
@@ -309,6 +310,81 @@ Return ONLY a JSON object (no markdown, no prose):
   return json(200, { answer, sources: [] }, corsHeaders);
 }
 
+/** Heuristic classification used when no Gemini key is set (extraction is keyless). */
+function heuristicClassification(e: ExtractedLink): Classification {
+  if (e.kind === 'video') return 'video';
+  if (e.kind === 'article') return 'article';
+  if (e.kind === 'image') return 'idea';
+  return 'other';
+}
+
+/**
+ * Universal link extractor: resolve platform -> oEmbed/OG metadata (extract.ts;
+ * keyless + egress-hardened) -> chain into the existing Gemini classify for a
+ * category + tags, like any other capture. Classification is best-effort: with
+ * no GEMINI_API_KEY it falls back to a platform heuristic, so extraction still
+ * works (and is verifiable via `wrangler dev`). Never throws to the client — a
+ * hard failure still returns a saveable shell (ok:false) so the save is kept.
+ */
+async function handleExtract(
+  body: any,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const { url } = body as { url?: string };
+  if (!url || typeof url !== 'string') {
+    return json(400, { error: 'Missing required field: url' } as ErrorResponse, corsHeaders);
+  }
+
+  let extracted: ExtractedLink;
+  try {
+    extracted = await extractLink(url);
+  } catch (err) {
+    // Egress-guard rejection (bad scheme / blocked host) or hard failure: still
+    // hand back a saveable shell so the client can persist the raw link.
+    const reason = err instanceof Error ? err.message : 'extract_failed';
+    extracted = { platform: 'web', kind: 'link', title: url, sourceUrl: url, ok: false, reason };
+  }
+
+  let classification: Classification = heuristicClassification(extracted);
+  let tags: string[] = [];
+  let description = extracted.caption;
+
+  if (env.GEMINI_API_KEY) {
+    try {
+      const prompt = `${classificationInstruction()}
+
+Classify this saved item from its metadata only (do not browse):
+Platform: ${extracted.platform}
+Title: ${extracted.title}
+${extracted.author ? `Author: ${extracted.author}` : ''}
+${extracted.caption ? `Caption/Description: ${extracted.caption}` : ''}
+URL: ${extracted.sourceUrl}`;
+      const text = await callGemini(env, [{ text: prompt }]);
+      const parsed = extractJson(text);
+      if (parsed) {
+        classification = toClassification(parsed.classification);
+        if (Array.isArray(parsed.tags)) {
+          tags = parsed.tags.filter((t: unknown): t is string => typeof t === 'string').slice(0, 8);
+        }
+        if (!description && typeof parsed.description === 'string') description = parsed.description;
+        // Improve a weak/url-like extracted title with the model's title.
+        if (typeof parsed.title === 'string' && parsed.title.trim()) {
+          const weak =
+            !extracted.title ||
+            extracted.title === extracted.sourceUrl ||
+            /^https?:\/\//.test(extracted.title);
+          if (weak) extracted.title = parsed.title.trim();
+        }
+      }
+    } catch (err) {
+      console.error('[silo] extract classify failed (using heuristic):', err);
+    }
+  }
+
+  return json(200, { ...extracted, classification, tags, description }, corsHeaders);
+}
+
 /**
  * Thin authenticated Gemini proxy. Auth + rate limiting are applied upstream in
  * the router (applySecurity); this function assumes the request already passed.
@@ -318,10 +394,6 @@ export async function handleGemini(
   env: Env,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
-  if (!env.GEMINI_API_KEY) {
-    return json(503, { error: 'Service not configured' } as ErrorResponse, corsHeaders);
-  }
-
   let body: any;
   try {
     body = await request.json();
@@ -330,6 +402,13 @@ export async function handleGemini(
   }
 
   const task = body?.task;
+
+  // Most tasks need the Gemini key; `extract` does not (extraction is keyless,
+  // classification is best-effort), so it stays available even before the key
+  // is configured.
+  if (task !== 'extract' && !env.GEMINI_API_KEY) {
+    return json(503, { error: 'Service not configured' } as ErrorResponse, corsHeaders);
+  }
 
   try {
     switch (task) {
@@ -341,6 +420,8 @@ export async function handleGemini(
         return await handleSuggestSchedule(body, env, corsHeaders);
       case 'assistant':
         return await handleAssistant(body, env, corsHeaders);
+      case 'extract':
+        return await handleExtract(body, env, corsHeaders);
       default:
         return json(400, { error: 'Unknown task' } as ErrorResponse, corsHeaders);
     }

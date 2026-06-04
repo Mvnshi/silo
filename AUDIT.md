@@ -169,7 +169,7 @@
 | Screenshot Swipe | **Real** (gaps) | No OCR; wrong iOS detection; no undo/dedupe/progress |
 | AI semantic search | **Broken** | Dead route |
 | Audio narration | **Likely broken** | Vultr signing + crashing fallback |
-| Instagram / social ingest | **Replanned (2026-06-04)** | Scraper deleted (cost pass). New plan = **Tier-1** OG metadata + thumbnail + token-free official embed (no download). See TODO "🔗 Social Extraction". |
+| Instagram / social ingest | **Tier-1 extractor built + verified (2026-06-04)** | Universal `extract` task (oEmbed/OG, egress-hardened) + token-free inline embeds; verified via `wrangler dev` + real curl. Unofficial scraper + eeinstagram proxy removed. See TODO "🔗 Social Extraction". |
 | **Share extension** | **Speced → building (2026-06-04)** | First-class deliverable; Part-A research done; native infra (App Group + config plugin) is Part B. See TODO "🔗 Social Extraction". |
 | **Monetization / paywall** | **Missing** | No IAP/RevenueCat dependency |
 | **Backend auth** | **Missing** | Open endpoints |

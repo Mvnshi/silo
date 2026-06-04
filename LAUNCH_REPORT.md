@@ -23,7 +23,8 @@
 | Map / location | 🟡 Conditional | Needs Google key (Android); no denied/empty state; geocode perf. |
 | Bucket list (engine) | 🔴 Missing | Only booleans; no conditions/triggers/notifications. |
 | AI assistant (RAG) | 🔴 Failed | Retrieval broken; degrades to prompt-stuffing; can hallucinate. |
-| Share extension / social ingest | 🟡 Speced (research ✅) | Part-A research done (verified probes): **Tier-1** metadata+thumbnail+token-free embed = the build; **Tier-2** raw download flagged-off (ToS/5.2.3). Part B next: Worker `extract` task + native iOS Share Extension (EAS dev build to test). See TODO "🔗 Social Extraction". |
+| Social link extractor | 🟢 Built + verified | **Part B.1 DONE:** universal Worker `extract` (oEmbed + OG via HTMLRewriter, egress-hardened) → Gemini classify → normalized item; token-free inline embeds. Verified via `wrangler dev` + real curl; app+worker `tsc` EXIT 0; `expo export` clean; sim relaunched. Full in-app demo gated on deployed Worker URL. |
+| Share extension | 🟡 Building | **Part B.2:** native iOS Share Extension (App Group + config plugin) — scaffolding; needs an EAS dev build to test (not Expo Go). |
 | Monetization / paywall | 🔴 Missing | No IAP/RevenueCat dependency. |
 | Backend security | 🟡 Gated + minimized (typecheck ✅, not deployed) | Worker stripped to ONE endpoint (`POST /api/gemini`) behind shared-token auth + per-IP rate limit + body-size (`workers/middleware.ts`); worker `tsc` EXIT 0. **SSRF removed** (worker no longer fetches URLs). ElevenLabs/Vultr/Instagram-scraper deleted. Real attestation still pending; needs founder `APP_CLIENT_TOKEN` + deploy. |
 | Committed secrets | 🟢 Clean | Verified via full git-history scan; keys server-side. |

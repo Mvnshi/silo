@@ -34,6 +34,21 @@ export type Classification =
 export type ItemType = 'link' | 'screenshot' | 'note';
 
 /**
+ * Source platform for a saved link, set by the universal social-link extractor.
+ * 'web' = any non-social URL (generic Open Graph). Mirrors the Worker's Platform.
+ */
+export type SocialPlatform =
+  | 'youtube'
+  | 'tiktok'
+  | 'twitter'
+  | 'instagram'
+  | 'reddit'
+  | 'threads'
+  | 'facebook'
+  | 'vimeo'
+  | 'web';
+
+/**
  * Individual content item saved by the user
  */
 export interface Item {
@@ -90,6 +105,12 @@ export interface Item {
   ocr_text?: string;
   /** Owning user id (device id today; a real account id once auth exists). */
   userId?: string;
+
+  // --- Social extraction (set by the universal link extractor) ---
+  /** Source platform of a saved link (drives the inline embed in cards/Streams). */
+  platform?: SocialPlatform;
+  /** Author / creator from oEmbed/OG (channel name, display name, or @handle). */
+  author?: string;
 }
 
 /**
@@ -174,24 +195,39 @@ export interface GenerateAudioResponse {
 }
 
 /**
+ * Normalized result from the universal social-link extractor (`task: 'extract'`).
+ * `ok:false` means rich metadata couldn't be obtained (dead/private/login-walled)
+ * — the client still saves the raw link plus whatever fields are present.
+ */
+export interface ExtractedLinkResponse {
+  platform: SocialPlatform;
+  kind: 'video' | 'image' | 'article' | 'post' | 'link';
+  title: string;
+  author?: string;
+  caption?: string;
+  /** From the classify chain; falls back to `caption`. */
+  description?: string;
+  thumbnailUrl?: string;
+  /** Clean iframe src (YouTube/TikTok) when available. */
+  embedUrl?: string;
+  /** oEmbed html (TikTok/X) when provided. */
+  embedHtml?: string;
+  duration?: number;
+  /** Resolved/canonical URL after following redirects. */
+  sourceUrl: string;
+  ok: boolean;
+  reason?: string;
+  classification: Classification;
+  tags: string[];
+}
+
+/**
  * API response from backend schedule suggestion
  */
 export interface ScheduleSuggestionResponse {
   date: string;
   time: string;
   reason: string;
-}
-
-/**
- * API response from Instagram download
- */
-export interface InstagramDownloadResponse {
-  success: boolean;
-  videoUrl?: string;
-  imageUrl?: string;
-  caption?: string;
-  username?: string;
-  type: 'video' | 'image' | 'carousel';
 }
 
 /**
