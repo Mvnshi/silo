@@ -12,6 +12,7 @@
  * - expo-av: Audio setup
  */
 
+import '../global.css';
 import { useEffect } from 'react';
 import { Slot } from 'expo-router';
 import { Audio } from 'expo-av';

@@ -40,6 +40,7 @@ import * as ImagePicker from 'expo-image-picker';
 import TagPicker from '@/components/TagPicker';
 import ChatBot from '@/components/ChatBot';
 import { analyzeLink, analyzeImage, generateAudio, suggestScheduleTime, generateEmbedding } from '@/lib/api';
+import OptionCard from '@/components/ui/OptionCard';
 import { addItem, getUserId, updateItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { Classification } from '@/lib/types';
@@ -370,7 +371,7 @@ export default function AddScreen() {
     >
       {/* Gradient Background */}
       <LinearGradient
-        colors={['#B4F5E8', '#D7FFF5', '#F0FFF9']}
+        colors={['#EEF2FF', '#F5F3FF', '#FAF5FF']}
         style={StyleSheet.absoluteFill}
       />
       <ChatBot onClose={() => {}} />
@@ -384,43 +385,43 @@ export default function AddScreen() {
         {/* Input Type Selection */}
         {!inputType && (
           <View style={styles.typeSelection}>
-            <Text style={styles.sectionTitle}>Add Content</Text>
+            <Text className="text-[34px] font-extrabold tracking-tight text-ink-900">Capture</Text>
+            <Text className="mb-6 mt-1.5 text-[15px] leading-[20px] text-ink-500">
+              Save anything — Silo classifies, tags, and organizes it for you.
+            </Text>
             
-            <TouchableOpacity
-              style={styles.typeButton}
+            <OptionCard
+              index={0}
+              icon="link"
+              colors={['#6366f1', '#8b5cf6']}
+              title="Link"
+              subtitle="Paste any URL or article"
               onPress={() => setInputType('url')}
-            >
-              <Ionicons name="link" size={32} color="#007AFF" />
-              <Text style={styles.typeButtonText}>Link</Text>
-              <Text style={styles.typeButtonSubtext}>Add a URL</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.typeButton}
+            />
+            <OptionCard
+              index={1}
+              icon="camera"
+              colors={['#ec4899', '#f472b6']}
+              title="Camera"
+              subtitle="Snap a photo to save"
               onPress={() => handleSelectImage('camera')}
-            >
-              <Ionicons name="camera" size={32} color="#007AFF" />
-              <Text style={styles.typeButtonText}>Camera</Text>
-              <Text style={styles.typeButtonSubtext}>Take a photo</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.typeButton}
+            />
+            <OptionCard
+              index={2}
+              icon="images"
+              colors={['#06b6d4', '#22d3ee']}
+              title="Gallery"
+              subtitle="Import from your photos"
               onPress={() => handleSelectImage('gallery')}
-            >
-              <Ionicons name="images" size={32} color="#007AFF" />
-              <Text style={styles.typeButtonText}>Gallery</Text>
-              <Text style={styles.typeButtonSubtext}>Choose from photos</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.typeButton}
+            />
+            <OptionCard
+              index={3}
+              icon="create"
+              colors={['#10b981', '#34d399']}
+              title="Note"
+              subtitle="Jot a quick thought"
               onPress={() => setInputType('note')}
-            >
-              <Ionicons name="create" size={32} color="#007AFF" />
-              <Text style={styles.typeButtonText}>Note</Text>
-              <Text style={styles.typeButtonSubtext}>Write a text note</Text>
-            </TouchableOpacity>
+            />
           </View>
         )}
 

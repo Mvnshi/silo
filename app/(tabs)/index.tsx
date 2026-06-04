@@ -36,6 +36,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { format } from 'date-fns';
 import ItemCard from '@/components/ItemCard';
 import CompactCard from '@/components/CompactCard';
+import ItemCardPro from '@/components/ItemCardPro';
 import { Item, Stack } from '@/lib/types';
 import { getItems, getStacks, addStack, updateItem, deleteItem } from '@/lib/storage';
 import { aiSearch } from '@/lib/api';
@@ -572,9 +573,10 @@ export default function StacksScreen() {
         <FlatList
           key="list-view"
           data={filteredItems}
-          renderItem={({ item }) => (
-            <ItemCard 
-              item={item} 
+          renderItem={({ item, index }) => (
+            <ItemCardPro
+              item={item}
+              index={index}
               onPress={handleItemPress}
               onLongPress={handleItemLongPress}
               onSwipeLeft={handleSwipeLeft}
