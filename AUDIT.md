@@ -169,12 +169,15 @@
 | Screenshot Swipe | **Real** (gaps) | No OCR; wrong iOS detection; no undo/dedupe/progress |
 | AI semantic search | **Broken** | Dead route |
 | Audio narration | **Likely broken** | Vultr signing + crashing fallback |
-| Instagram ingest | **Unreliable / demo** | Unofficial scraper; ToS risk |
-| **Share extension** | **Missing** | First-class deliverable; no native infra |
+| Instagram / social ingest | **Replanned (2026-06-04)** | Scraper deleted (cost pass). New plan = **Tier-1** OG metadata + thumbnail + token-free official embed (no download). See TODO "🔗 Social Extraction". |
+| **Share extension** | **Speced → building (2026-06-04)** | First-class deliverable; Part-A research done; native infra (App Group + config plugin) is Part B. See TODO "🔗 Social Extraction". |
 | **Monetization / paywall** | **Missing** | No IAP/RevenueCat dependency |
 | **Backend auth** | **Missing** | Open endpoints |
 | Onboarding / in-context permissions | **Missing** | Phase 4 |
 | Privacy Policy / ToS / store assets | **Missing** | Phase 6 (mandatory for subscriptions) |
+
+### 2026-06-04 addendum — Social Extraction (research)
+The "share into Silo + extract from a social link" pipeline is now a first-class mission. **Part A research is complete** (verified live endpoint probes + Apple guideline text) and lives in [`TODO.md`](TODO.md) under "🔗 SOCIAL EXTRACTION". Decision: **Tier-1** (oEmbed/OG metadata + thumbnail + token-free official embed) is the shippable build; **Tier-2** (yt-dlp/cobalt raw download) stays an off-by-default flag (ToS + Apple 5.2.3 + can't-run-on-device + legal). Architecture note: the cost-pass removed all server-side URL fetching; the extractor re-introduces a **controlled, egress-filtered** fetch in the Worker (allow public http(s), block private/link-local/metadata IPs, cap redirects/size/timeout) parsed via Cloudflare `HTMLRewriter` — *not* the old open-SSRF surface.
 
 ---
 

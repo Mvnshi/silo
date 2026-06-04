@@ -13,14 +13,14 @@
   - **Task Zero root cause was NOT a code change** — `react-native-reanimated` was already pinned/installed at **4.1.7** (SDK-54 compatible; peer-deps RN 0.78–0.82 ✓, worklets 0.5.1 ✓). The actual blockers, now fixed: (1) **stale `ios/Podfile.lock`** (predated the dep downgrade, missing reanimated/worklets, wrong hermes version) → deleted + regenerated via `pod install` (102 pods, RNReanimated/RNWorklets autolinked); (2) **iOS 26.5 simulator platform not installed** (Xcode 26.5 had only 26.1/26.2 runtimes → xcodebuild saw zero sim destinations) → installed via `xcodebuild -downloadPlatform iOS` (8.5 GB).
   - **Task One:** the ONLY type error was `tsconfig.json` overriding `moduleResolution:"node"`, which conflicts with `customConditions` inherited from `expo/tsconfig.base` (TS5098). Fixed → `"bundler"`. Phase 2 code (`types.ts`/`items.ts`/`storage.ts`) then type-checks clean. Migration confirmed at runtime (`[silo] storage migrated 0 -> 2`); seed runs `__DEV__`-only; capture sites (`add.tsx:183`, `screenshots.tsx:218`, `ChatBot.tsx:190`) build via `createItem`.
 - **⚙️ ENV GOTCHAS ON THIS MAC (do not forget — they will recur):**
-  - **Node is v24.16.0 / npm 11** (brief said "Node 20" — it's not). Expo SDK 54 tolerates it.
+  - **Node is v20.20.2 / npm 10.8.2** (re-confirmed 2026-06-04 via `node --version`; an earlier note said v24 — the toolchain on this Mac is now Node 20, matching the brief). Expo SDK 54 is happy on it.
   - **CocoaPods (1.16.2 on Ruby 4.0) CRASHES without a UTF-8 locale** (`Encoding::CompatibilityError`). Always run pod-installing commands with `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8` — including `npx expo run:ios` (it runs `pod install` internally). Recommend founder add `export LANG=en_US.UTF-8` to `~/.zprofile`.
   - **Long background shells get reaped at turn boundaries** — foreground-block on long builds (`expo run:ios` ≈ 5–10 min cold).
   - App lives on sim **A31ED97F** (iPhone 17 Pro, iOS 26.2). Metro on :8081.
   - **Lint is currently broken:** ESLint 9 needs a flat `eslint.config.js` (none exists) + `eslint-config-expo`. `npm run lint` errors. Deferred — set up in Phase 7 QA (or quick `npx expo lint` scaffold).
 - **Worker typecheck: ✅ DONE** — `cd workers && npm install` then `npx tsc --noEmit` → EXIT 0 (0 errors) after fixing 11 blind-written errors: removed 5 dead `OPTIONS` preflight blocks (unreachable — the `!== 'POST'` guard above them returns first, and `middleware.applySecurity` 405s non-POST too) and added 2 `json()` type assertions in `generate-embedding.ts`. Typecheck-verified only — NOT runtime-verified (needs `wrangler dev`/deploy + secrets; founder gate).
   - **CORS preflight decision:** intentionally not handled in the handlers (native iOS sends no `Origin`/preflight; middleware enforces POST). If a browser/web client is ever added, add an `OPTIONS`→204+CORS short-circuit in `middleware.applySecurity` (one place), not per-handler.
-- **Next action:** (P0) SSRF hardening — allowlist + block private/non-http(s) hosts + `redirect:'manual'` in `analyze-link.ts` & `instagram-download.ts`; then scheme-allowlist `Linking.openURL`, sanitize S3 keys, lock down WebView. THEN Phase 3 calendar (timezone + two-way sync). **Founder config still needed:** `wrangler secret put APP_CLIENT_TOKEN` + `EXPO_PUBLIC_CLIENT_TOKEN`, `wrangler kv:namespace create RATE_LIMIT_KV`, EAS Expo `projectId`.
+- **Next action (2026-06-04):** building the **Social Extraction** mission — share-into-Silo + universal link extractor (see the dedicated section below). **Part A research ✅ DONE** (this checkpoint). **Part B (next, after founder check-in):** Worker `extract` task (oEmbed + OG via `HTMLRewriter`, hardened egress) → existing Gemini classify → normalized `Item`; native iOS **Share Extension** (App Group + config plugin; EAS dev build to test — not Expo Go); token-free inline embeds (replace the `eeinstagram.com` proxy). **Founder config still needed to verify the classify chain live:** deploy Worker + set `GEMINI_API_KEY`/`APP_CLIENT_TOKEN`, EAS `projectId` (see [`FOUNDER_SETUP.md`](FOUNDER_SETUP.md)). *(Prior P0 SSRF item is now moot — the cost-pass deleted `analyze-link.ts`/`instagram-download.ts`; the Worker no longer fetches URLs. The extractor re-introduces a **controlled, egress-filtered** fetch, not the old open SSRF.)*
 
 ### ⚠️ Environment (UPDATED 2026-06-03 — now on a real Mac)
 - **SUPERSEDED:** the original audit ran on a Windows host with no Node — that's no longer the case. We are now on the founder's **MacBook Air (Apple Silicon)** with Node v24.16.0, npm 11, Xcode 26.5, CocoaPods 1.16.2, working iOS simulator. `tsc`/`eslint`/`expo`/`wrangler`/iOS builds CAN run here.
@@ -31,6 +31,67 @@
 - Stack: Expo SDK 54 / RN 0.81 / React 19 / TS / expo-router; backend = Cloudflare Workers (`silo-api`); AI = Google Gemini; TTS = ElevenLabs; storage = Vultr S3/CDN. All data local via AsyncStorage. No auth, no accounts, no IAP.
 - **No committed/shipped secret found (verified via full git-history scan).** Keys are server-side. The real P0 is the **unauthenticated open backend**.
 - Native dirs `ios/`+`android/` are committed prebuild output → prefer changing native config via `app.json` + config plugins, then `expo prebuild`.
+
+---
+
+## 🔗 SOCIAL EXTRACTION — research findings + CTO recommendation (2026-06-04)
+
+> **Mission:** best-in-class "share into Silo + extract anything from a social link" — the single biggest friction-killer for the product. This is the **Part A** research deliverable. The build plan (**Part B**) is folded in at the end + into Phase 3.
+> **All endpoint statuses below were verified by LIVE PROBE from this Mac on 2026-06-04** (`curl` against each oEmbed endpoint + OG-tag greps) — not assumed, not from memory. Evidence quoted inline as “✓ 200, no auth”, etc.
+
+### TL;DR — the CTO call
+**Ship Tier 1 (metadata + thumbnail + native embed). Do NOT build Tier 2 (raw media download) into the core.** Tier 2 violates platform ToS, is the textbook trigger for App Store rejection under Guideline **5.2.3**, breaks constantly, can’t run on-device, and needs a server doing legally-gray work tied to *your* developer account — a rejection-and-legal-mess machine for a solo founder trying to charge. Tier 2 stays an **off-by-default flag** (`FEATURE_MEDIA_DOWNLOAD=false`, mirroring the existing `FEATURE_VOICE` pattern), documented as a risk, almost certainly never enabled for the App Store build. **Proceeding with Tier 1 as the build.**
+
+### Tier 1 — metadata + thumbnail + embed (the shippable path) — VERIFIED per platform
+
+| Platform | Free extraction path (verified) | title | author | caption/desc | thumbnail | token-free embed | Notes |
+|---|---|:--:|:--:|:--:|:--:|:--:|---|
+| **YouTube / Shorts** | **oEmbed** `youtube.com/oembed?url=&format=json` — **✓ 200, no auth** | ✓ | ✓ | (use OG) | ✓ `i.ytimg.com/.../hqdefault.jpg` | ✓ `youtube.com/embed/<id>` iframe | `youtu.be` shortlinks normalize ✓. Gold standard. |
+| **TikTok** | **oEmbed** `tiktok.com/oembed?url=` — **✓ 200, no auth** | ✓ | ✓ | ✓ (in title) | ✓ `thumbnail_url` | ✓ blockquote + `embed.js` or `/embed/v2/<id>` | Cleanest non-YouTube path; caption+hashtags included. |
+| **X / Twitter** | **oEmbed** `publish.twitter.com/oembed?url=` — **✓ 200, NO AUTH** (must follow 1 redirect; twitter.com→x.com) | — | ✓ | ✓ (tweet text in html) | ✗ (no thumb for text tweets) | ✓ blockquote + `widgets.js` | **The X *API v2* is paywalled; the *publish oEmbed* endpoint is separate and still free + token-free — VERIFIED live.** |
+| **Instagram** | **OG tags** (mobile UA) — **✓ rich OG** (og:title/image/description + `al:ios` App Links). Legacy `api.instagram.com/oembed` = **301→dead**. | ✓ | partial | ✓ | ✓ (og:image CDN) | ✓ blockquote `.instagram-media` + `embed.js` (`instgrm.Embeds.process()`) | oEmbed *API* now needs a **Meta app + access token** (old endpoints removed **Apr 2025**). We don’t need it: OG for metadata + official `embed.js` for playback, both token-free. **Caveat:** OG scrape is reliable from a residential/mobile UA (verified) but IG often serves a **login wall to datacenter IPs** → graceful fallback required (below). |
+| **Reddit** | **OG tags** via `old.reddit.com` — **✓ clean OG**. `.json` API now **blocked/OAuth-gated** for generic UAs (verified: served HTML, not JSON). | ✓ | — | ✓ | ✓ | link/embed | Use `old.reddit.com` for OG; new reddit is JS-walled. |
+| **Threads** | **OG tags** (same posture as IG; Meta-owned). oEmbed = `/threads_oembed` (token-gated). | ✓ | partial | ✓ | ✓ | threads `embed.js` | Treat like Instagram. |
+| **Facebook** | **OG tags** — FB aggressively login-walls non-auth/datacenter. oEmbed token-gated. | partial | partial | partial | sometimes | often blocked | Weakest. Save link + whatever OG exists; **never block the save**. |
+| **Any other URL** | **Generic OG / Twitter-Card parse** — works for ~any site, free, no scraping tricks | ✓ | ✓ | ✓ | usually | link preview | The universal fallback. |
+
+**How metadata gets fetched (architecture decision):** oEmbed JSON (YouTube/TikTok/X) and OG-tag HTML (everyone else) are both fetched **server-side in the Worker**, and OG is parsed with **Cloudflare `HTMLRewriter`** — native, streaming, zero-dependency, free, and the idiomatic Worker tool. No `open-graph-scraper`/`cheerio`/headless browser (those don’t run unmodified in a Worker anyway). oEmbed endpoints are *designed* for server calls and work fine from Cloudflare datacenter IPs (verified). The Worker forwards a **mobile browser UA** for OG fetches to maximize IG/Reddit success.
+- **Why server-side, not on-device:** one codebase for both the app **and** the Share Extension (which has a tight memory budget — can’t ship an HTML parser there), and it lets us chain *extract → Gemini classify* in one request. **Trade-off acknowledged:** IG/FB OG is less reliable from a datacenter IP than from the phone’s residential IP — handled by the graceful-fallback contract.
+
+**Inline playback/embed is token-free for ALL platforms** (no download, no token, keyed only off the URL/ID, rendered in a WebView via each platform’s *official* embed):
+YouTube `embed/<id>` iframe · TikTok blockquote+`embed.js` · X blockquote+`widgets.js` · Instagram/Threads blockquote+`embed.js` (**replaces the sketchy `eeinstagram.com` proxy in `lib/instagram.ts`/`StreamCard.tsx`**) · Reddit redditmedia/link card. Image-less items fall back to the **AI-generated visual already in the codebase**.
+
+**Link-preview libraries/services surveyed (why we self-host instead):**
+- **`open-graph-scraper` / `metascraper` / `unfurl`** (Node OSS) — solid parsers, but Node-runtime; in a CF Worker the free native equivalent is `HTMLRewriter`. Only relevant if parsing ever moves to a Node host.
+- **microlink.io** — hosted unfurl API. Free tier = **50 req/day total** (not per-user!), Pro from **€39/mo**. Too small for a real user base, adds a 3rd-party that sees every saved URL (privacy), costs money at scale. Self-hosting OG in our own Worker is **free** on Cloudflare and keeps URLs private. (Same logic rules out opengraph.io / iframely / embed.ly free tiers.)
+- **noembed.com** — free oEmbed aggregator (verified ✓ 200 for YouTube). Useful **fallback** but 3rd-party (reliability + leaks URLs) — not primary.
+
+### Tier 2 — raw media download (researched, flagged, NOT the core)
+- **yt-dlp** — most capable OSS downloader (1000+ sites, active). Python CLI/lib → **cannot run on-device in an iOS app**; needs a server (VPS/container), putting legally-gray activity on *your* account/IP + infra cost.
+- **cobalt** (imputnet, AGPL-3.0) — self-hostable JSON-API downloader. **Public instance’s YouTube broken since mid-2025** (per-IP rate limits + bot challenges); self-host needed, and it still breaks platform-by-platform constantly. Its docs: “can only download free & publicly accessible content,” user bears ToS/copyright responsibility.
+
+**The honest risks (why this is not the core):**
+1. **Platform ToS violation** — Apple Guideline **5.2.2** *(verbatim)*: “If your app uses, accesses, monetizes access to, or displays content from a third-party service, ensure that you are specifically permitted to do so under the service’s terms of use. Authorization must be provided upon request.” Downloaders break every major platform’s ToS.
+2. **App Store rejection** — Guideline **5.2.3** *(verbatim)*: “Apps should not facilitate illegal file sharing or include the ability to save, convert, or download media from third-party sources (e.g. Apple Music, YouTube, SoundCloud, Vimeo, etc.) without explicit authorization from those sources…” This is the **single most common rejection reason** for apps in this space; Apple demands documentary proof of rights a solo founder cannot get.
+3. **Reliability** — scrapers/downloaders break weekly → a maintenance treadmill instead of product.
+4. **Can’t run on-device** — needs a server doing the gray work, tied to your developer identity, + storage/bandwidth that blows the ~$0–1/mo budget.
+5. **Legal exposure** — hosting/redistributing copyrighted media is a different liability class than linking to it.
+
+> *Brief said “5.2.3 / 1.4.” **5.2.3 is exactly right**; the companion is **5.2.2** (third-party ToS), not 1.4 — 1.4 is Safety/physical-harm and doesn’t apply. **4.2 Minimum Functionality** is a secondary risk if the app ever looks like a thin “downloader” wrapper.*
+
+**Disposition:** behind `FEATURE_MEDIA_DOWNLOAD=false`. If ever enabled post-launch, scope to “user’s own content” / licensed sources only, never default, never in the App-Review path.
+
+### → Part B build plan (proceed after founder check-in)
+1. **Worker `extract` task** on the existing `POST /api/gemini` proxy (discriminator `task:'extract'`): `{url}` → resolve platform → oEmbed (YT/TikTok/X) or OG-via-`HTMLRewriter` (IG/Reddit/Threads/FB/generic) → normalized `{platform, type, title, author, caption, thumbnailUrl, embedUrl|embedHtml, duration, sourceUrl}`. **Re-introduces a fetch, but hardened egress:** block private/link-local/metadata IPs (`169.254.169.254`, `10/8`, `192.168/16`, `127/8`, `::1`, …) + non-http(s) schemes + cap redirects/response-size/timeout. (A link-preview feature inherently fetches user URLs; you make it *safe* with egress filtering, not by refusing to fetch — this is what every unfurler does.) Then chain into the existing Gemini classify → category + tags.
+2. **Client `extractLink(url)`** in `lib/api.ts` → normalized object → maps to `Item` (add `platform`, `author`, `embedUrl`/`embedHtml`, `sourceUrl`; reuse `url`/`title`/`description`/`imageUri`/`duration`/`classification`/`tags`).
+3. **Graceful-fallback contract — NEVER lose a save:** shortened/redirect URLs → resolve; dead link / login wall / private / age-gated / non-video (carousel/text/image) → return whatever exists (≥ `platform` + `sourceUrl`) and **still save the raw link**. Real failure states, no fakes, no fabricated sample posts.
+4. **Native iOS Share Extension** — App Group `group.com.silo.app` sharing the app’s AsyncStorage; config-plugin in `app.json`; small confirmation sheet (preview + category + “Add to Silo”). **Cannot run in Expo Go → EAS dev build on device to test** (flagged gate below).
+5. **Inline embed** in card + Streams via the token-free WebView embeds above; replace `eeinstagram.com`.
+
+### ⚠️ Verification gates for this mission
+- **Extraction (oEmbed/OG) is verifiable locally now** (no keys needed) — done in Part A via `curl`; in Part B verifiable via the Worker’s `extract` task with `wrangler dev`.
+- **The Gemini classify chain** needs the deployed Worker URL + `GEMINI_API_KEY` (founder gate, FOUNDER_SETUP.md) to verify end-to-end.
+- **Share Extension CANNOT run in Expo Go** — requires an **EAS dev build on a device**: `npx eas-cli build --profile development --platform ios`. Acceptance (share from ≥3 real apps → item in Stacks) is verified there, or the exact blocker is documented.
 
 ---
 
@@ -45,7 +106,7 @@
 **STILL OPEN (non-blocking — proceeding with defaults):**
 5. **AI provider** — keeping **Gemini**; moving off experimental `gemini-2.0-flash-exp` to a stable model. Flag if you want OpenAI/Anthropic.
 6. **Apple Developer account status** — needed for TestFlight + IAP product setup (bundle `com.silo.app`). Log when known.
-7. **Instagram ingestion** — scraper violates IG ToS & is unreliable. Recommend user-paste/oEmbed-with-token or dropping auto-download. Confirm direction.
+7. **Instagram ingestion — ✅ RESOLVED by the Social Extraction research (2026-06-04).** Direction: **Tier-1** — save link + OG metadata/thumbnail + token-free official `embed.js` playback; **drop the scraper/auto-download** (deleted in the cost pass anyway). No Meta access token needed. The dead `downloadInstagramDirect` in `lib/instagram.ts` will be removed when the extractor lands. (Raw download stays off behind `FEATURE_MEDIA_DOWNLOAD=false`.)
 
 ---
 
@@ -113,3 +174,4 @@
   - **GAPS to revisit:** (a) voice narration parked — re-add via Apple on-device Speech (no paid TTS). (b) assistant no longer returns `suggestedEvent` (create-event-from-chat temporarily dropped; re-add to the `assistant` task). (c) screenshot OCR should move to Apple Vision (expo, on-device) — currently uses Gemini vision via the proxy. (d) `lib/instagram.ts downloadInstagramDirect` is now dead/uncalled — delete in a cleanup. (e) stale hackathon docs (README/SETUP/SETUP_CHECKLIST/HOW_IT_WORKS/QUICKSTART/BACKEND_SETUP/QUICK_EXPLANATION) still name ElevenLabs/Vultr — consolidate or delete.
 - 2026-06-04 (on Mac): **Real-app systems — round 1.** Shipped a **Settings/Profile screen** (`app/settings.tsx`): profile + live stats, persisted prefs (default review length / auto-suggest / notifications), **export data** (JSON) + **delete-all** (confirmed), About (version/privacy/terms/feedback). Entry = profile avatar in the Stacks header. Root `<Slot>`→`<Stack>` for native push; status bar → dark. Shipped **multi-select + bulk actions** in Stacks (`index.tsx` + `ItemCardPro`): Select → tap-to-toggle (checkmarks) → floating bar (N selected · Done · Delete) with destructive-confirm. `tsc` EXIT 0; both verified in sim.
   - **⏳ MISSING REAL-APP SYSTEMS (backlog — build these):** onboarding / first-run tour; **dark mode** (theme tokens exist; needs `colorScheme` wiring + `dark:` variants); **undo** on delete (snackbar); grid-view selection indicator (`CompactCard` — list view done, grid visual TODO); multi-select **Add-to-Stack** / Archive / Move; **pull-to-refresh** on every list; search history / recents; per-screen status-bar style (Streams is dark-bg); real **Privacy Policy + ToS** pages (Phase 6, launch-required); **expo-notifications** system to honor the notifications pref; account/data-portability polish (import). Track these as the "table-stakes" layer alongside the feature rollout.
+- 2026-06-04: **Social Extraction — Part A research DONE** (new "🔗 SOCIAL EXTRACTION" section above). Verified every platform's free extraction path by **live `curl` probe** (not memory): YouTube/TikTok/X oEmbed all **200 + no auth** (X publish-oEmbed still token-free despite the paywalled API v2); Instagram/Reddit/Threads/FB via **OG tags** (IG legacy oEmbed 301-dead, Meta oEmbed now token-gated; old.reddit.com serves clean OG; new-reddit `.json` UA-blocked). Pulled Apple’s **verbatim** 5.2.3/5.2.2/4.2 text. **CTO recommendation: ship Tier-1 (metadata+thumbnail+token-free embed), keep Tier-2 raw-download off behind a flag** (ToS + 5.2.3 rejection + can’t-run-on-device + legal). Resolved founder Q7. Build plan (Part B) speced; **checked in with founder before building.** Node re-confirmed v20.20.2.

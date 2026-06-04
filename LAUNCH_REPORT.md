@@ -23,7 +23,7 @@
 | Map / location | 🟡 Conditional | Needs Google key (Android); no denied/empty state; geocode perf. |
 | Bucket list (engine) | 🔴 Missing | Only booleans; no conditions/triggers/notifications. |
 | AI assistant (RAG) | 🔴 Failed | Retrieval broken; degrades to prompt-stuffing; can hallucinate. |
-| Share extension | 🔴 Missing | First-class deliverable; no native infra. |
+| Share extension / social ingest | 🟡 Speced (research ✅) | Part-A research done (verified probes): **Tier-1** metadata+thumbnail+token-free embed = the build; **Tier-2** raw download flagged-off (ToS/5.2.3). Part B next: Worker `extract` task + native iOS Share Extension (EAS dev build to test). See TODO "🔗 Social Extraction". |
 | Monetization / paywall | 🔴 Missing | No IAP/RevenueCat dependency. |
 | Backend security | 🟡 Gated + minimized (typecheck ✅, not deployed) | Worker stripped to ONE endpoint (`POST /api/gemini`) behind shared-token auth + per-IP rate limit + body-size (`workers/middleware.ts`); worker `tsc` EXIT 0. **SSRF removed** (worker no longer fetches URLs). ElevenLabs/Vultr/Instagram-scraper deleted. Real attestation still pending; needs founder `APP_CLIENT_TOKEN` + deploy. |
 | Committed secrets | 🟢 Clean | Verified via full git-history scan; keys server-side. |
@@ -45,6 +45,7 @@ Legend: 🟢 ready · 🟡 partial/needs work · 🔴 blocker/missing · ⬜ unv
 - Verified no committed secret. Mapped native config + Phase 6 gaps.
 - **Phase 2 (closed):** unified `Item` schema + full bucket-list engine data model; new `lib/items.ts`; AsyncStorage schema versioning + one-time migration + concurrency mutex + automatic timestamps. Boot migration wired; **production seeding removed** (dev-only now); all capture sites build items via `createItem`.
 - **Phase 3 P0 backend gate:** shared-token auth + per-IP rate limit + method/body-size middleware (`workers/middleware.ts`), client token header (`lib/api.ts`). Additive/non-breaking; UNVERIFIED (no compiler here) — app + worker typechecks pending.
+- **Social Extraction — Part A research (2026-06-04, verified):** live-probed every platform's free extraction path (YouTube/TikTok/X oEmbed = 200 + no auth; IG/Reddit/Threads/FB = OG tags; IG legacy oEmbed dead / Meta oEmbed token-gated) + Apple's verbatim 5.2.3/5.2.2/4.2 text. **CTO call: ship Tier-1, keep Tier-2 download off behind a flag.** Build plan speced in TODO "🔗 Social Extraction"; founder check-in before Part B build.
 
 ## 4–8. (to be filled as work proceeds)
 - **Improvements made / Files changed / Commands run + real results / Remaining blockers / App Store + subscription setup still needed** — TBD.
