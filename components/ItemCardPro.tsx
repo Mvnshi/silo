@@ -16,24 +16,8 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from 'react-native-reanimated';
-import { Item, Classification } from '@/lib/types';
-
-type Cfg = { from: string; to: string; icon: keyof typeof Ionicons.glyphMap; label: string };
-
-const CLASS: Record<Classification, Cfg> = {
-  article: { from: '#6366f1', to: '#8b5cf6', icon: 'newspaper', label: 'Article' },
-  video: { from: '#ec4899', to: '#f472b6', icon: 'play', label: 'Video' },
-  recipe: { from: '#f59e0b', to: '#fb923c', icon: 'restaurant', label: 'Recipe' },
-  product: { from: '#10b981', to: '#34d399', icon: 'pricetag', label: 'Product' },
-  event: { from: '#f43f5e', to: '#fb7185', icon: 'calendar', label: 'Event' },
-  place: { from: '#06b6d4', to: '#22d3ee', icon: 'location', label: 'Place' },
-  idea: { from: '#f59e0b', to: '#fbbf24', icon: 'bulb', label: 'Idea' },
-  fitness: { from: '#ef4444', to: '#f87171', icon: 'barbell', label: 'Fitness' },
-  food: { from: '#f97316', to: '#fb923c', icon: 'fast-food', label: 'Food' },
-  career: { from: '#14b8a6', to: '#2dd4bf', icon: 'briefcase', label: 'Career' },
-  academia: { from: '#8b5cf6', to: '#a78bfa', icon: 'school', label: 'Academia' },
-  other: { from: '#64748b', to: '#94a3b8', icon: 'document-text', label: 'Note' },
-};
+import { Item } from '@/lib/types';
+import { classConfig } from '@/lib/classification';
 
 function timeAgo(iso?: string): string {
   if (!iso) return '';
@@ -64,7 +48,7 @@ interface Props {
 export default function ItemCardPro({ item, index = 0, onPress, onLongPress }: Props) {
   const scale = useSharedValue(1);
   const aStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
-  const cfg = CLASS[item.classification] ?? CLASS.other;
+  const cfg = classConfig(item.classification);
   const isDone =
     item.status === 'done' || item.bucketlist_completed === true || item.viewed === true;
   const tags = Array.isArray(item.tags) ? item.tags.slice(0, 3) : [];

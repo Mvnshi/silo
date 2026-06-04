@@ -38,6 +38,7 @@ import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
 import StreamCard from '@/components/StreamCard';
+import EmptyState from '@/components/ui/EmptyState';
 import { Item, Classification } from '@/lib/types';
 import { getItems, updateItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
@@ -321,13 +322,13 @@ export default function ReelScreen() {
           />
         }
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Ionicons name="videocam-outline" size={64} color="#666" />
-            <Text style={styles.emptyText}>No content found</Text>
-            <Text style={styles.emptySubtext}>
-              Try selecting a different category
-            </Text>
-          </View>
+          <EmptyState
+            dark
+            icon="play-circle"
+            title="Your stream is empty"
+            subtitle="Saved videos and reels appear here as a scrollable feed."
+            colors={['#ec4899', '#8b5cf6']}
+          />
         }
       />
       

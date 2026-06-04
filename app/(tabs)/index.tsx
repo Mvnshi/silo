@@ -37,6 +37,7 @@ import { format } from 'date-fns';
 import ItemCard from '@/components/ItemCard';
 import CompactCard from '@/components/CompactCard';
 import ItemCardPro from '@/components/ItemCardPro';
+import EmptyState from '@/components/ui/EmptyState';
 import { Item, Stack } from '@/lib/types';
 import { getItems, getStacks, addStack, updateItem, deleteItem } from '@/lib/storage';
 import { aiSearch } from '@/lib/api';
@@ -591,13 +592,11 @@ export default function StacksScreen() {
             paddingHorizontal: 16,
           }}
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="folder-open-outline" size={64} color="#ccc" />
-              <Text style={styles.emptyText}>No items found</Text>
-              <Text style={styles.emptySubtext}>
-                Add content to get started
-              </Text>
-            </View>
+            <EmptyState
+              icon="sparkles"
+              title="Nothing here yet"
+              subtitle="Save a link, screenshot, or note — Silo classifies and organizes it for you."
+            />
           }
         />
       ) : (
@@ -621,13 +620,11 @@ export default function StacksScreen() {
             paddingHorizontal: 8,
           }}
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="folder-open-outline" size={64} color="#ccc" />
-              <Text style={styles.emptyText}>No items found</Text>
-              <Text style={styles.emptySubtext}>
-                Add content to get started
-              </Text>
-            </View>
+            <EmptyState
+              icon="sparkles"
+              title="Nothing here yet"
+              subtitle="Save a link, screenshot, or note — Silo classifies and organizes it for you."
+            />
           }
         />
       )}
