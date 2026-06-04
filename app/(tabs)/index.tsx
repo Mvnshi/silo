@@ -661,7 +661,7 @@ export default function StacksScreen() {
             />
           )}
           keyExtractor={item => item.id}
-          contentInsetAdjustmentBehavior="automatic"
+          contentInsetAdjustmentBehavior="never"
           contentContainerStyle={{
             paddingTop: headerHeight + 12, // measured sticky-header clearance
             paddingBottom: insets.bottom + 120,
@@ -689,7 +689,7 @@ export default function StacksScreen() {
           )}
           keyExtractor={item => item.id}
           numColumns={2}
-          contentInsetAdjustmentBehavior="automatic"
+          contentInsetAdjustmentBehavior="never"
           contentContainerStyle={{
             paddingTop: headerHeight + 12, // measured sticky-header clearance
             paddingBottom: insets.bottom + 120,
