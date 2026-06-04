@@ -83,6 +83,34 @@ push, and auto-renewable subscriptions.
 
 ---
 
+## 4. iOS Share Extension — build & test ("Share → Silo")
+
+The native share extension (Share from Safari/Instagram/TikTok/X/Reddit/Photos →
+"Add to Silo") is built + wired (via `@bacons/apple-targets`) but **cannot run in
+Expo Go** — it needs a dev build. Verified so far: `expo prebuild` generates the
+`share.appex` target and the Swift type-checks clean. To build + test it:
+
+- [ ] **Install deps:** `npm install`. (The repo `.npmrc` sets `legacy-peer-deps=true`
+      — required for `@bacons/apple-targets` on this RN 0.81 / React 19 / SDK 54
+      stack — and pins a top-level `@expo/prebuild-config` so the plugin resolves.)
+- [ ] **Add your Apple Team ID** to `app.json` as `ios.appleTeamId` (10-char ID from
+      the Apple Developer portal / Xcode). apple-targets needs it to sign the
+      extension on device/EAS builds (simulator builds don't).
+- [ ] **Register the App Group** `group.com.silo.app` under your App ID in the Apple
+      Developer portal → Identifiers → App Groups (device/EAS only; sim doesn't need it).
+- [ ] **Regenerate native project:** `npx expo prebuild -p ios --clean`.
+- [ ] **Build a dev build** — either local: `npx expo run:ios` (simulator or a
+      USB device), or cloud: `eas build --profile development --platform ios` then
+      install on a device.
+- [ ] **Test (acceptance):** open Safari / Instagram / TikTok / X / Reddit → Share →
+      **Add to Silo** → the confirmation sheet (preview + category) → **Add to Silo** →
+      the item should appear in **Stacks**. Verify from at least 3 different apps.
+
+> How it works: the extension hands the shared URL/text/image to the app via a
+> `silo://share?...` deep link; `app/share.tsx` runs the SAME extractor + Gemini
+> classify pipeline as in-app capture (so shared items get title/author/thumbnail +
+> category/tags + an inline embed). Shared images travel through the App Group.
+
 ## What I need back from you to proceed deeper
 1. The **Worker URL** (after deploy) — unblocks live backend verification.
 2. The **EAS `projectId`** (after `eas init`) — unblocks reproducible cloud builds.

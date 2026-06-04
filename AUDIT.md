@@ -170,7 +170,7 @@
 | AI semantic search | **Broken** | Dead route |
 | Audio narration | **Likely broken** | Vultr signing + crashing fallback |
 | Instagram / social ingest | **Tier-1 extractor built + verified (2026-06-04)** | Universal `extract` task (oEmbed/OG, egress-hardened) + token-free inline embeds; verified via `wrangler dev` + real curl. Unofficial scraper + eeinstagram proxy removed. See TODO "🔗 Social Extraction". |
-| **Share extension** | **Speced → building (2026-06-04)** | First-class deliverable; Part-A research done; native infra (App Group + config plugin) is Part B. See TODO "🔗 Social Extraction". |
+| **Share extension** | **Built + wired (2026-06-04); prebuild-verified** | Native target via `@bacons/apple-targets` (`targets/share` SwiftUI sheet) → deep-links `silo://share` → `app/share.tsx` runs the extractor pipeline; App Group shares images. On-device test = EAS / `expo run:ios` gate (not Expo Go). See TODO "🔗 Social Extraction". |
 | **Monetization / paywall** | **Missing** | No IAP/RevenueCat dependency |
 | **Backend auth** | **Missing** | Open endpoints |
 | Onboarding / in-context permissions | **Missing** | Phase 4 |

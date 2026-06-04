@@ -13,6 +13,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.silo.app",
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.com.silo.app"]
+      },
       "infoPlist": {
         "NSCalendarsUsageDescription": "Silo needs calendar access to schedule content review sessions.",
         "NSPhotoLibraryUsageDescription": "Silo needs photo library access to detect and analyze screenshots.",
@@ -36,7 +39,8 @@
       "expo-file-system",
       "expo-image-picker",
       "expo-media-library",
-      "expo-location"
+      "expo-location",
+      "@bacons/apple-targets"
     ],
     "experiments": {
       "typedRoutes": true

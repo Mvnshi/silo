@@ -24,7 +24,7 @@
 | Bucket list (engine) | 🔴 Missing | Only booleans; no conditions/triggers/notifications. |
 | AI assistant (RAG) | 🔴 Failed | Retrieval broken; degrades to prompt-stuffing; can hallucinate. |
 | Social link extractor | 🟢 Built + verified | **Part B.1 DONE:** universal Worker `extract` (oEmbed + OG via HTMLRewriter, egress-hardened) → Gemini classify → normalized item; token-free inline embeds. Verified via `wrangler dev` + real curl; app+worker `tsc` EXIT 0; `expo export` clean; sim relaunched. Full in-app demo gated on deployed Worker URL. |
-| Share extension | 🟡 Building | **Part B.2:** native iOS Share Extension (App Group + config plugin) — scaffolding; needs an EAS dev build to test (not Expo Go). |
+| Share extension | 🟡 Wired (prebuild-verified); on-device test pending | **Part B.2:** native target via `@bacons/apple-targets` + `app/share.tsx` deep-link handler → same extractor pipeline; App Group for images. `expo prebuild` generates `share.appex`; Swift type-checks clean. On-device share test (≥3 apps) = EAS / `expo run:ios` gate (needs `ios.appleTeamId`); not Expo Go. |
 | Monetization / paywall | 🔴 Missing | No IAP/RevenueCat dependency. |
 | Backend security | 🟡 Gated + minimized (typecheck ✅, not deployed) | Worker stripped to ONE endpoint (`POST /api/gemini`) behind shared-token auth + per-IP rate limit + body-size (`workers/middleware.ts`); worker `tsc` EXIT 0. **SSRF removed** (worker no longer fetches URLs). ElevenLabs/Vultr/Instagram-scraper deleted. Real attestation still pending; needs founder `APP_CLIENT_TOKEN` + deploy. |
 | Committed secrets | 🟢 Clean | Verified via full git-history scan; keys server-side. |

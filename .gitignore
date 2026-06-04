@@ -35,3 +35,6 @@ yarn-error.log*
 .wrangler/
 .dev.vars
 
+
+# apple-targets generated per-prebuild artifact (do not commit)
+targets/**/generated.entitlements
