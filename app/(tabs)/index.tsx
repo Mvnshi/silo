@@ -76,6 +76,7 @@ export default function StacksScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [headerHeight, setHeaderHeight] = useState(170);
 
   /**
    * Load stacks and items from storage
@@ -526,7 +527,10 @@ export default function StacksScreen() {
           style={StyleSheet.absoluteFill}
         />
         {/* Sticky Search and Stacks Bar */}
-        <View style={[styles.stickyHeader, { paddingTop: insets.top + 8 }]}>
+        <View
+          style={[styles.stickyHeader, { paddingTop: insets.top + 8 }]}
+          onLayout={e => setHeaderHeight(e.nativeEvent.layout.height)}
+        >
         {/* Title + profile/settings entry */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, paddingBottom: 10 }}>
           <Text style={{ fontSize: 28, fontWeight: '800', color: '#0f172a', letterSpacing: -0.5 }}>Stacks</Text>
@@ -659,7 +663,7 @@ export default function StacksScreen() {
           keyExtractor={item => item.id}
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={{
-            paddingTop: 120, // Space for sticky header
+            paddingTop: headerHeight + 12, // measured sticky-header clearance
             paddingBottom: insets.bottom + 120,
             paddingHorizontal: 16,
           }}
@@ -687,7 +691,7 @@ export default function StacksScreen() {
           numColumns={2}
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={{
-            paddingTop: 120, // Space for sticky header
+            paddingTop: headerHeight + 12, // measured sticky-header clearance
             paddingBottom: insets.bottom + 120,
             paddingHorizontal: 8,
           }}
@@ -731,9 +735,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 10,
-    backgroundColor: 'transparent',
+    backgroundColor: '#E8D4F5',
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingBottom: 14,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    shadowColor: '#7c3aed',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.13,
+    shadowRadius: 12,
   },
   headerSpacer: {
     height: 120, // Space for sticky header
