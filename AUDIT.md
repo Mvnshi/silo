@@ -26,10 +26,10 @@
 | **Local persistence** | `@react-native-async-storage/async-storage` 2.2.0 (all app data is local) |
 | **Native projects** | Both `ios/` (`Silo.xcodeproj`, bundle `com.silo.app`) and `android/` (`com.silo.app`) are committed (prebuild output) |
 | **Maps** | `react-native-maps` 1.20.1, forced `PROVIDER_GOOGLE` |
-| **Backend** | **Cloudflare Workers** (`silo-api`, `wrangler.toml`, `workers/index.ts`), TypeScript, deployed via `wrangler deploy` |
+| **Backend** | **Cloudflare Workers** (`silo-api`), TypeScript, `wrangler deploy`. **Cost pass 2026-06-04:** stripped to a SINGLE authenticated Gemini proxy (`POST /api/gemini`, `workers/gemini.ts`); analyze-image/analyze-link/suggest-schedule/generate-audio/generate-embedding/rag-query/instagram-download all deleted; SSRF removed (no server-side URL fetch). |
 | **AI provider** | **Google Gemini** — `gemini-2.0-flash-exp` (classification/link/schedule/RAG) + `embedding-001` (embeddings). All via `env.GEMINI_API_KEY` server-side |
-| **TTS** | ElevenLabs (`env.ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID`) |
-| **Object storage/CDN** | Vultr Object Storage (S3-compatible) + CDN |
+| **TTS** | **REMOVED (cost pass 2026-06-04)** — was ElevenLabs (sponsor prize). Voice is roadmap-only behind `FEATURE_VOICE` (default off); use Apple on-device Speech later, no paid TTS. |
+| **Object storage/CDN** | **REMOVED (cost pass 2026-06-04)** — was Vultr (sponsor prize). All data is on-device (AsyncStorage); no remote storage/CDN. |
 | **Auth / accounts** | **None.** Anonymous per-device id (`@silo:userId` = `user_<ts>_<rand>`), no login, no server user model |
 | **Payments / IAP** | **None.** No StoreKit/Play Billing/RevenueCat dependency anywhere |
 | **Build/run commands** | `npm start` / `npm run ios` / `npm run android` / `npm run web`; `npm run type-check` (`tsc --noEmit`); `npm run lint` (`eslint .`). Backend: `wrangler dev` / `wrangler deploy` / `wrangler tail` |

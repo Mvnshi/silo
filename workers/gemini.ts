@@ -1,0 +1,352 @@
+/**
+ * Cloudflare Worker: Authenticated Gemini Proxy
+ *
+ * Single thin proxy in front of Google Gemini. Its only purpose is to keep the
+ * GEMINI_API_KEY server-side so it never ships in the client bundle. There is no
+ * other service here — voice (ElevenLabs), storage (Vultr), and the Instagram
+ * scraper were removed in the cost-reduction pass.
+ *
+ * Endpoint: POST /api/gemini
+ *
+ * The request body carries a `task` discriminator that selects the behaviour:
+ *   - "classify_image"    { imageBase64, mimeType }
+ *   - "classify_link"     { url, pageText? }   (URL is NOT fetched server-side)
+ *   - "suggest_schedule"  { title, classification, description?, duration? }
+ *   - "assistant"         { query, items: Array<{ title, description?, classification, tags? }> }
+ *
+ * SECURITY NOTES:
+ *   - The URL passed to "classify_link" is never fetched by the Worker. We only
+ *     forward the url string plus optional client-supplied pageText to Gemini.
+ *     This removes the previous server-side fetch (SSRF risk).
+ *   - On any upstream/parse failure we return a generic 502 and never echo the
+ *     provider's error text back to the client (avoids leaking upstream details).
+ *
+ * Environment Variables Required:
+ * - GEMINI_API_KEY: Google Gemini API key (server-side only)
+ */
+
+import { Env, ClassificationResult, ScheduleSuggestion, ErrorResponse } from './types';
+
+const GEMINI_MODEL = 'gemini-2.0-flash';
+
+/** Allowed classification values; anything else falls back to 'other'. */
+const CLASSIFICATIONS = [
+  'article',
+  'video',
+  'recipe',
+  'product',
+  'event',
+  'place',
+  'idea',
+  'fitness',
+  'food',
+  'career',
+  'academia',
+  'other',
+] as const;
+
+type Classification = (typeof CLASSIFICATIONS)[number];
+
+/** Coerce an arbitrary value into a valid classification, defaulting to 'other'. */
+function toClassification(value: unknown): Classification {
+  return (CLASSIFICATIONS as readonly string[]).includes(value as string)
+    ? (value as Classification)
+    : 'other';
+}
+
+function json(
+  status: number,
+  body: unknown,
+  corsHeaders: Record<string, string>
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+/**
+ * Extract the first JSON object from a model's text output. Returns null when no
+ * parseable object is present. Never throws.
+ */
+function extractJson(text: string): Record<string, any> | null {
+  try {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Call Gemini's generateContent with the given parts and return the generated
+ * text. Throws on any non-OK response or missing text so callers can map it to a
+ * single generic 502 (no upstream error text is propagated).
+ */
+async function callGemini(env: Env, parts: any[]): Promise<string> {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts }] }),
+    }
+  );
+
+  if (!response.ok) {
+    // Read and log upstream detail server-side only; never return it to client.
+    const detail = await response.text().catch(() => '');
+    console.error(`[silo] Gemini ${response.status}:`, detail);
+    throw new Error('gemini_upstream_error');
+  }
+
+  const data = (await response.json()) as any;
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text || typeof text !== 'string') {
+    throw new Error('gemini_no_text');
+  }
+  return text;
+}
+
+/** Shared instruction describing the classification JSON contract. */
+function classificationInstruction(): string {
+  return `Classify the input into exactly one of these categories: ${CLASSIFICATIONS.join(
+    ', '
+  )}.
+
+Return ONLY a JSON object (no markdown, no prose) with this shape:
+{
+  "classification": "one of the categories above",
+  "title": "short title",
+  "description": "2-3 sentence summary",
+  "tags": ["tag1", "tag2", "tag3"],
+  "duration": estimated_minutes_to_review_as_a_number,
+  "place_name": "only if this is a place/location",
+  "place_address": "only if this is a place/location"
+}
+
+Be concise and accurate.`;
+}
+
+/** Build a ClassificationResult from raw model output, applying enum + fallbacks. */
+function toClassificationResult(
+  parsed: Record<string, any> | null,
+  fallbackTitle: string
+): ClassificationResult {
+  if (!parsed) {
+    return { classification: 'other', title: fallbackTitle, tags: [] };
+  }
+  return {
+    classification: toClassification(parsed.classification),
+    title: typeof parsed.title === 'string' && parsed.title ? parsed.title : fallbackTitle,
+    description: typeof parsed.description === 'string' ? parsed.description : undefined,
+    tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+    duration: typeof parsed.duration === 'number' ? parsed.duration : undefined,
+    place_name: typeof parsed.place_name === 'string' ? parsed.place_name : undefined,
+    place_address: typeof parsed.place_address === 'string' ? parsed.place_address : undefined,
+  };
+}
+
+async function handleClassifyImage(
+  body: any,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const { imageBase64, mimeType } = body as { imageBase64?: string; mimeType?: string };
+  if (!imageBase64 || !mimeType) {
+    return json(
+      400,
+      { error: 'Missing required fields: imageBase64, mimeType' } as ErrorResponse,
+      corsHeaders
+    );
+  }
+
+  const prompt = `Analyze this image.\n\n${classificationInstruction()}`;
+  const text = await callGemini(env, [
+    { inlineData: { data: imageBase64, mimeType } },
+    { text: prompt },
+  ]);
+
+  const result = toClassificationResult(extractJson(text), 'Image');
+  return json(200, result, corsHeaders);
+}
+
+async function handleClassifyLink(
+  body: any,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const { url, pageText } = body as { url?: string; pageText?: string };
+  if (!url || typeof url !== 'string') {
+    return json(400, { error: 'Missing required field: url' } as ErrorResponse, corsHeaders);
+  }
+
+  // NOTE: we intentionally do NOT fetch the URL here (SSRF guard). Only the url
+  // string and any client-provided pageText are forwarded to Gemini.
+  const prompt = `Classify the content at this URL using only the information provided below. Do not attempt to browse.
+
+URL: ${url}
+${pageText ? `\nPage text (provided by the client):\n${pageText}\n` : ''}
+${classificationInstruction()}`;
+
+  const text = await callGemini(env, [{ text: prompt }]);
+  const result = toClassificationResult(extractJson(text), url);
+  return json(200, result, corsHeaders);
+}
+
+async function handleSuggestSchedule(
+  body: any,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const { title, classification, description, duration } = body as {
+    title?: string;
+    classification?: string;
+    description?: string;
+    duration?: number;
+  };
+  if (!title || !classification) {
+    return json(
+      400,
+      { error: 'Missing required fields: title, classification' } as ErrorResponse,
+      corsHeaders
+    );
+  }
+
+  const now = new Date();
+  const currentDate = now.toISOString().split('T')[0];
+  const currentTime = now.toTimeString().split(' ')[0].substring(0, 5);
+
+  const prompt = `Suggest the best time within the next 7 days to review this content.
+
+Title: ${title}
+Type: ${classification}
+${description ? `Description: ${description}` : ''}
+${duration ? `Estimated duration: ${duration} minutes` : ''}
+
+Current date: ${currentDate}
+Current time: ${currentTime}
+
+Return ONLY a JSON object (no markdown, no prose):
+{
+  "date": "YYYY-MM-DD",
+  "time": "HH:MM",
+  "reason": "one sentence explanation"
+}`;
+
+  const text = await callGemini(env, [{ text: prompt }]);
+  const parsed = extractJson(text);
+
+  let suggestion: ScheduleSuggestion;
+  if (parsed) {
+    suggestion = {
+      date: typeof parsed.date === 'string' ? parsed.date : currentDate,
+      time: typeof parsed.time === 'string' ? parsed.time : '09:00',
+      reason: typeof parsed.reason === 'string' ? parsed.reason : 'General suggestion',
+    };
+  } else {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    suggestion = {
+      date: tomorrow.toISOString().split('T')[0],
+      time: '09:00',
+      reason: 'Default suggestion for tomorrow morning',
+    };
+  }
+
+  return json(200, suggestion, corsHeaders);
+}
+
+async function handleAssistant(
+  body: any,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const { query, items } = body as {
+    query?: string;
+    items?: Array<{
+      title?: string;
+      description?: string;
+      classification?: string;
+      tags?: string[];
+    }>;
+  };
+  if (!query || typeof query !== 'string') {
+    return json(400, { error: 'Missing required field: query' } as ErrorResponse, corsHeaders);
+  }
+
+  const safeItems = Array.isArray(items) ? items : [];
+  const context = safeItems
+    .map((item, idx) => {
+      const cls = item.classification ? ` [${item.classification}]` : '';
+      const tags = item.tags && item.tags.length ? ` (Tags: ${item.tags.join(', ')})` : '';
+      const desc = item.description ? `: ${item.description}` : '';
+      return `${idx + 1}. ${item.title || 'Untitled'}${cls}${desc}${tags}`;
+    })
+    .join('\n');
+
+  const prompt = `You are Silo, a personal assistant that answers questions using ONLY the user's saved items listed below. Never invent saved content, and do not claim the user saved something that is not in the list. If the items do not contain the answer, say so plainly.
+
+User's saved items:
+${context || 'No saved items.'}
+
+User's question: ${query}
+
+Return ONLY a JSON object (no markdown, no prose):
+{
+  "answer": "your answer, grounded only in the saved items above",
+  "sources": []
+}`;
+
+  const text = await callGemini(env, [{ text: prompt }]);
+  const parsed = extractJson(text);
+
+  const answer =
+    parsed && typeof parsed.answer === 'string' && parsed.answer ? parsed.answer : text.trim();
+
+  return json(200, { answer, sources: [] }, corsHeaders);
+}
+
+/**
+ * Thin authenticated Gemini proxy. Auth + rate limiting are applied upstream in
+ * the router (applySecurity); this function assumes the request already passed.
+ */
+export async function handleGemini(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  if (!env.GEMINI_API_KEY) {
+    return json(503, { error: 'Service not configured' } as ErrorResponse, corsHeaders);
+  }
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return json(400, { error: 'Invalid JSON body' } as ErrorResponse, corsHeaders);
+  }
+
+  const task = body?.task;
+
+  try {
+    switch (task) {
+      case 'classify_image':
+        return await handleClassifyImage(body, env, corsHeaders);
+      case 'classify_link':
+        return await handleClassifyLink(body, env, corsHeaders);
+      case 'suggest_schedule':
+        return await handleSuggestSchedule(body, env, corsHeaders);
+      case 'assistant':
+        return await handleAssistant(body, env, corsHeaders);
+      default:
+        return json(400, { error: 'Unknown task' } as ErrorResponse, corsHeaders);
+    }
+  } catch (error) {
+    // Generic error only — do not leak upstream provider error text.
+    console.error('[silo] Gemini proxy error:', error);
+    return json(502, { error: 'Upstream request failed' } as ErrorResponse, corsHeaders);
+  }
+}

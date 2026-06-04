@@ -1,446 +1,142 @@
 /**
- * Backend API Client
- * 
- * Handles all communication with Cloudflare Workers backend.
- * All AI processing (image analysis, link analysis, audio generation)
- * goes through these API endpoints.
- * 
- * Features:
- * - Image analysis with Gemini AI
- * - Link/URL analysis with Gemini AI
- * - Text-to-speech audio generation with ElevenLabs
- * - Schedule suggestions with Gemini AI
- * 
- * Environment Variable Required:
- * - EXPO_PUBLIC_API_BASE_URL: Cloudflare Worker base URL
- * 
- * Dependencies:
- * - None (uses native fetch)
+ * Backend API client.
+ *
+ * The Cloudflare Worker's ONLY job is to proxy Google Gemini so the API key
+ * never ships in the app bundle (an on-device key would be extractable →
+ * unauthenticated paid-quota drain, the audit's P0). Everything else —
+ * search, storage, assistant retrieval — runs on-device and free. The only
+ * thing that touches the network here is the single `/api/gemini` proxy.
+ *
+ * Required env: EXPO_PUBLIC_API_BASE_URL (Worker URL). Optional:
+ * EXPO_PUBLIC_CLIENT_TOKEN (must match the Worker's APP_CLIENT_TOKEN).
  */
-
 import {
   AnalyzeImageResponse,
   AnalyzeLinkResponse,
-  GenerateAudioResponse,
   ScheduleSuggestionResponse,
-  InstagramDownloadResponse,
   ApiErrorResponse,
 } from './types';
 
-// Get API base URL from environment variable
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || '';
-
-// Optional shared client token. When set (and matched by APP_CLIENT_TOKEN on the
-// worker), it gates the backend against anonymous abuse. Sent as X-Silo-Client.
 const CLIENT_TOKEN = process.env.EXPO_PUBLIC_CLIENT_TOKEN || '';
 
-/** Common request headers: JSON content type + optional shared client token. */
+/** Common headers: JSON + optional shared client token (X-Silo-Client). */
 function apiHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (CLIENT_TOKEN) headers['X-Silo-Client'] = CLIENT_TOKEN;
   return headers;
 }
 
-/**
- * Check if API is configured
- */
+/** True once the Worker URL is configured (otherwise AI features no-op cleanly). */
 export function isApiConfigured(): boolean {
   return API_BASE_URL.length > 0;
 }
 
-/**
- * Handle API errors
- */
-function handleApiError(error: unknown): never {
-  if (error instanceof Error) {
-    throw new Error(`API Error: ${error.message}`);
+/** POST a task to the single Gemini proxy endpoint. Throws a friendly error on failure. */
+async function postGemini<T>(body: Record<string, unknown>): Promise<T> {
+  if (!isApiConfigured()) {
+    throw new Error('AI isn’t set up yet — add your Worker URL to turn it on.');
   }
-  throw new Error('An unknown API error occurred');
+  const response = await fetch(`${API_BASE_URL}/api/gemini`, {
+    method: 'POST',
+    headers: apiHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let msg = `Request failed (${response.status})`;
+    try {
+      const e = (await response.json()) as ApiErrorResponse;
+      if (e?.error) msg = e.error;
+    } catch {
+      // keep the status-based message
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as T;
 }
 
-/**
- * Analyze an image using Gemini AI
- * 
- * @param imageBase64 - Base64-encoded image data
- * @param mimeType - Image MIME type (e.g., 'image/jpeg')
- * @returns Classification result with title, description, tags, etc.
- */
+/** Classify/title/tag an image (e.g. a screenshot) via the Gemini proxy. */
 export async function analyzeImage(
   imageBase64: string,
   mimeType: string
 ): Promise<AnalyzeImageResponse> {
-  try {
-    if (!isApiConfigured()) {
-      throw new Error('API base URL not configured');
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/analyze-image`, {
-      method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify({ imageBase64, mimeType }),
-    });
-
-    if (!response.ok) {
-      const errorData = (await response.json()) as ApiErrorResponse;
-      throw new Error(errorData.error || 'Failed to analyze image');
-    }
-
-    return (await response.json()) as AnalyzeImageResponse;
-  } catch (error) {
-    return handleApiError(error);
-  }
+  return postGemini<AnalyzeImageResponse>({ task: 'classify_image', imageBase64, mimeType });
 }
 
 /**
- * Analyze a URL/link using Gemini AI
- * 
- * @param url - URL to analyze
- * @returns Classification result with title, description, tags, etc.
+ * Classify/title/tag a saved link via the Gemini proxy.
+ * The Worker does NOT fetch the URL (that was an SSRF surface we removed) — it
+ * reasons over the URL plus any client-supplied page text.
  */
-export async function analyzeLink(url: string): Promise<AnalyzeLinkResponse> {
-  try {
-    if (!isApiConfigured()) {
-      throw new Error('API base URL not configured');
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/analyze-link`, {
-      method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify({ url }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorData: ApiErrorResponse;
-      try {
-        errorData = JSON.parse(errorText) as ApiErrorResponse;
-          } catch {
-            // If we can't parse the error, use the status code
-            if (response.status === 403) {
-              throw new Error('This website blocks automated requests. Try copying the content manually or use a different URL.');
-            }
-            throw new Error(`Failed to analyze link: ${response.status} ${errorText}`);
-          }
-          // Use the user-friendly error message from the worker
-          throw new Error(errorData.error || 'Failed to analyze link');
-    }
-
-    return (await response.json()) as AnalyzeLinkResponse;
-  } catch (error) {
-    // Don't throw - let caller handle gracefully
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error('Failed to analyze link');
-  }
+export async function analyzeLink(url: string, pageText?: string): Promise<AnalyzeLinkResponse> {
+  return postGemini<AnalyzeLinkResponse>({ task: 'classify_link', url, pageText });
 }
 
-/**
- * Generate audio narration for text using ElevenLabs TTS
- * 
- * @param text - Text to convert to speech
- * @param itemId - Unique item ID for file naming
- * @returns Vultr CDN URL for the generated audio file
- */
-export async function generateAudio(
-  text: string,
-  itemId: string
-): Promise<GenerateAudioResponse> {
-  try {
-    if (!isApiConfigured()) {
-      throw new Error('API base URL not configured');
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/generate-audio`, {
-      method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify({ text, itemId }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorData: ApiErrorResponse;
-      try {
-        errorData = JSON.parse(errorText) as ApiErrorResponse;
-      } catch {
-        throw new Error(`Failed to generate audio: ${response.status} ${errorText}`);
-      }
-      throw new Error(errorData.error || 'Failed to generate audio');
-    }
-
-    return (await response.json()) as GenerateAudioResponse;
-  } catch (error) {
-    // Don't throw - let caller handle gracefully (audio is optional)
-    console.warn('Audio generation failed (optional feature):', error);
-    // Return a promise that rejects, but caller should catch it
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error('Failed to generate audio');
-  }
-}
-
-/**
- * Get AI-powered schedule suggestion for content review
- * 
- * @param data - Content metadata (title, classification, description, duration)
- * @returns Suggested date, time, and reason
- */
+/** Suggest when to review an item via the Gemini proxy. */
 export async function suggestScheduleTime(data: {
   title: string;
   classification: string;
   description?: string;
   duration?: number;
 }): Promise<ScheduleSuggestionResponse> {
-  try {
-    if (!isApiConfigured()) {
-      throw new Error('API base URL not configured');
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/suggest-schedule`, {
-      method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify(data),
-    });
-
-    if (!response.ok) {
-      const errorData = (await response.json()) as ApiErrorResponse;
-      throw new Error(errorData.error || 'Failed to suggest schedule');
-    }
-
-    return (await response.json()) as ScheduleSuggestionResponse;
-  } catch (error) {
-    return handleApiError(error);
-  }
+  return postGemini<ScheduleSuggestionResponse>({ task: 'suggest_schedule', ...data });
 }
 
 /**
- * AI-powered semantic search
- * Uses semantic matching to find relevant content based on meaning, not just keywords
- * 
- * @param query - Search query
- * @param items - Array of items to search through
- * @returns Array of items sorted by relevance
+ * On-device keyword/tag search — no network, no cost. (Semantic search would
+ * need a hosted vector DB, which we intentionally avoid; keyword+tag is the
+ * free path and runs entirely on-device.) Returns matching item indices as
+ * strings, preserving input order.
  */
 export async function aiSearch(
   query: string,
-  items: Array<{ id?: string; title: string; description?: string; tags: string[]; classification: string }>
-): Promise<string[]> {
-  try {
-    if (!isApiConfigured() || !query.trim()) {
-      // Fallback to keyword search if API not configured
-      return items
-        .map((item, index) => ({ item, index }))
-        .filter(({ item }) => {
-          const q = query.toLowerCase();
-          return (
-            item.title.toLowerCase().includes(q) ||
-            item.description?.toLowerCase().includes(q) ||
-            item.tags.some(tag => tag.toLowerCase().includes(q)) ||
-            item.classification.toLowerCase().includes(q)
-          );
-        })
-        .map(({ index }) => index.toString());
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/ai-search`, {
-      method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify({ query, items }),
-    });
-
-    if (!response.ok) {
-      // Fallback to keyword search on error
-      return items
-        .map((item, index) => ({ item, index }))
-        .filter(({ item }) => {
-          const q = query.toLowerCase();
-          return (
-            item.title.toLowerCase().includes(q) ||
-            item.description?.toLowerCase().includes(q) ||
-            item.tags.some(tag => tag.toLowerCase().includes(q))
-          );
-        })
-        .map(({ index }) => index.toString());
-    }
-
-    const result = await response.json() as { itemIds: string[] };
-    return result.itemIds;
-  } catch (error) {
-    // Fallback to keyword search on error
-    return items
-      .map((item, index) => ({ item, index }))
-      .filter(({ item }) => {
-        const q = query.toLowerCase();
-        return (
-          item.title.toLowerCase().includes(q) ||
-          item.description?.toLowerCase().includes(q) ||
-          item.tags.some(tag => tag.toLowerCase().includes(q))
-        );
-      })
-      .map(({ index }) => index.toString());
-  }
-}
-
-/**
- * Download Instagram post/video content
- * 
- * @param url - Instagram post/reel URL
- * @returns Instagram content data (video URL, image URL, caption, etc.)
- */
-export async function downloadInstagram(
-  url: string
-): Promise<InstagramDownloadResponse> {
-  try {
-    if (!isApiConfigured()) {
-      throw new Error('API base URL not configured');
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/instagram-download`, {
-      method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify({ url }),
-    });
-
-    if (!response.ok) {
-      const errorData = (await response.json()) as ApiErrorResponse;
-      throw new Error(errorData.error || 'Failed to download Instagram content');
-    }
-
-    return (await response.json()) as InstagramDownloadResponse;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Generate embedding for a content item
- * 
- * @param userId - User ID (device ID or user identifier)
- * @param itemId - Item ID
- * @param title - Item title
- * @param description - Item description (optional)
- * @param tags - Item tags (optional)
- * @returns Embedding vector and storage status
- */
-export async function generateEmbedding(data: {
-  userId: string;
-  itemId: string;
-  title: string;
-  description?: string;
-  tags?: string[];
-}): Promise<{ embedding: number[]; stored: boolean }> {
-  try {
-    if (!isApiConfigured()) {
-      throw new Error('API base URL not configured');
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/generate-embedding`, {
-      method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify(data),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorData: ApiErrorResponse;
-      try {
-        errorData = JSON.parse(errorText) as ApiErrorResponse;
-      } catch {
-        // If quota exceeded, return empty embedding instead of throwing
-        if (response.status === 429) {
-          return { embedding: [], stored: false };
-        }
-        throw new Error(`Failed to generate embedding: ${response.status} ${errorText}`);
-      }
-      // If quota exceeded, return empty embedding instead of throwing
-      if (response.status === 429 || errorData.details?.includes('quota')) {
-        return { embedding: [], stored: false };
-      }
-      throw new Error(errorData.error || 'Failed to generate embedding');
-    }
-
-    return (await response.json()) as { embedding: number[]; stored: boolean };
-  } catch (error) {
-    // Don't throw - return empty embedding for graceful failure
-    console.warn('Embedding generation failed (optional feature):', error);
-    return { embedding: [], stored: false };
-  }
-}
-
-/**
- * Query personal RAG model
- * 
- * @param userId - User ID
- * @param query - User's question
- * @param suggestEvent - Whether to suggest calendar events
- * @returns Answer, sources, and optional event suggestion
- */
-export async function ragQuery(data: {
-  userId: string;
-  query: string;
-  suggestEvent?: boolean;
-  items?: Array<{ id: string; title: string; description?: string; tags?: string[]; classification?: string }>; // Optional: send items for fallback
-}): Promise<{
-  answer: string;
-  sources: Array<{
-    itemId: string;
+  items: Array<{
+    id?: string;
     title: string;
     description?: string;
-    relevance: number;
-  }>;
-  suggestedEvent?: {
-    title: string;
-    date: string;
-    time: string;
-    description: string;
-  };
-}> {
-  try {
-    if (!isApiConfigured()) {
-      throw new Error('API base URL not configured');
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/rag-query`, {
-      method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify(data),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorData: ApiErrorResponse;
-      try {
-        errorData = JSON.parse(errorText) as ApiErrorResponse;
-      } catch {
-        throw new Error(`Failed to process query: ${response.status} ${errorText}`);
-      }
-      // If it's a quota error, the worker should handle it with fallback
-      // But if we get here, the worker already failed, so just throw
-      throw new Error(errorData.error || 'Failed to process query');
-    }
-
-    return (await response.json()) as {
-      answer: string;
-      sources: Array<{
-        itemId: string;
-        title: string;
-        description?: string;
-        relevance: number;
-      }>;
-      suggestedEvent?: {
-        title: string;
-        date: string;
-        time: string;
-        description: string;
-      };
-    };
-  } catch (error) {
-    // Don't throw - let caller handle gracefully
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error('Failed to process query');
-  }
+    tags: string[];
+    classification: string;
+  }>
+): Promise<string[]> {
+  const q = query.trim().toLowerCase();
+  if (!q) return items.map((_, i) => i.toString());
+  return items
+    .map((item, index) => ({ item, index }))
+    .filter(
+      ({ item }) =>
+        item.title.toLowerCase().includes(q) ||
+        item.description?.toLowerCase().includes(q) ||
+        item.tags.some((t) => t.toLowerCase().includes(q)) ||
+        item.classification.toLowerCase().includes(q)
+    )
+    .map(({ index }) => index.toString());
 }
 
+/**
+ * Assistant over the user's saved items. Retrieval is on-device — the caller
+ * passes the already-relevant items; the Worker only runs Gemini to phrase a
+ * grounded answer. The model is instructed never to invent saved content.
+ * Signature kept backward-compatible; `userId`/`suggestEvent` are ignored.
+ */
+export async function ragQuery(data: {
+  userId?: string;
+  query: string;
+  suggestEvent?: boolean;
+  items?: Array<{
+    id: string;
+    title: string;
+    description?: string;
+    tags?: string[];
+    classification?: string;
+  }>;
+}): Promise<{
+  answer: string;
+  sources: Array<{ itemId: string; title: string; description?: string; relevance: number }>;
+  suggestedEvent?: { title: string; date: string; time: string; description: string };
+}> {
+  const result = await postGemini<{
+    answer: string;
+    sources?: Array<{ itemId: string; title: string; description?: string; relevance: number }>;
+  }>({ task: 'assistant', query: data.query, items: data.items || [] });
+  return { answer: result.answer, sources: result.sources || [] };
+}

@@ -39,7 +39,7 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import TagPicker from '@/components/TagPicker';
 import ChatBot from '@/components/ChatBot';
-import { analyzeLink, analyzeImage, generateAudio, suggestScheduleTime, generateEmbedding } from '@/lib/api';
+import { analyzeLink, analyzeImage, suggestScheduleTime } from '@/lib/api';
 import OptionCard from '@/components/ui/OptionCard';
 import { addItem, getUserId, updateItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
@@ -195,17 +195,8 @@ export default function AddScreen() {
         place_address: placeAddress.trim() || (classification === 'place' ? description.trim() : undefined),
       });
 
-      // Generate audio narration using script (from AI analysis) or fallback to description
-      const audioText = script.trim() || description.trim();
-      if (audioText) {
-        try {
-          const audioResponse = await generateAudio(audioText, item.id);
-          item.audio_url = audioResponse.audioUrl;
-        } catch (error) {
-          // Silently fail - audio is optional
-          console.warn('Audio generation skipped (optional feature):', error instanceof Error ? error.message : error);
-        }
-      }
+      // (Voice narration is a roadmap feature, default-off — see lib/config.ts.
+      //  Apple's on-device Speech framework can fill it later for free, no paid TTS.)
 
       // Save item
       await addItem(item);
@@ -232,23 +223,8 @@ export default function AddScreen() {
         }
       }
 
-      // Generate embedding for RAG (async, don't wait - optional feature)
-      try {
-        const userId = await getUserId();
-        generateEmbedding({
-          userId,
-          itemId: item.id,
-          title: item.title,
-          description: item.description,
-          tags: item.tags,
-        }).catch(error => {
-          // Silently fail - embedding is optional (quota limits on free tier)
-          console.warn('Embedding generation skipped (optional feature):', error instanceof Error ? error.message : error);
-        });
-      } catch (error) {
-        // Silently fail - embedding is optional
-        console.warn('Embedding generation skipped (optional feature):', error instanceof Error ? error.message : error);
-      }
+      // (No server-side embeddings or vector DB — the assistant retrieves
+      //  on-device via keyword + tag matching, which is free.)
 
       // Suggest scheduling (like screenshots tab)
       try {

@@ -1,8 +1,9 @@
 /**
  * Cloudflare Workers Type Definitions
- * 
- * This file contains TypeScript interfaces for Cloudflare Workers environment
- * variables and common API response types used across all worker endpoints.
+ *
+ * The Worker is a Gemini-only proxy: its sole job is to keep the
+ * GEMINI_API_KEY server-side so it never ships in the client. This file holds
+ * the environment interface and the response shapes used by that proxy.
  */
 
 /**
@@ -10,19 +11,8 @@
  * These are configured in wrangler.toml and Cloudflare dashboard
  */
 export interface Env {
-  // Google Gemini API key for image and link analysis
+  // Google Gemini API key — the only upstream service this Worker talks to.
   GEMINI_API_KEY: string;
-  
-  // ElevenLabs API configuration
-  ELEVENLABS_API_KEY: string;
-  ELEVENLABS_VOICE_ID: string;
-  
-  // Vultr Object Storage configuration
-  VULTR_ACCESS_KEY: string;
-  VULTR_SECRET_KEY: string;
-  VULTR_BUCKET: string;
-  VULTR_ENDPOINT: string;
-  VULTR_CDN_DOMAIN: string;
 
   // --- Security (Phase 3) ---
   // Shared client token. When set, /api/* requests must send a matching

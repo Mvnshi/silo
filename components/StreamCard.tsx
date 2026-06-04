@@ -97,7 +97,7 @@ export default function StreamCard({
   }, [sound]);
 
   /**
-   * Load audio from Vultr CDN URL
+   * Load audio from a remote URL (voice is roadmap-only/default-off)
    */
   async function loadAudio() {
     try {

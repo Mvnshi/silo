@@ -25,7 +25,7 @@
 | AI assistant (RAG) | 🔴 Failed | Retrieval broken; degrades to prompt-stuffing; can hallucinate. |
 | Share extension | 🔴 Missing | First-class deliverable; no native infra. |
 | Monetization / paywall | 🔴 Missing | No IAP/RevenueCat dependency. |
-| Backend security | 🟡 Gated (typecheck ✅, not deployed) | Shared-token auth + per-IP rate limit + method/body-size (`workers/middleware.ts`); worker `tsc --noEmit` EXIT 0. **SSRF in `analyze-link`/`instagram-download` still open** (next P0 item); real attestation pending. Needs founder: `APP_CLIENT_TOKEN` secret + `RATE_LIMIT_KV`. Not runtime-verified (no deploy). |
+| Backend security | 🟡 Gated + minimized (typecheck ✅, not deployed) | Worker stripped to ONE endpoint (`POST /api/gemini`) behind shared-token auth + per-IP rate limit + body-size (`workers/middleware.ts`); worker `tsc` EXIT 0. **SSRF removed** (worker no longer fetches URLs). ElevenLabs/Vultr/Instagram-scraper deleted. Real attestation still pending; needs founder `APP_CLIENT_TOKEN` + deploy. |
 | Committed secrets | 🟢 Clean | Verified via full git-history scan; keys server-side. |
 | Permissions / privacy strings | 🟡 Partial | Generic strings; missing background-location + notifications config. |
 | Privacy Policy / ToS | 🔴 Missing | Mandatory for auto-renew subscriptions. |
@@ -48,6 +48,35 @@ Legend: 🟢 ready · 🟡 partial/needs work · 🔴 blocker/missing · ⬜ unv
 
 ## 4–8. (to be filled as work proceeds)
 - **Improvements made / Files changed / Commands run + real results / Remaining blockers / App Store + subscription setup still needed** — TBD.
+
+---
+
+## 💸 Cost picture — near-zero monthly bill (cost-reduction pass, 2026-06-04)
+
+ElevenLabs and Vultr were sponsor prizes, not requirements — both **removed entirely**
+(deps, env vars, worker routes, client calls, docs). The Worker is now a single
+authenticated **Gemini proxy** (`POST /api/gemini`) and nothing else; its only reason
+to exist is keeping the Gemini key off the client. Everything else runs on-device, free.
+
+| Service | Role | Tier | Realistic monthly cost (low usage) |
+|---|---|---|---|
+| **Cloudflare Workers** | Hosts the Gemini proxy (key server-side) | Free: 100k req/day | **$0** (a solo app is a few hundred req/day) |
+| **Cloudflare KV** (optional) | Per-IP rate-limit counters | Free: 100k reads / 1k writes/day | **$0** |
+| **Google Gemini** `gemini-2.0-flash` | classify image/link, suggest schedule, assistant | Pay-per-use (free dev tier too) | **cents** — ~$0.075/1M input + $0.30/1M output tokens → a few hundred analyses is well under **$1/mo** |
+| **RevenueCat** | Subscriptions (Phase 5) | Free until $2.5k/mo tracked revenue | **$0** until you earn |
+| Apple Developer | TestFlight + IAP | $99/yr | ~$8/mo amortized (required to ship; not usage) |
+| ~~ElevenLabs~~ | ~~TTS~~ | **REMOVED** | $0 |
+| ~~Vultr Object Storage~~ | ~~audio + embeddings~~ | **REMOVED** | $0 |
+
+**Bottom line:** Cloudflare free-tier + Gemini pay-per-use (pennies) + RevenueCat
+free-until-revenue → steady-state ≈ **$0–1/month** plus the $99/yr Apple membership.
+
+**On-device & free** (no service, no bill): AsyncStorage for all saved data;
+keyword+tag retrieval for the assistant (no vector DB); and the roadmap on-device
+paths — Apple Vision OCR for screenshot text, expo-location geofencing for
+bucket-list triggers, expo-notifications for local notifications, and Apple's
+on-device Speech framework if voice is ever turned on (flag in `lib/config.ts`,
+default off). Only the Gemini proxy touches the network.
 
 ---
 

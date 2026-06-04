@@ -47,7 +47,7 @@ import {
   getMimeTypeFromFilename,
   Screenshot,
 } from '@/lib/screenshots';
-import { analyzeImage, generateAudio, suggestScheduleTime, generateEmbedding } from '@/lib/api';
+import { analyzeImage, suggestScheduleTime } from '@/lib/api';
 import { addItem, getUserId } from '@/lib/storage';
 import { createItem } from '@/lib/items';
 import { scheduleItemReview } from '@/lib/scheduler';
@@ -228,33 +228,9 @@ export default function ScreenshotsScreen() {
         place_address: analysis.place_address,
       });
 
-      // Generate audio if script is available (optional - fail gracefully)
-      if (analysis.script) {
-        try {
-          const audioResponse = await generateAudio(analysis.script, item.id);
-          item.audio_url = audioResponse.audioUrl;
-        } catch (error) {
-          console.warn('Audio generation failed (continuing without audio):', error instanceof Error ? error.message : error);
-          // Continue without audio - this is optional functionality
-        }
-      }
-
-      // Generate embedding for RAG (async, don't wait)
-      try {
-        const userId = await getUserId();
-        generateEmbedding({
-          userId,
-          itemId: item.id,
-          title: item.title,
-          description: item.description,
-          tags: item.tags,
-        }).catch(error => {
-          console.warn('Failed to generate embedding:', error);
-          // Don't show error to user, embedding is optional
-        });
-      } catch (error) {
-        console.warn('Failed to generate embedding:', error);
-      }
+      // (Voice narration is roadmap-only and default-off; no paid TTS.
+      //  No server-side embeddings either — the assistant retrieves on-device
+      //  via keyword + tag matching, which is free and needs no vector DB.)
 
       // Save item
       await addItem(item);

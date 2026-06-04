@@ -21,16 +21,11 @@
       _wrangler is installed under `workers/`; from root `npx wrangler` will fetch it, or use the pinned copy with `cd workers && npx wrangler <cmd> --config ../wrangler.toml`._
 - [ ] **Verify:** `npx wrangler whoami` → shows your account.
 
-### 1a. Set the API secrets (your own keys — never commit these)
-Each command prompts for the value; paste your key:
-- [ ] `npx wrangler secret put GEMINI_API_KEY`
-- [ ] `npx wrangler secret put ELEVENLABS_API_KEY`
-- [ ] `npx wrangler secret put ELEVENLABS_VOICE_ID`
-- [ ] `npx wrangler secret put VULTR_ACCESS_KEY`
-- [ ] `npx wrangler secret put VULTR_SECRET_KEY`
-- [ ] `npx wrangler secret put VULTR_BUCKET`
-- [ ] `npx wrangler secret put VULTR_ENDPOINT`
-- [ ] `npx wrangler secret put VULTR_CDN_DOMAIN`
+### 1a. Set the one API secret (your Gemini key — never commit it)
+Silo uses exactly ONE external service: **Google Gemini**. (ElevenLabs + Vultr
+were removed — they were sponsor prizes, not requirements; see LAUNCH_REPORT.md.)
+Grab a free key at https://aistudio.google.com/apikey, then:
+- [ ] `npx wrangler secret put GEMINI_API_KEY`  — prompts for the value; paste your key.
 
 ### 1b. Set the app gate token (matches the app's `.env`, no copy-paste needed)
 - [ ] Pipe the value straight from `.env` so it never hits your clipboard or shell history:
@@ -92,7 +87,7 @@ push, and auto-renewable subscriptions.
 1. The **Worker URL** (after deploy) — unblocks live backend verification.
 2. The **EAS `projectId`** (after `eas init`) — unblocks reproducible cloud builds.
 3. **Apple Team ID** + enrollment status — unblocks TestFlight/IAP setup.
-4. Confirmation that the **API secrets** (Gemini/ElevenLabs/Vultr) are set — unblocks AI/audio/RAG verification.
+4. Confirmation the **Gemini API key** is set (the only one now) — unblocks AI ingestion + assistant verification.
 
 Until then I'll keep moving on everything that doesn't require these (SSRF
 hardening, calendar fix, feature hardening) and flag each gate as I reach it.

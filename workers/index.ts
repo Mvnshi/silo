@@ -1,108 +1,54 @@
 /**
  * Cloudflare Workers Main Entry Point
- * 
- * This file routes incoming requests to the appropriate worker handler
- * based on the URL path. All AI processing, TTS generation, and schedule
- * suggestions go through these endpoints.
- * 
+ *
+ * The Worker is a single authenticated Gemini proxy. Its only job is to keep the
+ * GEMINI_API_KEY server-side so it never ships in the client. There are no other
+ * services (voice/storage/scraper were removed in the cost-reduction pass).
+ *
  * Routes:
- * - POST /api/analyze-image - Image analysis with Gemini AI
- * - POST /api/analyze-link - Link/URL analysis with Gemini AI
- * - POST /api/generate-audio - TTS generation with ElevenLabs + Vultr upload
- * - POST /api/suggest-schedule - Schedule suggestions with Gemini AI
+ * - OPTIONS *        -> 204 CORS preflight
+ * - POST /api/gemini -> applySecurity, then handleGemini (Gemini proxy)
+ * - GET  / or /api   -> service description JSON
+ * - everything else  -> 404 JSON
  */
 
 import { Env } from './types';
-import analyzeImage from './analyze-image';
-import analyzeLink from './analyze-link';
-import generateAudio from './generate-audio';
-import suggestSchedule from './suggest-schedule';
-import instagramDownload from './instagram-download';
-import generateEmbedding from './generate-embedding';
-import ragQuery from './rag-query';
+import { handleGemini } from './gemini';
 import { applySecurity, corsHeaders } from './middleware';
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Handle preflight requests (corsHeaders imported from ./middleware)
+    // CORS preflight (harmless; native clients send no Origin).
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders,
-      });
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    // Apply security (method + body-size + shared-token + per-IP rate limit) to
-    // the processing endpoints. Health checks ('/' and '/api') stay open.
-    if (path.startsWith('/api/')) {
+    // The single processing endpoint: authenticate + rate-limit, then proxy.
+    if (path === '/api/gemini') {
       const blocked = await applySecurity(request, env, path);
       if (blocked) return blocked;
+      return handleGemini(request, env, corsHeaders);
     }
 
-    // Route to appropriate handler
-    switch (path) {
-      case '/api/analyze-image':
-        return analyzeImage.fetch(request, env);
-      
-      case '/api/analyze-link':
-        return analyzeLink.fetch(request, env);
-      
-      case '/api/generate-audio':
-        return generateAudio.fetch(request, env);
-      
-      case '/api/suggest-schedule':
-        return suggestSchedule.fetch(request, env);
-      
-      case '/api/instagram-download':
-        return instagramDownload.fetch(request, env);
-      
-      case '/api/generate-embedding':
-        return generateEmbedding.fetch(request, env);
-      
-      case '/api/rag-query':
-        return ragQuery.fetch(request, env);
-      
-      case '/':
-      case '/api':
-        // Health check endpoint
-        return new Response(
-          JSON.stringify({ 
-            status: 'ok',
-            service: 'Silo API',
-            version: '1.0.0',
-            endpoints: [
-              '/api/analyze-image',
-              '/api/analyze-link',
-              '/api/generate-audio',
-              '/api/suggest-schedule',
-              '/api/instagram-download',
-              '/api/generate-embedding',
-              '/api/rag-query'
-            ]
-          }),
-          {
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-      
-      default:
-        return new Response(
-          JSON.stringify({ error: 'Not found' }),
-          {
-            status: 404,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
+    // Service description (open).
+    if (path === '/' || path === '/api') {
+      return new Response(
+        JSON.stringify({
+          status: 'ok',
+          service:
+            'Authenticated Gemini proxy; keeps the API key server-side; no other services',
+          endpoint: '/api/gemini',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
-  }
+
+    return new Response(JSON.stringify({ error: 'Not found' }), {
+      status: 404,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  },
 };
-
