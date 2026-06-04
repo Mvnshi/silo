@@ -14,7 +14,7 @@
 
 import '../global.css';
 import { useEffect } from 'react';
-import { Slot } from 'expo-router';
+import { Stack } from 'expo-router';
 import { Audio } from 'expo-av';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -64,8 +64,8 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" translucent={false} />
-      <Slot />
+      <StatusBar style="dark" translucent={false} />
+      <Stack screenOptions={{ headerShown: false }} />
     </SafeAreaProvider>
   );
 }

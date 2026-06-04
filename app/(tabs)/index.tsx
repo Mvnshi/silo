@@ -471,6 +471,15 @@ export default function StacksScreen() {
         />
         {/* Sticky Search and Stacks Bar */}
         <View style={[styles.stickyHeader, { paddingTop: insets.top + 8 }]}>
+        {/* Title + profile/settings entry */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, paddingBottom: 10 }}>
+          <Text style={{ fontSize: 28, fontWeight: '800', color: '#0f172a', letterSpacing: -0.5 }}>Stacks</Text>
+          <TouchableOpacity onPress={() => router.push('/settings')} activeOpacity={0.8} accessibilityLabel="Profile and settings">
+            <LinearGradient colors={['#8b5cf6', '#6366f1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="person" size={19} color="#fff" />
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
         {/* Search Bar */}
         <View style={styles.searchContainer}>
           <Ionicons name="search" size={20} color="#999" />

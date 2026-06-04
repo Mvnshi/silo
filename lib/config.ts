@@ -21,3 +21,8 @@ export const TRIAL_DAYS = 7;
 export const PRICE_MONTHLY = '$6.99';
 export const PRICE_YEARLY = '$39.99';
 export const PREMIUM_ENTITLEMENT = 'premium';
+
+/** Shown in Settings → About. Keep in sync with app.json `expo.version`. */
+export const APP_VERSION = '1.0.0';
+/** Where "Send feedback" routes (placeholder — set the real address before launch). */
+export const SUPPORT_EMAIL = 'hello@silo.app';
