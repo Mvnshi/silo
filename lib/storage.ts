@@ -89,6 +89,17 @@ export async function getItemById(id: string): Promise<Item | null> {
 export async function addItem(item: Item): Promise<void> {
   return withItemsLock(async () => {
     const items = await getItems();
+    // Data-loss guard: getItems() returns [] on ANY read/parse hiccup (not just
+    // a genuinely empty store). Without this, a transient empty read here would
+    // unshift into [] and overwrite the entire library with just this one item
+    // (observed when a slow share import raced app cold-start). If the read is
+    // empty but the raw store is actually non-empty, abort rather than clobber.
+    if (items.length === 0) {
+      const rawExisting = await AsyncStorage.getItem(KEYS.ITEMS);
+      if (rawExisting && rawExisting.trim() !== '[]') {
+        throw new Error('addItem aborted: empty read over a non-empty store (avoided clobber)');
+      }
+    }
     items.unshift(normalizeItem(item)); // Add to beginning
     await saveItems(items);
   });
@@ -310,7 +321,9 @@ export async function runMigrations(): Promise<void> {
 
     await withItemsLock(async () => {
       const items = await getItems(); // getItems() already normalizes
-      await saveItems(items);
+      // Don't write an empty array back: a transient empty read must never wipe a
+      // populated store, and there's nothing to migrate when there are no items.
+      if (items.length > 0) await saveItems(items);
       await AsyncStorage.setItem(
         KEYS.SCHEMA_VERSION,
         String(CURRENT_SCHEMA_VERSION)

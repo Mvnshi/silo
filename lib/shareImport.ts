@@ -11,6 +11,7 @@
  * (and is a safe no-op in Expo Go, where the native module is absent).
  */
 import { ExtensionStorage } from '@bacons/apple-targets';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { extractLink, analyzeImage } from './api';
 import { createItem } from './items';
 import { addItem } from './storage';
@@ -20,6 +21,7 @@ import { Classification } from './types';
 
 export const SHARE_APP_GROUP = 'group.com.silo.app';
 const PENDING_KEY = 'SiloPendingShares';
+const LAST_SHARE_TS_KEY = '@silo:lastSharedTs';
 
 const CLASSIFICATIONS: Classification[] = [
   'article', 'video', 'recipe', 'product', 'event', 'place',
@@ -115,14 +117,18 @@ export async function importSharedItem(p: SharePayload): Promise<void> {
  * queue before importing so items aren't processed twice. Returns the count
  * imported. No-op (returns 0) when the native App Group bridge is unavailable.
  */
+let draining = false;
+
 export async function drainPendingShares(): Promise<number> {
+  if (draining) return 0; // prevent overlapping mount + foreground runs
+  draining = true;
   let count = 0;
   try {
     const storage = new ExtensionStorage(SHARE_APP_GROUP);
     const raw = storage.get(PENDING_KEY) as unknown;
     if (!raw || typeof raw !== 'string') return 0;
 
-    let items: SharePayload[] = [];
+    let items: (SharePayload & { ts?: number })[] = [];
     try {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) items = parsed;
@@ -131,17 +137,33 @@ export async function drainPendingShares(): Promise<number> {
     }
     if (items.length === 0) return 0;
 
-    storage.remove(PENDING_KEY); // clear first to avoid double-processing
+    // Best-effort clear of the App Group queue. It may not flush if the app is
+    // killed right after, so we ALSO dedupe by timestamp (AsyncStorage flushes
+    // reliably) — that guarantees a share is never imported twice.
+    try {
+      storage.remove(PENDING_KEY);
+    } catch {
+      /* ignore */
+    }
+
+    const lastTs = Number((await AsyncStorage.getItem(LAST_SHARE_TS_KEY)) || '0');
+    let maxTs = lastTs;
     for (const p of items) {
+      const ts = typeof p.ts === 'number' ? p.ts : 0;
+      if (ts && ts <= lastTs) continue; // already imported on a prior run
       try {
         await importSharedItem(p);
         count += 1;
       } catch (e) {
         console.warn('[silo] failed to import one shared item:', e);
       }
+      if (ts > maxTs) maxTs = ts;
     }
+    if (maxTs > lastTs) await AsyncStorage.setItem(LAST_SHARE_TS_KEY, String(maxTs));
   } catch {
     // ExtensionStorage native module absent (e.g. Expo Go) → nothing to drain.
+  } finally {
+    draining = false;
   }
   return count;
 }
