@@ -88,10 +88,15 @@ function extractJson(text: string): Record<string, any> | null {
  */
 async function callGemini(env: Env, parts: any[]): Promise<string> {
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      // Send the key as a header, not a URL query param, so it can't land in
+      // request logs / `wrangler tail` output.
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': env.GEMINI_API_KEY,
+      },
       body: JSON.stringify({ contents: [{ parts }] }),
     }
   );
@@ -171,29 +176,6 @@ async function handleClassifyImage(
   ]);
 
   const result = toClassificationResult(extractJson(text), 'Image');
-  return json(200, result, corsHeaders);
-}
-
-async function handleClassifyLink(
-  body: any,
-  env: Env,
-  corsHeaders: Record<string, string>
-): Promise<Response> {
-  const { url, pageText } = body as { url?: string; pageText?: string };
-  if (!url || typeof url !== 'string') {
-    return json(400, { error: 'Missing required field: url' } as ErrorResponse, corsHeaders);
-  }
-
-  // NOTE: we intentionally do NOT fetch the URL here (SSRF guard). Only the url
-  // string and any client-provided pageText are forwarded to Gemini.
-  const prompt = `Classify the content at this URL using only the information provided below. Do not attempt to browse.
-
-URL: ${url}
-${pageText ? `\nPage text (provided by the client):\n${pageText}\n` : ''}
-${classificationInstruction()}`;
-
-  const text = await callGemini(env, [{ text: prompt }]);
-  const result = toClassificationResult(extractJson(text), url);
   return json(200, result, corsHeaders);
 }
 
@@ -414,8 +396,6 @@ export async function handleGemini(
     switch (task) {
       case 'classify_image':
         return await handleClassifyImage(body, env, corsHeaders);
-      case 'classify_link':
-        return await handleClassifyLink(body, env, corsHeaders);
       case 'suggest_schedule':
         return await handleSuggestSchedule(body, env, corsHeaders);
       case 'assistant':

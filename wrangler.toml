@@ -1,6 +1,6 @@
-# Cloudflare Workers Configuration for Silo Backend
-# This file configures the Cloudflare Workers deployment for AI processing,
-# audio generation, and schedule suggestions.
+# Cloudflare Workers configuration for the Silo backend.
+# A single authenticated Gemini proxy (POST /api/gemini): classify image,
+# extract + classify links, suggest a schedule, and the assistant. Nothing else.
 
 name = "silo-api"
 main = "workers/index.ts"

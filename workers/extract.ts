@@ -96,6 +96,10 @@ function isBlockedHost(host: string): boolean {
   if (h.endsWith('.local') || h.endsWith('.internal')) return true;
   if (h === 'metadata.google.internal') return true;
   if (h.includes(':')) return true; // IPv6 literal — social URLs use names; block to be safe
+  // Non-standard IPv4 encodings DNS/fetch still resolve to a real address —
+  // decimal (http://2130706433/) and hex (http://0x7f000001/) = 127.0.0.1.
+  if (/^0x[0-9a-f]+$/.test(h)) return true;
+  if (/^[0-9]+$/.test(h)) return true;
   if (isPrivateIpv4(h)) return true;
   return false;
 }

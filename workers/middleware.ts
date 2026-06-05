@@ -5,7 +5,7 @@
  * /api/* request now passes method + body-size checks, an optional shared-token
  * gate, and optional per-IP rate limiting before reaching a handler.
  *
- * THREAT MODEL NOTE: these endpoints broker paid APIs (Gemini/ElevenLabs/Vultr).
+ * THREAT MODEL NOTE: these endpoints broker a paid API (Gemini).
  * The shared client token raises the bar against opportunistic/automated abuse,
  * but a token shipped in an app bundle is extractable — it is NOT a substitute
  * for real device attestation. Proper hardening is App Attest (iOS) / Play
@@ -48,11 +48,10 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 function getClientIp(request: Request): string {
-  return (
-    request.headers.get('CF-Connecting-IP') ||
-    request.headers.get('X-Forwarded-For') ||
-    'unknown'
-  );
+  // CF-Connecting-IP is set by Cloudflare and is not client-spoofable. Don't
+  // fall back to X-Forwarded-For (an attacker could rotate it to dodge the
+  // rate-limit key). 'unknown' only happens off-Cloudflare (e.g. local dev).
+  return request.headers.get('CF-Connecting-IP') || 'unknown';
 }
 
 /**
