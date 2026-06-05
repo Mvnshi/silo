@@ -249,12 +249,12 @@ async function handleAssistant(
 ): Promise<Response> {
   const { query, items } = body as {
     query?: string;
-    items?: Array<{
+    items?: {
       title?: string;
       description?: string;
       classification?: string;
       tags?: string[];
-    }>;
+    }[];
   };
   if (!query || typeof query !== 'string') {
     return json(400, { error: 'Missing required field: query' } as ErrorResponse, corsHeaders);

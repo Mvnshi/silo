@@ -3,7 +3,7 @@
  * Reused across feeds, search, calendar, etc. NativeWind + Reanimated.
  */
 import React from 'react';
-import { Text, View, Pressable } from 'react-native';
+import { Text, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';

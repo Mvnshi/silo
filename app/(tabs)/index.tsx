@@ -401,13 +401,6 @@ export default function StacksScreen() {
   }
 
   /**
-   * Handle stack press
-   */
-  function handleStackPress(stackId: string) {
-    router.push(`/silo/${stackId}`);
-  }
-
-  /**
    * Handle long press on stack (rename/delete)
    */
   function handleStackLongPress(stackId: string) {

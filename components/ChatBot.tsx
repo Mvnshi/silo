@@ -18,16 +18,14 @@ import {
   Animated,
   Dimensions,
   ActivityIndicator,
-} from 'react-native';
+ Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { ragQuery } from '@/lib/api';
-import { getUserId, getItems } from '@/lib/storage';
+import { getUserId, getItems , addItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
-import { addItem } from '@/lib/storage';
 import { createItem } from '@/lib/items';
 import { format } from 'date-fns';
-import { Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');

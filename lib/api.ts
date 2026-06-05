@@ -94,13 +94,13 @@ export async function suggestScheduleTime(data: {
  */
 export async function aiSearch(
   query: string,
-  items: Array<{
+  items: {
     id?: string;
     title: string;
     description?: string;
     tags: string[];
     classification: string;
-  }>
+  }[]
 ): Promise<string[]> {
   const q = query.trim().toLowerCase();
   if (!q) return items.map((_, i) => i.toString());
@@ -126,21 +126,21 @@ export async function ragQuery(data: {
   userId?: string;
   query: string;
   suggestEvent?: boolean;
-  items?: Array<{
+  items?: {
     id: string;
     title: string;
     description?: string;
     tags?: string[];
     classification?: string;
-  }>;
+  }[];
 }): Promise<{
   answer: string;
-  sources: Array<{ itemId: string; title: string; description?: string; relevance: number }>;
+  sources: { itemId: string; title: string; description?: string; relevance: number }[];
   suggestedEvent?: { title: string; date: string; time: string; description: string };
 }> {
   const result = await postGemini<{
     answer: string;
-    sources?: Array<{ itemId: string; title: string; description?: string; relevance: number }>;
+    sources?: { itemId: string; title: string; description?: string; relevance: number }[];
   }>({ task: 'assistant', query: data.query, items: data.items || [] });
   return { answer: result.answer, sources: result.sources || [] };
 }

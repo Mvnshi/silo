@@ -4,6 +4,30 @@
 >
 > **Audit date:** 2026-06-03 · **Method:** full read of every meaningful source file (lead engineer read the data/persistence/API/router spine + all native config directly; 3 parallel subagents audited screens, components+lib, and workers, each with `file:line` citations). All findings below were either read directly or cited from source with line numbers. Items that could not be confirmed in this environment are marked **UNVERIFIED**.
 
+> ## ⚠️ HISTORICAL SNAPSHOT — read this first
+>
+> This audit was written **2026-06-03 on a Windows host with no Node toolchain**, so
+> every finding was "correct by inspection" only and marked **UNVERIFIED**. That caveat
+> is now obsolete: the code has since been built, type-checked, and run on macOS + the
+> iOS Simulator, and a multi-pass cleanup has **resolved most of the P0/HIGH findings
+> below**. Treat this file as a *point-in-time forensic record*, not current state.
+>
+> **What changed since this snapshot:**
+> - **Security P0 (open backend) — FIXED.** `workers/middleware.ts` adds a shared-token
+>   gate + per-IP rate limit + body-size cap on every `/api/*` request.
+> - **ElevenLabs / Vultr / embeddings / RAG / audio narration — REMOVED**, not just
+>   broken. `generate-audio.ts`, `generate-embedding.ts`, `rag-query.ts`, `analyze-link.ts`,
+>   `instagram-download.ts` are **deleted** — any `file:line` citation to them below is
+>   historical. The backend is now one Gemini proxy (`workers/gemini.ts`) plus the
+>   egress-hardened link extractor (`workers/extract.ts`).
+> - **Data-loss + duplicate-on-share bugs — FIXED** (empty-read clobber guard + per-key
+>   write mutex in `lib/storage.ts`; timestamp dedup in `lib/shareImport.ts`).
+> - **UTC date off-by-one — FIXED** (`lib/datetime.ts`, used app-wide).
+> - The **Required-config secrets row below is corrected in place**; the rest is as-written.
+>
+> **Current sources of truth:** the code itself, [`README.md`](README.md), [`TODO.md`](TODO.md),
+> [`LAUNCH_REPORT.md`](LAUNCH_REPORT.md), [`FOUNDER_SETUP.md`](FOUNDER_SETUP.md).
+
 ---
 
 ## Environment & verification ceiling (read first)
@@ -33,7 +57,7 @@
 | **Auth / accounts** | **None.** Anonymous per-device id (`@silo:userId` = `user_<ts>_<rand>`), no login, no server user model |
 | **Payments / IAP** | **None.** No StoreKit/Play Billing/RevenueCat dependency anywhere |
 | **Build/run commands** | `npm start` / `npm run ios` / `npm run android` / `npm run web`; `npm run type-check` (`tsc --noEmit`); `npm run lint` (`eslint .`). Backend: `wrangler dev` / `wrangler deploy` / `wrangler tail` |
-| **Required config for clean build** | Frontend: `.env` with `EXPO_PUBLIC_API_BASE_URL` (Worker URL). Backend secrets (via `wrangler secret put`): `GEMINI_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `VULTR_ACCESS_KEY`, `VULTR_SECRET_KEY`, `VULTR_BUCKET`, `VULTR_ENDPOINT`, `VULTR_CDN_DOMAIN`. **Android Google Maps API key is NOT configured** (map will not render on Android). |
+| **Required config for clean build** | Frontend: `.env` with `EXPO_PUBLIC_API_BASE_URL` (Worker URL) + `EXPO_PUBLIC_CLIENT_TOKEN`. Backend secrets (via `wrangler secret put --config ../wrangler.toml`): **`GEMINI_API_KEY`** + **`APP_CLIENT_TOKEN`** (= the client token). *(Corrected 2026-06-05: the ElevenLabs/Vultr secrets were removed with those services.)* **Android Google Maps API key is NOT configured** (map will not render on Android). |
 
 ---
 

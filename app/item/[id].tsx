@@ -49,7 +49,7 @@ import Animated, {
   withSpring,
   runOnJS,
 } from 'react-native-reanimated';
-import { Item, ChecklistItem } from '@/lib/types';
+import { Item } from '@/lib/types';
 import { getItemById, updateItem, deleteItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { parseLocalDate } from '@/lib/datetime';

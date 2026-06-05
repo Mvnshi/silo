@@ -12,7 +12,7 @@
  * - lib/storage: For saving seed data
  */
 
-import { Item, Stack, ChecklistItem } from './types';
+import { Item, Stack } from './types';
 
 /**
  * Sample stacks for demonstration
@@ -485,12 +485,10 @@ export async function seedData(): Promise<void> {
  */
 export async function shouldSeedData(): Promise<boolean> {
   try {
-    const { getItems, getStacks } = await import('./storage');
-    const items = await getItems();
+    const { getStacks } = await import('./storage');
     const stacks = await getStacks();
-    
-    // Check if we have the expected stacks
-    const expectedStackIds = new Set(SAMPLE_STACKS.map(s => s.id));
+
+    // Seed when the expected sample stacks aren't all present.
     const existingStackIds = new Set(stacks.map(s => s.id));
     const hasAllStacks = SAMPLE_STACKS.every(s => existingStackIds.has(s.id));
     

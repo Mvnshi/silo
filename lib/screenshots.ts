@@ -161,7 +161,7 @@ export async function imageUriToBase64(uri: string): Promise<string> {
             ? base64String.split(',')[1] 
             : base64String;
           resolve(base64);
-        } catch (error) {
+        } catch {
           reject(new Error('Failed to parse base64 string'));
         }
       };

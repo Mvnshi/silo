@@ -254,7 +254,15 @@ export interface EmbeddingMeta {
 }
 
 // ---------------------------------------------------------------------
-// Bucket-list engine model
+// Bucket-list engine model — RESERVED / ROADMAP (not yet wired)
+// ---------------------------------------------------------------------
+// These types describe the planned condition/trigger engine for bucket-list
+// items (e.g. "remind me when I'm near this place / on a free weekend"). They
+// are intentionally defined ahead of the implementation so the `Item` shape is
+// forward-compatible: only `BucketListMeta` is referenced today (the optional
+// `Item.bucketlist_meta` field) and nothing evaluates the conditions yet. This
+// is RESERVED scaffolding, NOT dead code — do not delete. The evaluator that
+// consumes these will live in lib/ when the feature is built.
 // ---------------------------------------------------------------------
 
 /** Why an item can't be acted on yet (drives copy + which triggers to set up). */

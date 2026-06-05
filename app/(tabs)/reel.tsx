@@ -267,7 +267,7 @@ export default function ReelScreen() {
     }
   }
 
-  const categories: Array<{ label: string; value: Classification | 'all'; icon: keyof typeof Ionicons.glyphMap }> = [
+  const categories: { label: string; value: Classification | 'all'; icon: keyof typeof Ionicons.glyphMap }[] = [
     { label: 'All', value: 'all', icon: 'apps' },
     { label: 'Videos', value: 'video', icon: 'play-circle' },
     { label: 'Fitness', value: 'fitness', icon: 'fitness' },

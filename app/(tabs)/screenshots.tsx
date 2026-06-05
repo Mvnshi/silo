@@ -20,7 +20,6 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   Alert,
   ActivityIndicator,
   Dimensions,
