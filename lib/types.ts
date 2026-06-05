@@ -12,21 +12,30 @@
  */
 
 /**
- * Content item classification types
+ * All content categories — the single source of truth. The `Classification`
+ * union is derived from this array, and runtime code (category pickers,
+ * validation) imports `CLASSIFICATIONS`, so adding a category is a one-line
+ * change here.
+ * KEEP IN SYNC WITH: workers/gemini.ts and targets/share/ShareViewController.swift
+ * (separate bundles that can't import this module).
  */
-export type Classification = 
-  | 'article' 
-  | 'video' 
-  | 'recipe' 
-  | 'product' 
-  | 'event' 
-  | 'place' 
-  | 'idea'
-  | 'fitness'
-  | 'food'
-  | 'career'
-  | 'academia'
-  | 'other';
+export const CLASSIFICATIONS = [
+  'article',
+  'video',
+  'recipe',
+  'product',
+  'event',
+  'place',
+  'idea',
+  'fitness',
+  'food',
+  'career',
+  'academia',
+  'other',
+] as const;
+
+/** AI-determined content category. */
+export type Classification = (typeof CLASSIFICATIONS)[number];
 
 /**
  * Content item types

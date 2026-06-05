@@ -17,16 +17,11 @@ import { createItem } from './items';
 import { addItem } from './storage';
 import { detectPlatform } from './embed';
 import { imageUriToBase64 } from './screenshots';
-import { Classification } from './types';
+import { Classification, CLASSIFICATIONS } from './types';
 
 export const SHARE_APP_GROUP = 'group.com.silo.app';
 const PENDING_KEY = 'SiloPendingShares';
 const LAST_SHARE_TS_KEY = '@silo:lastSharedTs';
-
-const CLASSIFICATIONS: Classification[] = [
-  'article', 'video', 'recipe', 'product', 'event', 'place',
-  'idea', 'fitness', 'food', 'career', 'academia', 'other',
-];
 
 export interface SharePayload {
   type?: string; // "url" | "text" | "image"
@@ -40,7 +35,7 @@ export async function importSharedItem(p: SharePayload): Promise<void> {
   const value = typeof p.value === 'string' ? p.value : '';
   const cat = typeof p.category === 'string' ? p.category : '';
   const preset =
-    cat && cat !== 'auto' && (CLASSIFICATIONS as string[]).includes(cat) ? (cat as Classification) : undefined;
+    cat && cat !== 'auto' && (CLASSIFICATIONS as readonly string[]).includes(cat) ? (cat as Classification) : undefined;
 
   if (!value) throw new Error('empty share payload');
 
