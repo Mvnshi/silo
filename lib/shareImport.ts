@@ -43,17 +43,24 @@ export async function importSharedItem(p: SharePayload): Promise<void> {
   if (!value) throw new Error('empty share payload');
 
   if (type === 'image') {
-    const base64 = await imageUriToBase64(value);
-    const analysis = await analyzeImage(base64, 'image/jpeg');
+    // Always save the image — analysis is best-effort (needs the Gemini key);
+    // a failure must not lose the user's save.
+    let title = 'Shared image';
+    let classification: Classification = preset || 'idea';
+    let description: string | undefined;
+    let tags: string[] = [];
+    try {
+      const base64 = await imageUriToBase64(value);
+      const analysis = await analyzeImage(base64, 'image/jpeg');
+      title = analysis.title || title;
+      if (!preset) classification = analysis.classification;
+      description = analysis.description;
+      tags = analysis.tags || [];
+    } catch (e) {
+      console.warn('[silo] image analysis failed; saving the image without it:', e);
+    }
     await addItem(
-      createItem({
-        type: 'screenshot',
-        classification: preset || analysis.classification,
-        title: analysis.title || 'Shared image',
-        description: analysis.description,
-        imageUri: value,
-        tags: analysis.tags || [],
-      })
+      createItem({ type: 'screenshot', classification, title, description, imageUri: value, tags })
     );
     return;
   }
