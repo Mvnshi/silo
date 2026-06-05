@@ -1,25 +1,27 @@
 /**
- * AsyncStorage Wrapper
- * 
- * This module provides a type-safe wrapper around React Native's AsyncStorage
- * for persisting app data locally on the device. All items, stacks, and user
- * settings are stored here.
- * 
- * Storage Keys:
- * - @silo:items - Array of Item objects
- * - @silo:stacks - Array of Stack objects
- * - @silo:settings - UserSettings object
- * - @silo:events - Array of ScheduledEvent objects
- * 
- * Dependencies:
- * - @react-native-async-storage/async-storage
+ * AsyncStorage persistence layer.
+ *
+ * All app data — items, stacks, settings, scheduled events, the device user id —
+ * is stored here as JSON under the `@silo:*` keys below. Two invariants keep the
+ * store safe under concurrency and transient I/O errors:
+ *
+ *  1. **Per-key write mutex** (`withLock`): every read-modify-write on a key is
+ *     serialized, so two rapid mutations (e.g. fast swipes) can't interleave and
+ *     lose an update.
+ *  2. **Empty-read clobber guard** (`mutateArray`): `getItems`/`getStacks`/
+ *     `getEvents` return `[]` on ANY read/parse error — not just a genuinely
+ *     empty store. A mutation must therefore never overwrite a populated store
+ *     with a short array after an empty read. `mutateArray` aborts if the parsed
+ *     array is empty while the raw stored value is non-empty.
+ *
+ * The raw JSON writer is private; all callers go through the add/update/delete
+ * helpers so the lock + guard always apply.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Item, Stack, UserSettings, ScheduledEvent } from './types';
-import { normalizeItem } from './items';
+import { normalizeItem, newId, touchItem } from './items';
 
-// Storage keys
 const KEYS = {
   ITEMS: '@silo:items',
   STACKS: '@silo:stacks',
@@ -32,15 +34,56 @@ const KEYS = {
 /** Bump when the persisted Item/Stack shape changes; drives runMigrations(). */
 export const CURRENT_SCHEMA_VERSION = 2;
 
+/** Default user settings — single source of truth (getSettings fallback + UI defaults). */
+export const DEFAULT_SETTINGS: UserSettings = {
+  notifications_enabled: true,
+  auto_schedule: true,
+  default_duration: 15,
+  preferred_review_times: ['09:00', '14:00', '19:00'],
+  theme: 'auto',
+};
+
+/* ---------------------------------------------------------------------------
+ * Low-level JSON helpers
+ * ------------------------------------------------------------------------- */
+
+/** Read + parse a JSON value, returning `fallback` if absent or on any error. */
+async function readJson<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const json = await AsyncStorage.getItem(key);
+    if (json == null) return fallback;
+    return JSON.parse(json) as T;
+  } catch (error) {
+    console.error(`[silo] failed to read ${key}:`, error);
+    return fallback;
+  }
+}
+
+/** Serialize + write a JSON value. Throws on failure so callers can react. */
+async function writeJson<T>(key: string, value: T): Promise<void> {
+  try {
+    await AsyncStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error(`[silo] failed to write ${key}:`, error);
+    throw new Error(`Failed to save ${key}`);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Per-key write mutex + clobber-guarded array mutation
+ * ------------------------------------------------------------------------- */
+
+const writeChains: Record<string, Promise<unknown>> = {};
+
 /**
- * Serialize all item read-modify-write mutations so concurrent callers (e.g. two
- * rapid swipes) cannot interleave and lose updates. Each mutation waits for the
- * previous to settle. Errors are isolated so one failure doesn't wedge the queue.
+ * Serialize mutations on a storage key so concurrent callers can't interleave.
+ * Each mutation waits for the previous one on the same key to settle; errors are
+ * isolated so one failure doesn't wedge the chain.
  */
-let itemsWriteChain: Promise<unknown> = Promise.resolve();
-function withItemsLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = itemsWriteChain.then(fn, fn);
-  itemsWriteChain = run.then(
+function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = writeChains[key] ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  writeChains[key] = run.then(
     () => undefined,
     () => undefined
   );
@@ -48,258 +91,159 @@ function withItemsLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Get all items from storage
+ * Atomically read the array at `key`, apply `mutate`, and write the result.
+ * Guards the empty-read clobber: if the parsed array is empty but the raw stored
+ * value is actually non-empty (a transient read/parse error), abort instead of
+ * overwriting the whole collection.
  */
+async function mutateArray<T>(key: string, mutate: (current: T[]) => T[]): Promise<void> {
+  return withLock(key, async () => {
+    const current = await readJson<T[]>(key, []);
+    if (current.length === 0) {
+      const raw = await AsyncStorage.getItem(key);
+      if (raw && raw.trim() !== '[]') {
+        throw new Error(`mutateArray(${key}) aborted: empty read over a non-empty store (avoided clobber)`);
+      }
+    }
+    await writeJson(key, mutate(current));
+  });
+}
+
+/* ---------------------------------------------------------------------------
+ * Items
+ * ------------------------------------------------------------------------- */
+
+/** All items, each idempotently upgraded to the unified schema on read. */
 export async function getItems(): Promise<Item[]> {
-  try {
-    const json = await AsyncStorage.getItem(KEYS.ITEMS);
-    if (!json) return [];
-    const raw = JSON.parse(json) as Item[];
-    // Idempotently upgrade legacy/partial items to the unified schema on every read.
-    return Array.isArray(raw) ? raw.map(normalizeItem) : [];
-  } catch (error) {
-    console.error('Failed to load items:', error);
-    return [];
-  }
+  const raw = await readJson<Item[]>(KEYS.ITEMS, []);
+  return Array.isArray(raw) ? raw.map(normalizeItem) : [];
 }
 
-/**
- * Save items to storage
- */
-export async function saveItems(items: Item[]): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.ITEMS, JSON.stringify(items));
-  } catch (error) {
-    console.error('Failed to save items:', error);
-    throw new Error('Failed to save items');
-  }
-}
-
-/**
- * Get a single item by ID
- */
 export async function getItemById(id: string): Promise<Item | null> {
   const items = await getItems();
-  return items.find(item => item.id === id) || null;
+  return items.find((item) => item.id === id) || null;
 }
 
-/**
- * Add a new item
- */
+/** Add a new item to the front of the list. */
 export async function addItem(item: Item): Promise<void> {
-  return withItemsLock(async () => {
-    const items = await getItems();
-    // Data-loss guard: getItems() returns [] on ANY read/parse hiccup (not just
-    // a genuinely empty store). Without this, a transient empty read here would
-    // unshift into [] and overwrite the entire library with just this one item
-    // (observed when a slow share import raced app cold-start). If the read is
-    // empty but the raw store is actually non-empty, abort rather than clobber.
-    if (items.length === 0) {
-      const rawExisting = await AsyncStorage.getItem(KEYS.ITEMS);
-      if (rawExisting && rawExisting.trim() !== '[]') {
-        throw new Error('addItem aborted: empty read over a non-empty store (avoided clobber)');
-      }
-    }
-    items.unshift(normalizeItem(item)); // Add to beginning
-    await saveItems(items);
-  });
+  const normalized = normalizeItem(item);
+  return mutateArray<Item>(KEYS.ITEMS, (items) => [normalized, ...items]);
 }
 
-/**
- * Update an existing item
- */
+/** Apply a partial update to an item, maintaining `updated_at` / `completed_at`. */
 export async function updateItem(id: string, updates: Partial<Item>): Promise<void> {
-  return withItemsLock(async () => {
-    const items = await getItems();
-    const index = items.findIndex(item => item.id === id);
-    if (index >= 0) {
-      const merged: Item = {
-        ...items[index],
-        ...updates,
-        updated_at: new Date().toISOString(),
-      };
-      // Maintain completed_at when an item transitions to done.
-      const becameDone =
-        updates.status === 'done' || updates.bucketlist_completed === true;
-      if (becameDone && !merged.completed_at) {
-        merged.completed_at = merged.updated_at;
-      }
-      items[index] = merged;
-      await saveItems(items);
-    }
+  return mutateArray<Item>(KEYS.ITEMS, (items) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index < 0) return items;
+    // touchItem maintains updated_at / completed_at and re-derives status.
+    const next = items.slice();
+    next[index] = touchItem(items[index], updates);
+    return next;
   });
 }
 
-/**
- * Delete an item
- */
 export async function deleteItem(id: string): Promise<void> {
-  return withItemsLock(async () => {
-    const items = await getItems();
-    const filtered = items.filter(item => item.id !== id);
-    await saveItems(filtered);
-  });
+  return mutateArray<Item>(KEYS.ITEMS, (items) => items.filter((item) => item.id !== id));
 }
 
-/**
- * Get all stacks from storage
- */
+/* ---------------------------------------------------------------------------
+ * Stacks
+ * ------------------------------------------------------------------------- */
+
 export async function getStacks(): Promise<Stack[]> {
-  try {
-    const json = await AsyncStorage.getItem(KEYS.STACKS);
-    return json ? JSON.parse(json) : [];
-  } catch (error) {
-    console.error('Failed to load stacks:', error);
-    return [];
-  }
+  return readJson<Stack[]>(KEYS.STACKS, []);
 }
 
-/**
- * Save stacks to storage
- */
-export async function saveStacks(stacks: Stack[]): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.STACKS, JSON.stringify(stacks));
-  } catch (error) {
-    console.error('Failed to save stacks:', error);
-    throw new Error('Failed to save stacks');
-  }
-}
-
-/**
- * Get a single stack by ID
- */
 export async function getStackById(id: string): Promise<Stack | null> {
   const stacks = await getStacks();
-  return stacks.find(stack => stack.id === id) || null;
+  return stacks.find((stack) => stack.id === id) || null;
 }
 
-/**
- * Add a new stack
- */
 export async function addStack(stack: Stack): Promise<void> {
-  const stacks = await getStacks();
-  stacks.push(stack);
-  await saveStacks(stacks);
+  return mutateArray<Stack>(KEYS.STACKS, (stacks) => [...stacks, stack]);
 }
 
-/**
- * Update an existing stack
- */
 export async function updateStack(id: string, updates: Partial<Stack>): Promise<void> {
-  const stacks = await getStacks();
-  const index = stacks.findIndex(stack => stack.id === id);
-  if (index >= 0) {
-    stacks[index] = { ...stacks[index], ...updates };
-    await saveStacks(stacks);
-  }
+  return mutateArray<Stack>(KEYS.STACKS, (stacks) => {
+    const index = stacks.findIndex((s) => s.id === id);
+    if (index < 0) return stacks;
+    const next = stacks.slice();
+    next[index] = { ...stacks[index], ...updates };
+    return next;
+  });
 }
 
-/**
- * Delete a stack
- */
 export async function deleteStack(id: string): Promise<void> {
-  const stacks = await getStacks();
-  const filtered = stacks.filter(stack => stack.id !== id);
-  await saveStacks(filtered);
+  return mutateArray<Stack>(KEYS.STACKS, (stacks) => stacks.filter((s) => s.id !== id));
 }
 
-/**
- * Get user settings
- */
-export async function getSettings(): Promise<UserSettings> {
-  try {
-    const json = await AsyncStorage.getItem(KEYS.SETTINGS);
-    if (json) {
-      return JSON.parse(json);
-    }
-    // Default settings
-    return {
-      notifications_enabled: true,
-      auto_schedule: true,
-      default_duration: 15,
-      preferred_review_times: ['09:00', '14:00', '19:00'],
-      theme: 'auto',
-    };
-  } catch (error) {
-    console.error('Failed to load settings:', error);
-    return {
-      notifications_enabled: true,
-      auto_schedule: true,
-      default_duration: 15,
-      preferred_review_times: ['09:00', '14:00', '19:00'],
-      theme: 'auto',
-    };
-  }
-}
+/* ---------------------------------------------------------------------------
+ * Scheduled events (calendar). See lib/scheduler.ts for the calendar side.
+ * ------------------------------------------------------------------------- */
 
-/**
- * Save user settings
- */
-export async function saveSettings(settings: UserSettings): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
-  } catch (error) {
-    console.error('Failed to save settings:', error);
-    throw new Error('Failed to save settings');
-  }
-}
-
-/**
- * Get scheduled events
- */
 export async function getEvents(): Promise<ScheduledEvent[]> {
-  try {
-    const json = await AsyncStorage.getItem(KEYS.EVENTS);
-    return json ? JSON.parse(json) : [];
-  } catch (error) {
-    console.error('Failed to load events:', error);
-    return [];
-  }
+  return readJson<ScheduledEvent[]>(KEYS.EVENTS, []);
+}
+
+export async function addEvent(event: ScheduledEvent): Promise<void> {
+  return mutateArray<ScheduledEvent>(KEYS.EVENTS, (events) => [...events, event]);
 }
 
 /**
- * Save scheduled events
+ * Remove all stored events for an item and return the removed rows, so the
+ * caller can delete their native calendar entries. Used to keep scheduling
+ * idempotent (re-scheduling replaces rather than duplicates).
  */
-export async function saveEvents(events: ScheduledEvent[]): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEYS.EVENTS, JSON.stringify(events));
-  } catch (error) {
-    console.error('Failed to save events:', error);
-    throw new Error('Failed to save events');
-  }
+export async function removeEventsForItem(itemId: string): Promise<ScheduledEvent[]> {
+  let removed: ScheduledEvent[] = [];
+  await mutateArray<ScheduledEvent>(KEYS.EVENTS, (events) => {
+    removed = events.filter((e) => e.item_id === itemId);
+    return events.filter((e) => e.item_id !== itemId);
+  });
+  return removed;
 }
 
-/**
- * Get or create user ID
- */
+/* ---------------------------------------------------------------------------
+ * Settings / user id
+ * ------------------------------------------------------------------------- */
+
+export async function getSettings(): Promise<UserSettings> {
+  return readJson<UserSettings>(KEYS.SETTINGS, DEFAULT_SETTINGS);
+}
+
+export async function saveSettings(settings: UserSettings): Promise<void> {
+  return withLock(KEYS.SETTINGS, () => writeJson(KEYS.SETTINGS, settings));
+}
+
+/** Get or lazily create the anonymous per-device user id. */
 export async function getUserId(): Promise<string> {
   try {
     let userId = await AsyncStorage.getItem(KEYS.USER_ID);
     if (!userId) {
-      // Generate a unique user ID
-      userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      userId = newId('user');
       await AsyncStorage.setItem(KEYS.USER_ID, userId);
     }
     return userId;
   } catch (error) {
     console.error('Failed to get user ID:', error);
-    // Fallback to a device-based ID
-    return `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return newId('user'); // ephemeral fallback (not persisted) when storage is unavailable
   }
 }
 
-/**
- * Clear all storage (use with caution)
- */
+/* ---------------------------------------------------------------------------
+ * Bulk / lifecycle
+ * ------------------------------------------------------------------------- */
+
+/** Replace items + stacks wholesale — used only by the dev seeder (lib/seed.ts). */
+export async function replaceCollections(items: Item[], stacks: Stack[]): Promise<void> {
+  await withLock(KEYS.STACKS, () => writeJson(KEYS.STACKS, stacks));
+  await withLock(KEYS.ITEMS, () => writeJson(KEYS.ITEMS, items.map(normalizeItem)));
+}
+
+/** Clear all user data (Settings → "Delete all"). */
 export async function clearAll(): Promise<void> {
   try {
-    await AsyncStorage.multiRemove([
-      KEYS.ITEMS,
-      KEYS.STACKS,
-      KEYS.SETTINGS,
-      KEYS.EVENTS,
-    ]);
+    await AsyncStorage.multiRemove([KEYS.ITEMS, KEYS.STACKS, KEYS.SETTINGS, KEYS.EVENTS]);
   } catch (error) {
     console.error('Failed to clear storage:', error);
     throw new Error('Failed to clear storage');
@@ -307,11 +251,11 @@ export async function clearAll(): Promise<void> {
 }
 
 /**
- * One-time data migration: normalize all stored items to the current schema and
- * persist the result, then record the schema version so this only runs after an
- * upgrade. Safe to call on every app launch (no-op once migrated). getItems()
- * normalizes on read regardless, so correctness never depends on this — it just
- * writes the upgraded shape back once and avoids repeated work.
+ * One-time migration: normalize all stored items to the current schema and write
+ * the result, then record the schema version so this only runs after an upgrade.
+ * Safe on every launch (no-op once migrated). getItems() normalizes on read
+ * regardless, so correctness never depends on this — it just writes the upgraded
+ * shape back once.
  */
 export async function runMigrations(): Promise<void> {
   try {
@@ -319,15 +263,11 @@ export async function runMigrations(): Promise<void> {
     const version = stored ? parseInt(stored, 10) : 0;
     if (version >= CURRENT_SCHEMA_VERSION) return;
 
-    await withItemsLock(async () => {
-      const items = await getItems(); // getItems() already normalizes
-      // Don't write an empty array back: a transient empty read must never wipe a
-      // populated store, and there's nothing to migrate when there are no items.
-      if (items.length > 0) await saveItems(items);
-      await AsyncStorage.setItem(
-        KEYS.SCHEMA_VERSION,
-        String(CURRENT_SCHEMA_VERSION)
-      );
+    await withLock(KEYS.ITEMS, async () => {
+      const items = await getItems(); // normalized on read
+      // Never write [] back: a transient empty read must not wipe a populated store.
+      if (items.length > 0) await writeJson(KEYS.ITEMS, items);
+      await AsyncStorage.setItem(KEYS.SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
     });
     console.log(`[silo] storage migrated ${version} -> ${CURRENT_SCHEMA_VERSION}`);
   } catch (error) {
@@ -335,4 +275,3 @@ export async function runMigrations(): Promise<void> {
     console.error('Storage migration failed (non-fatal):', error);
   }
 }
-

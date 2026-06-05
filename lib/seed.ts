@@ -13,7 +13,6 @@
  */
 
 import { Item, Stack, ChecklistItem } from './types';
-import { saveItems, saveStacks } from './storage';
 
 /**
  * Sample stacks for demonstration
@@ -456,47 +455,25 @@ const SAMPLE_ITEMS: Item[] = [
  */
 export async function seedData(): Promise<void> {
   try {
-    console.log('🌱 Seeding data...');
-    console.log(`📦 Stacks to seed: ${SAMPLE_STACKS.length}`);
-    console.log(`📄 Items to seed: ${SAMPLE_ITEMS.length}`);
-    
-    const { getStacks, getItems } = await import('./storage');
+    const { getStacks, getItems, replaceCollections } = await import('./storage');
     const existingStacks = await getStacks();
     const existingItems = await getItems();
-    
-    // Merge stacks - add new ones that don't exist
-    const existingStackIds = new Set(existingStacks.map(s => s.id));
-    const stacksToAdd = SAMPLE_STACKS.filter(s => !existingStackIds.has(s.id));
-    const mergedStacks = [...existingStacks, ...stacksToAdd];
-    
-    if (stacksToAdd.length > 0) {
-      await saveStacks(mergedStacks);
-      console.log(`✅ Added ${stacksToAdd.length} new stacks:`, stacksToAdd.map(s => s.name).join(', '));
-    } else {
-      console.log('ℹ️ All stacks already exist');
-    }
-    
-    // Merge items - add new ones that don't exist
-    const existingItemIds = new Set(existingItems.map(i => i.id));
-    const itemsToAdd = SAMPLE_ITEMS.filter(i => !existingItemIds.has(i.id));
-    const mergedItems = [...existingItems, ...itemsToAdd];
-    
-    if (itemsToAdd.length > 0) {
-      await saveItems(mergedItems);
-      console.log(`✅ Added ${itemsToAdd.length} new items`);
-    } else {
-      console.log('ℹ️ All items already exist');
-    }
-    
-    // Verify they were saved
-    const savedStacks = await getStacks();
-    const savedItems = await getItems();
-    console.log(`✅ Verified: ${savedStacks.length} stacks and ${savedItems.length} items in storage`);
-    console.log('📦 All stacks:', savedStacks.map(s => s.name).join(', '));
-    
-    console.log('🎉 Seeding complete!');
+
+    // Merge: add only the sample stacks/items not already present (by id).
+    const existingStackIds = new Set(existingStacks.map((s) => s.id));
+    const existingItemIds = new Set(existingItems.map((i) => i.id));
+    const stacksToAdd = SAMPLE_STACKS.filter((s) => !existingStackIds.has(s.id));
+    const itemsToAdd = SAMPLE_ITEMS.filter((i) => !existingItemIds.has(i.id));
+
+    if (stacksToAdd.length === 0 && itemsToAdd.length === 0) return;
+
+    await replaceCollections(
+      [...existingItems, ...itemsToAdd],
+      [...existingStacks, ...stacksToAdd]
+    );
+    console.log(`[silo] seeded ${itemsToAdd.length} items, ${stacksToAdd.length} stacks (dev)`);
   } catch (error) {
-    console.error('❌ Failed to seed data:', error);
+    console.error('Failed to seed data:', error);
     throw new Error('Failed to seed data');
   }
 }
@@ -525,18 +502,4 @@ export async function shouldSeedData(): Promise<boolean> {
   }
 }
 
-/**
- * Force seed data (useful for development/testing)
- * This will overwrite existing data
- */
-export async function forceSeedData(): Promise<void> {
-  try {
-    console.log('Force seeding data...');
-    await seedData();
-    console.log('Force seeding complete!');
-  } catch (error) {
-    console.error('Failed to force seed data:', error);
-    throw error;
-  }
-}
 
