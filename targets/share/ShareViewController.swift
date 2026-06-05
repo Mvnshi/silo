@@ -47,20 +47,38 @@ class ShareViewController: UIViewController {
   }
 
   private func finish(_ payload: SharePayload, _ category: String) {
-    var comps = URLComponents()
-    comps.scheme = "silo"
-    comps.host = "share"
-    comps.queryItems = [
-      URLQueryItem(name: "type", value: payload.type),
-      URLQueryItem(name: "value", value: payload.value),
-      URLQueryItem(name: "category", value: category),
-    ]
-    if let url = comps.url { openHostApp(url) }
+    writePending(payload, category)
     extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
   }
 
   private func cancelShare() {
     extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+  }
+
+  /// Persist the share into the App Group queue; the app drains it on next
+  /// foreground. (iOS blocks openURL from a share extension, so we hand off via
+  /// shared storage, not a deep link.) Stored as JSON Data so the app's
+  /// ExtensionStorage.get() returns it as a JSON string.
+  private func writePending(_ payload: SharePayload, _ category: String) {
+    guard let defaults = UserDefaults(suiteName: appGroup) else { return }
+    let key = "SiloPendingShares"
+    var queue: [[String: Any]] = []
+    if let data = defaults.data(forKey: key),
+       let existing = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+      queue = existing
+    }
+    queue.append([
+      "type": payload.type,
+      "value": payload.value,
+      "category": category,
+      "ts": Date().timeIntervalSince1970,
+    ])
+    if let newData = try? JSONSerialization.data(withJSONObject: queue) {
+      defaults.set(newData, forKey: key)
+      // Force an immediate flush: completeRequest() kills this process right
+      // after, which would otherwise drop the deferred UserDefaults write.
+      defaults.synchronize()
+    }
   }
 
   // MARK: - Extract the shared item (prefer URL, then image, then text)
@@ -112,19 +130,6 @@ class ShareViewController: UIViewController {
     }
   }
 
-  // MARK: - Open the containing app (responder-chain technique for share extensions)
-
-  private func openHostApp(_ url: URL) {
-    let selector = NSSelectorFromString("openURL:")
-    var responder: UIResponder? = self
-    while let r = responder {
-      if let app = r as? UIApplication, app.responds(to: selector) {
-        app.perform(selector, with: url)
-        return
-      }
-      responder = r.next
-    }
-  }
 }
 
 // MARK: - SwiftUI confirmation sheet

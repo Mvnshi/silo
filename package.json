@@ -12,6 +12,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@bacons/apple-targets": "^4.0.7",
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
@@ -44,7 +45,6 @@
     "tailwindcss": "^3.4.17"
   },
   "devDependencies": {
-    "@bacons/apple-targets": "^4.0.7",
     "@expo/prebuild-config": "^54.0.8",
     "@types/react": "~19.1.0",
     "@typescript-eslint/eslint-plugin": "^8.19.0",
