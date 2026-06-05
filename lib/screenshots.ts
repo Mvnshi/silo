@@ -12,11 +12,9 @@
  * 
  * Dependencies:
  * - expo-media-library: Access to device photos
- * - expo-file-system: File operations
  */
 
 import * as MediaLibrary from 'expo-media-library';
-import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 
 /**
@@ -200,40 +198,4 @@ export function getMimeTypeFromFilename(filename: string): string {
   }
 }
 
-/**
- * Get new screenshots since a given timestamp
- * 
- * @param lastCheckTime - Unix timestamp of last check
- * @returns Array of new screenshots
- */
-export async function getNewScreenshotsSince(lastCheckTime: number): Promise<Screenshot[]> {
-  try {
-    const allScreenshots = await getRecentScreenshots(50);
-    return allScreenshots.filter(screenshot => screenshot.creationTime > lastCheckTime);
-  } catch (error) {
-    console.error('Failed to get new screenshots:', error);
-    return [];
-  }
-}
-
-/**
- * Delete a screenshot from the device
- * 
- * @param assetId - Media library asset ID
- * @returns true if successful, false otherwise
- */
-export async function deleteScreenshot(assetId: string): Promise<boolean> {
-  try {
-    const hasPermission = await requestMediaLibraryPermissions();
-    if (!hasPermission) {
-      return false;
-    }
-
-    await MediaLibrary.deleteAssetsAsync([assetId]);
-    return true;
-  } catch (error) {
-    console.error('Failed to delete screenshot:', error);
-    return false;
-  }
-}
 

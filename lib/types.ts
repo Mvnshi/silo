@@ -174,27 +174,6 @@ export interface AnalyzeImageResponse {
 }
 
 /**
- * API response from backend link analysis
- */
-export interface AnalyzeLinkResponse {
-  classification: Classification;
-  title: string;
-  description?: string;
-  script?: string;
-  tags?: string[];
-  duration?: number;
-  place_name?: string;
-  place_address?: string;
-}
-
-/**
- * API response from backend audio generation
- */
-export interface GenerateAudioResponse {
-  audioUrl: string;
-}
-
-/**
  * Normalized result from the universal social-link extractor (`task: 'extract'`).
  * `ok:false` means rich metadata couldn't be obtained (dead/private/login-walled)
  * — the client still saves the raw link plus whatever fields are present.

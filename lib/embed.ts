@@ -145,8 +145,3 @@ export function getEmbed(item: Pick<Item, 'url' | 'platform'>): EmbedSource {
       return { kind: 'none' };
   }
 }
-
-/** True when the item can render an inline platform embed. */
-export function canEmbed(item: Pick<Item, 'url' | 'platform'>): boolean {
-  return getEmbed(item).kind !== 'none';
-}

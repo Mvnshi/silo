@@ -12,7 +12,6 @@
  */
 import {
   AnalyzeImageResponse,
-  AnalyzeLinkResponse,
   ScheduleSuggestionResponse,
   ApiErrorResponse,
   ExtractedLinkResponse,
@@ -62,15 +61,6 @@ export async function analyzeImage(
   mimeType: string
 ): Promise<AnalyzeImageResponse> {
   return postGemini<AnalyzeImageResponse>({ task: 'classify_image', imageBase64, mimeType });
-}
-
-/**
- * Classify/title/tag a saved link via the Gemini proxy.
- * The Worker does NOT fetch the URL (that was an SSRF surface we removed) — it
- * reasons over the URL plus any client-supplied page text.
- */
-export async function analyzeLink(url: string, pageText?: string): Promise<AnalyzeLinkResponse> {
-  return postGemini<AnalyzeLinkResponse>({ task: 'classify_link', url, pageText });
 }
 
 /**
