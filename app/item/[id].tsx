@@ -18,7 +18,7 @@
  * - expo-router: Navigation
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -41,7 +41,7 @@ import { Audio } from 'expo-av';
 import { format } from 'date-fns';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
@@ -52,6 +52,7 @@ import Animated, {
 import { Item, ChecklistItem } from '@/lib/types';
 import { getItemById, updateItem, deleteItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
+import { parseLocalDate } from '@/lib/datetime';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 100; // Minimum swipe distance to trigger back
@@ -83,6 +84,8 @@ export default function ItemDetailScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const durationOptions = [15, 30, 45, 60];
+  // Guards against a fast double-tap on "Save" (schedule) creating duplicate events.
+  const savingScheduleRef = useRef(false);
 
   /**
    * Load item from storage
@@ -114,8 +117,8 @@ export default function ItemDetailScreen() {
       if (schedule === 'true' && loadedItem) {
         // Pre-fill with existing schedule if available
         if (loadedItem.scheduled_date) {
-          const date = new Date(loadedItem.scheduled_date);
-          setScheduleDate(date);
+          // parseLocalDate avoids the UTC off-by-one of `new Date('YYYY-MM-DD')`.
+          setScheduleDate(parseLocalDate(loadedItem.scheduled_date));
           if (loadedItem.scheduled_time) {
             const [hours, minutes] = loadedItem.scheduled_time.split(':').map(Number);
             const time = new Date();
@@ -297,8 +300,8 @@ export default function ItemDetailScreen() {
     if (item) {
       // Pre-fill with existing schedule if available
       if (item.scheduled_date) {
-        const date = new Date(item.scheduled_date);
-        setScheduleDate(date);
+        // parseLocalDate avoids the UTC off-by-one of `new Date('YYYY-MM-DD')`.
+        setScheduleDate(parseLocalDate(item.scheduled_date));
         if (item.scheduled_time) {
           const [hours, minutes] = item.scheduled_time.split(':').map(Number);
           const time = new Date();
@@ -320,13 +323,17 @@ export default function ItemDetailScreen() {
   async function handleSaveSchedule() {
     if (!item) return;
 
+    // In-flight guard: a fast double-tap must not create two calendar events.
+    if (savingScheduleRef.current) return;
+    savingScheduleRef.current = true;
+
     try {
       const dateStr = format(scheduleDate, 'yyyy-MM-dd');
       const timeStr = format(scheduleTime, 'HH:mm');
 
       // Schedule in calendar
       const scheduledEvent = await scheduleItemReview(item, dateStr, timeStr, scheduleDuration);
-      
+
       if (scheduledEvent) {
         // Update item with schedule
         await updateItem(id, {
@@ -334,7 +341,7 @@ export default function ItemDetailScreen() {
           scheduled_time: timeStr,
           duration: scheduleDuration,
         });
-        
+
         // Reload item to show updated schedule
         await loadItem();
         setShowScheduleModal(false);
@@ -345,6 +352,8 @@ export default function ItemDetailScreen() {
     } catch (error) {
       console.error('Failed to schedule item:', error);
       Alert.alert('Error', 'Failed to schedule item');
+    } finally {
+      savingScheduleRef.current = false;
     }
   }
 
@@ -373,8 +382,6 @@ export default function ItemDetailScreen() {
     // Navigate back to the source tab if specified
     if (from === 'stacks') {
       router.replace('/(tabs)' as any);
-    } else if (from === 'streams' || from === 'reel') {
-      router.replace('/(tabs)/reel' as any);
     } else if (router.canGoBack()) {
       router.back();
     } else {
@@ -448,7 +455,7 @@ export default function ItemDetailScreen() {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <View style={{ flex: 1 }}>
       <Animated.View style={[styles.container, animatedStyle]}>
         {/* Header with Back Button - Outside gesture detector to ensure it works */}
         <View style={[styles.header, { paddingTop: insets.top + 12 }]} pointerEvents="box-none">
@@ -604,8 +611,8 @@ export default function ItemDetailScreen() {
         <View style={styles.tagsSection}>
           <Text style={styles.sectionTitle}>Tags</Text>
           <View style={styles.tags}>
-            {item.tags.map((tag, index) => (
-              <View key={index} style={styles.tag}>
+            {item.tags.map((tag) => (
+              <View key={tag} style={styles.tag}>
                 <Text style={styles.tagText}>#{tag}</Text>
               </View>
             ))}
@@ -710,7 +717,7 @@ export default function ItemDetailScreen() {
           <View style={styles.scheduledInfo}>
             <Text style={styles.scheduledLabel}>Scheduled</Text>
             <Text style={styles.scheduledDate}>
-              {format(new Date(item.scheduled_date), 'MMMM d, yyyy')}
+              {format(parseLocalDate(item.scheduled_date), 'MMMM d, yyyy')}
               {item.scheduled_time && ` at ${item.scheduled_time}`}
             </Text>
           </View>
@@ -875,7 +882,7 @@ export default function ItemDetailScreen() {
           </KeyboardAvoidingView>
         </GestureDetector>
       </Animated.View>
-    </GestureHandlerRootView>
+    </View>
   );
 }
 

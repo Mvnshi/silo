@@ -1,21 +1,22 @@
 /**
  * StreamCard Component
- * 
+ *
  * A TikTok-style full-screen card for displaying content items in the reel feed.
- * Features audio playback, interactive controls, and swipe gestures.
- * 
+ * Renders inline social embeds (via lib/embed) or a gradient content card, with
+ * audio playback and interactive Schedule / Done / Archive controls.
+ *
  * Props:
  * - item: Content item to display
  * - onArchive: Callback when item is archived
  * - onSchedule: Callback when item is scheduled
- * - onAddToStack: Callback when item is added to a stack
- * 
+ * - onComplete: Callback when item is marked done
+ *
  * Dependencies:
  * - expo-av: Audio playback
  * - expo-linear-gradient: Background gradients
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -33,6 +34,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/lib/types';
 import { getEmbed } from '@/lib/embed';
+import { classConfig, classGradient } from '@/lib/classification';
 
 const { width, height } = Dimensions.get('window');
 
@@ -65,22 +67,25 @@ interface StreamCardProps {
   onComplete: (itemId: string) => void;
 }
 
-export default function StreamCard({ 
-  item, 
-  onArchive, 
-  onSchedule, 
-  onComplete 
+function StreamCard({
+  item,
+  onArchive,
+  onSchedule,
+  onComplete
 }: StreamCardProps) {
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [webViewError, setWebViewError] = useState(false);
   const [webViewLoading, setWebViewLoading] = useState(true);
-  
+  // Holds the actually-loaded Audio.Sound so cleanup can unload it without
+  // closing over the (null-at-register-time) `sound` state.
+  const soundRef = useRef<Audio.Sound | null>(null);
+
   // Inline embed for saved social links (token-free official platform embeds).
   const embed = getEmbed(item);
 
   /**
-   * Load and play audio when component mounts
+   * Load audio when component mounts; unload it on unmount.
    */
   useEffect(() => {
     if (item.audio_url) {
@@ -88,9 +93,13 @@ export default function StreamCard({
     }
 
     return () => {
-      // Cleanup audio on unmount
-      if (sound) {
-        sound.unloadAsync().catch(console.error);
+      // Unload the sound we actually loaded (via the ref) and detach its
+      // listener. unloadAsync clears the loaded sound, so no double-unload.
+      const s = soundRef.current;
+      if (s) {
+        s.setOnPlaybackStatusUpdate(null);
+        s.unloadAsync().catch(console.error);
+        soundRef.current = null;
       }
     };
   }, [item.audio_url]);
@@ -122,7 +131,8 @@ export default function StreamCard({
         { uri: item.audio_url },
         { shouldPlay: false }
       );
-      
+
+      soundRef.current = audioSound;
       setSound(audioSound);
     } catch (error) {
       console.error('Failed to load audio:', error);
@@ -149,48 +159,6 @@ export default function StreamCard({
       }
     } catch (error) {
       console.error('Failed to toggle playback:', error);
-    }
-  }
-
-  /**
-   * Get icon for classification type
-   */
-  function getClassificationIcon(): keyof typeof Ionicons.glyphMap {
-    const classification = item.classification || 'other';
-    switch (classification) {
-      case 'article': return 'newspaper-outline';
-      case 'video': return 'play-circle-outline';
-      case 'recipe': return 'restaurant-outline';
-      case 'product': return 'cart-outline';
-      case 'event': return 'calendar-outline';
-      case 'place': return 'location-outline';
-      case 'idea': return 'bulb-outline';
-      case 'fitness': return 'fitness-outline';
-      case 'food': return 'restaurant-outline';
-      case 'career': return 'briefcase-outline';
-      case 'academia': return 'school-outline';
-      default: return 'document-outline';
-    }
-  }
-
-  /**
-   * Get background color for classification type
-   */
-  function getClassificationColor(): [string, string] {
-    const classification = item.classification || 'other';
-    switch (classification) {
-      case 'article': return ['#667eea', '#764ba2'];
-      case 'video': return ['#f093fb', '#f5576c'];
-      case 'recipe': return ['#4facfe', '#00f2fe'];
-      case 'product': return ['#43e97b', '#38f9d7'];
-      case 'event': return ['#fa709a', '#fee140'];
-      case 'place': return ['#30cfd0', '#330867'];
-      case 'idea': return ['#a8edea', '#fed6e3'];
-      case 'fitness': return ['#FF6B6B', '#FF8E8E'];
-      case 'food': return ['#FFA07A', '#FFB88C'];
-      case 'career': return ['#4ECDC4', '#6EDDD6'];
-      case 'academia': return ['#95E1D3', '#B4F0E4'];
-      default: return ['#667eea', '#764ba2'];
     }
   }
 
@@ -224,6 +192,17 @@ export default function StreamCard({
             startInLoadingState
             allowsInlineMediaPlayback
             originWhitelist={['https://*', 'about:*', 'data:*']}
+            onShouldStartLoadWithRequest={(req) => {
+              const url = req.url;
+              // Allow the embed's own initial load and any non-http(s) scheme
+              // (about:/data:/blob:/intent: the player itself uses).
+              if (!/^https?:\/\//i.test(url)) return true;
+              if (embed.kind === 'uri' && url === embed.uri) return true;
+              // A user tapped a link inside the embed -> open the real browser
+              // instead of navigating this in-app WebView away from the player.
+              Linking.openURL(url).catch(() => {});
+              return false;
+            }}
             onLoadStart={() => {
               setWebViewLoading(true);
               setWebViewError(false);
@@ -291,7 +270,7 @@ export default function StreamCard({
   return (
     <View style={styles.container}>
       <LinearGradient
-        colors={getClassificationColor()}
+        colors={[...classGradient(item.classification)]}
         style={styles.gradient}
       >
         <ScrollView 
@@ -302,10 +281,10 @@ export default function StreamCard({
           <View style={styles.titleRow}>
             <Text style={styles.title}>{item.title}</Text>
             <View style={styles.badge}>
-              <Ionicons 
-                name={getClassificationIcon()} 
-                size={14} 
-                color="#fff" 
+              <Ionicons
+                name={classConfig(item.classification).icon}
+                size={14}
+                color="#fff"
               />
               <Text style={styles.badgeText}>
                 {(item.classification || 'other').toUpperCase()}
@@ -321,8 +300,8 @@ export default function StreamCard({
           {/* Tags */}
           {item.tags && item.tags.length > 0 && (
             <View style={styles.tagsContainer}>
-              {item.tags.map((tag, index) => (
-                <View key={index} style={styles.tag}>
+              {item.tags.map((tag) => (
+                <View key={tag} style={styles.tag}>
                   <Text style={styles.tagText}>#{tag}</Text>
                 </View>
               ))}
@@ -350,34 +329,18 @@ export default function StreamCard({
         <View style={styles.actions}>
           {/* Audio Playback / Read Button */}
           {item.audio_url ? (
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.actionButton}
               onPress={togglePlayback}
             >
-              <Ionicons 
-                name={isPlaying ? 'pause-circle' : 'play-circle'} 
-                size={48} 
-                color="#fff" 
+              <Ionicons
+                name={isPlaying ? 'pause-circle' : 'play-circle'}
+                size={48}
+                color="#fff"
               />
               <Text style={styles.actionLabel}>
                 {isPlaying ? 'Pause' : 'Read'}
               </Text>
-            </TouchableOpacity>
-          ) : item.script ? (
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={() => {
-                // If no audio but script exists, could generate on-demand
-                // For now, just show that script exists
-                console.log('Script available but no audio:', item.script);
-              }}
-            >
-              <Ionicons 
-                name="volume-mute" 
-                size={32} 
-                color="#fff" 
-              />
-              <Text style={styles.actionLabel}>No Audio</Text>
             </TouchableOpacity>
           ) : null}
 
@@ -590,4 +553,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 });
+
+// Memoized: this is a full-screen FlatList row in the reel feed.
+export default React.memo(StreamCard);
 

@@ -1,14 +1,16 @@
 /**
  * ItemCard Component
- * 
- * A compact card component for displaying content items in list views
- * (Stacks screen, Calendar screen, Search results).
- * 
+ *
+ * A compact list-row card for content items (Calendar screen, Search results).
+ * Swipe left to mark done, swipe right to unmark; tap to open, long-press for
+ * actions. Done state (strikethrough + checkmark) is derived from the item.
+ *
  * Props:
  * - item: Content item to display
  * - onPress: Callback when card is tapped
- * - showStack: Whether to show stack name badge
- * 
+ * - onLongPress: Callback on long press
+ * - onSwipeLeft / onSwipeRight: Callbacks past the swipe threshold
+ *
  * Dependencies:
  * - React Native core components
  * - @expo/vector-icons
@@ -21,10 +23,9 @@ import {
   StyleSheet,
   TouchableOpacity,
   Platform,
-  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -32,9 +33,9 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { Item } from '@/lib/types';
+import { classConfig } from '@/lib/classification';
 import { format } from 'date-fns';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 80;
 
 interface ItemCardProps {
@@ -43,13 +44,13 @@ interface ItemCardProps {
   onLongPress?: (itemId: string) => void;
   onSwipeLeft?: (itemId: string) => void;
   onSwipeRight?: (itemId: string) => void;
-  showStack?: boolean;
-  isCompleted?: boolean;
 }
 
-export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSwipeRight, showStack = false, isCompleted = false }: ItemCardProps) {
+function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSwipeRight }: ItemCardProps) {
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
+  // Single source of truth for the "done" visual (strikethrough + checkmark).
+  const isDone = item.status === 'done' || item.bucketlist_completed === true || item.viewed === true;
 
   /**
    * Pan gesture for swipe left (mark as done) and swipe right (unmark as done)
@@ -109,45 +110,8 @@ export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSw
       opacity: opacity.value,
     };
   });
-  /**
-   * Get icon for classification type
-   */
-  function getClassificationIcon(): keyof typeof Ionicons.glyphMap {
-    switch (item.classification) {
-      case 'article': return 'newspaper';
-      case 'video': return 'play-circle';
-      case 'recipe': return 'restaurant';
-      case 'product': return 'cart';
-      case 'event': return 'calendar';
-      case 'place': return 'location';
-      case 'idea': return 'bulb';
-      case 'fitness': return 'fitness';
-      case 'food': return 'restaurant';
-      case 'career': return 'briefcase';
-      case 'academia': return 'school';
-      default: return 'document';
-    }
-  }
-
-  /**
-   * Get background color for classification type
-   */
-  function getClassificationColor(): string {
-    switch (item.classification) {
-      case 'article': return '#667eea';
-      case 'video': return '#f093fb';
-      case 'recipe': return '#4facfe';
-      case 'product': return '#43e97b';
-      case 'event': return '#fa709a';
-      case 'place': return '#30cfd0';
-      case 'idea': return '#a8edea';
-      case 'fitness': return '#FF6B6B';
-      case 'food': return '#FFA07A';
-      case 'career': return '#4ECDC4';
-      case 'academia': return '#95E1D3';
-      default: return '#667eea';
-    }
-  }
+  // Per-classification visuals (icon + accent color) from the shared palette.
+  const cfg = classConfig(item.classification);
 
   /**
    * Format timestamp for display
@@ -172,21 +136,20 @@ export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSw
   }
 
   return (
-    <GestureHandlerRootView>
-      <GestureDetector gesture={panGesture}>
-        <Animated.View style={animatedStyle}>
-          <TouchableOpacity
-            style={styles.container}
-            onPress={() => onPress(item.id)}
-            onLongPress={() => onLongPress?.(item.id)}
-            activeOpacity={0.7}
-          >
+    <GestureDetector gesture={panGesture}>
+      <Animated.View style={animatedStyle}>
+        <TouchableOpacity
+          style={styles.container}
+          onPress={() => onPress(item.id)}
+          onLongPress={() => onLongPress?.(item.id)}
+          activeOpacity={0.7}
+        >
       {/* Left Color Bar */}
-      <View 
+      <View
         style={[
-          styles.colorBar, 
-          { backgroundColor: getClassificationColor() }
-        ]} 
+          styles.colorBar,
+          { backgroundColor: cfg.from }
+        ]}
       />
 
       {/* Content */}
@@ -194,16 +157,16 @@ export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSw
         {/* Header Row */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <View 
+            <View
               style={[
-                styles.iconContainer, 
-                { backgroundColor: getClassificationColor() }
+                styles.iconContainer,
+                { backgroundColor: cfg.from }
               ]}
             >
-              <Ionicons 
-                name={getClassificationIcon()} 
-                size={16} 
-                color="#fff" 
+              <Ionicons
+                name={cfg.icon}
+                size={16}
+                color="#fff"
               />
             </View>
             <Text style={styles.classification}>
@@ -217,13 +180,13 @@ export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSw
         </View>
 
         {/* Title */}
-        <Text style={[styles.title, isCompleted && styles.titleCompleted]} numberOfLines={2}>
+        <Text style={[styles.title, isDone && styles.titleCompleted]} numberOfLines={2}>
           {item.title}
         </Text>
 
         {/* Description */}
         {item.description && (
-          <Text style={[styles.description, isCompleted && styles.descriptionCompleted]} numberOfLines={2}>
+          <Text style={[styles.description, isDone && styles.descriptionCompleted]} numberOfLines={2}>
             {item.description}
           </Text>
         )}
@@ -233,8 +196,8 @@ export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSw
           {/* Tags */}
           {item.tags && item.tags.length > 0 && (
             <View style={styles.tags}>
-              {item.tags.slice(0, 3).map((tag, index) => (
-                <Text key={index} style={styles.tag}>
+              {item.tags.slice(0, 3).map((tag) => (
+                <Text key={tag} style={styles.tag}>
                   #{tag}
                 </Text>
               ))}
@@ -259,11 +222,11 @@ export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSw
                 style={{ marginLeft: 8 }}
               />
             )}
-            {item.viewed && (
-              <Ionicons 
-                name="checkmark-circle" 
-                size={16} 
-                color="#4cd964" 
+            {isDone && (
+              <Ionicons
+                name="checkmark-circle"
+                size={16}
+                color="#4cd964"
                 style={{ marginLeft: 8 }}
               />
             )}
@@ -285,11 +248,13 @@ export default function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSw
         </View>
       </View>
     </TouchableOpacity>
-        </Animated.View>
-      </GestureDetector>
-    </GestureHandlerRootView>
+      </Animated.View>
+    </GestureDetector>
   );
 }
+
+// Memoized: this is a FlatList row in list views.
+export default React.memo(ItemCard);
 
 const styles = StyleSheet.create({
   container: {

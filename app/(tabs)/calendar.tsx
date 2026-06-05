@@ -36,18 +36,11 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { 
-  format, 
-  addDays, 
-  startOfWeek, 
-  startOfMonth,
-  endOfMonth,
+import {
+  format,
+  addDays,
+  startOfWeek,
   isSameDay,
-  isSameMonth,
-  addMonths,
-  subMonths,
-  getDaysInMonth,
-  getDay,
 } from 'date-fns';
 import * as Calendar from 'expo-calendar';
 import * as Location from 'expo-location';
@@ -56,7 +49,10 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import ItemCard from '@/components/ItemCard';
 import { Item } from '@/lib/types';
 import { getItems, updateItem, addItem } from '@/lib/storage';
+import { createItem } from '@/lib/items';
 import { requestCalendarPermissions, scheduleItemReview } from '@/lib/scheduler';
+import { celebrationHaptic } from '@/lib/haptics';
+import { parseLocalDate } from '@/lib/datetime';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -157,21 +153,21 @@ export default function CalendarScreen() {
         return prevEvents.map(event => {
           // Try to find matching item by date/time
           let matchingItem = scheduledItems.find(
-            i => i.scheduled_date && 
-            format(new Date(i.scheduled_date), 'yyyy-MM-dd') === format(event.startDate, 'yyyy-MM-dd') &&
+            i => i.scheduled_date &&
+            format(parseLocalDate(i.scheduled_date), 'yyyy-MM-dd') === format(event.startDate, 'yyyy-MM-dd') &&
             i.scheduled_time === format(event.startDate, 'HH:mm')
           );
-          
+
           // If no match by time, try matching by title (for Silo events)
           if (!matchingItem && event.isSiloEvent) {
             const itemTitle = event.title.replace('Review: ', '').trim();
             matchingItem = scheduledItems.find(
               i => {
-                const titleMatch = i.title === itemTitle || 
-                                 itemTitle.includes(i.title) || 
+                const titleMatch = i.title === itemTitle ||
+                                 itemTitle.includes(i.title) ||
                                  i.title.includes(itemTitle);
-                const dateMatch = i.scheduled_date && 
-                                format(new Date(i.scheduled_date), 'yyyy-MM-dd') === format(event.startDate, 'yyyy-MM-dd');
+                const dateMatch = i.scheduled_date &&
+                                format(parseLocalDate(i.scheduled_date), 'yyyy-MM-dd') === format(event.startDate, 'yyyy-MM-dd');
                 return titleMatch && dateMatch;
               }
             );
@@ -279,7 +275,6 @@ export default function CalendarScreen() {
                 place_latitude: latitude,
                 place_longitude: longitude,
               });
-              console.log(`📍 Geocoded ${addressToGeocode}: ${latitude}, ${longitude}`);
               geocodedCount++;
             }
           }
@@ -313,7 +308,8 @@ export default function CalendarScreen() {
   function getItemsForDate(date: Date): Item[] {
     return items.filter(item => {
       if (!item.scheduled_date) return false;
-      const itemDate = new Date(item.scheduled_date);
+      // parseLocalDate avoids the UTC off-by-one of `new Date('YYYY-MM-DD')`.
+      const itemDate = parseLocalDate(item.scheduled_date);
       return isSameDay(itemDate, date);
     });
   }
@@ -361,19 +357,15 @@ export default function CalendarScreen() {
       const dateStr = format(newEventDate, 'yyyy-MM-dd');
       const timeStr = format(newEventTime, 'HH:mm');
 
-      const newItem: Item = {
-        id: `item_${Date.now()}`,
+      // createItem fills id/created_at/updated_at/status + defaults.
+      const newItem = createItem({
         type: 'note',
         classification: 'idea',
         title: newEventTitle,
         scheduled_date: dateStr,
         scheduled_time: timeStr,
         duration: 15,
-        tags: [],
-        created_at: new Date().toISOString(),
-        viewed: false,
-        archived: false,
-      };
+      });
 
       await addItem(newItem);
       await scheduleItemReview(newItem, dateStr, timeStr, 15);
@@ -431,13 +423,7 @@ export default function CalendarScreen() {
       
       if (newCompletedStatus) {
         // Celebration haptic for completion
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        await new Promise(resolve => setTimeout(resolve, 50));
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        await new Promise(resolve => setTimeout(resolve, 50));
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await celebrationHaptic();
       } else {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
@@ -744,8 +730,8 @@ export default function CalendarScreen() {
                               if (event.isSiloEvent) {
                                 // Try to find the item by matching the event title and date/time
                                 const matchingItem = items.find(
-                                  i => i.scheduled_date && 
-                                  format(new Date(i.scheduled_date), 'yyyy-MM-dd') === format(event.startDate, 'yyyy-MM-dd') &&
+                                  i => i.scheduled_date &&
+                                  format(parseLocalDate(i.scheduled_date), 'yyyy-MM-dd') === format(event.startDate, 'yyyy-MM-dd') &&
                                   i.scheduled_time === format(event.startDate, 'HH:mm') &&
                                   (i.title === event.title.replace('Review: ', '') || event.title.includes(i.title))
                                 );
@@ -782,21 +768,17 @@ export default function CalendarScreen() {
                                       const dateStr = format(event.startDate, 'yyyy-MM-dd');
                                       const timeStr = format(event.startDate, 'HH:mm');
                                       const duration = Math.round((event.endDate.getTime() - event.startDate.getTime()) / (1000 * 60));
-                                      
-                                      const newItem: Item = {
-                                        id: `item_${Date.now()}`,
+
+                                      // createItem fills id/created_at/updated_at/status + defaults.
+                                      const newItem = createItem({
                                         type: 'note',
                                         classification: 'event',
                                         title: event.title.replace('Review: ', ''),
                                         scheduled_date: dateStr,
                                         scheduled_time: timeStr,
                                         duration: duration || 15,
-                                        tags: [],
-                                        created_at: new Date().toISOString(),
-                                        viewed: false,
-                                        archived: false,
-                                      };
-                                      
+                                      });
+
                                       addItem(newItem).then(() => {
                                         scheduleItemReview(newItem, dateStr, timeStr, duration || 15);
                                         loadItems();
@@ -1007,7 +989,6 @@ export default function CalendarScreen() {
                       item={item}
                       onPress={handleItemPress}
                       onLongPress={handleToggleBucketlist}
-                      isCompleted={item.bucketlist_completed}
                     />
                   </View>
                 </View>
@@ -1374,23 +1355,6 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     backgroundColor: '#007AFF',
-  },
-  monthHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  monthNavButton: {
-    padding: 8,
-  },
-  monthTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#333',
   },
   eventsContainer: {
     flex: 1,

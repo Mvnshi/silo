@@ -122,9 +122,9 @@ export default function TagPicker({
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Selected Tags</Text>
           <View style={styles.tagsContainer}>
-            {selectedTags.map((tag, index) => (
+            {selectedTags.map((tag) => (
               <TouchableOpacity
-                key={index}
+                key={tag}
                 style={styles.selectedTag}
                 onPress={() => removeTag(tag)}
               >
@@ -145,9 +145,9 @@ export default function TagPicker({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.suggestionsContainer}
           >
-            {availableSuggestions.map((tag, index) => (
+            {availableSuggestions.map((tag) => (
               <TouchableOpacity
-                key={index}
+                key={tag}
                 style={styles.suggestedTag}
                 onPress={() => addTag(tag)}
               >

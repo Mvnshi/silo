@@ -32,6 +32,7 @@ import * as Haptics from 'expo-haptics';
 import ItemCard from '@/components/ItemCard';
 import { Stack, Item } from '@/lib/types';
 import { getStackById, getItems, updateStack, deleteStack, updateItem } from '@/lib/storage';
+import { celebrationHaptic } from '@/lib/haptics';
 
 export default function StackDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -86,25 +87,6 @@ export default function StackDetailScreen() {
   function handleItemPress(itemId: string) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push(`/item/${itemId}?from=stacks`);
-  }
-
-  /**
-   * Celebration haptic - accelerated vibration pattern
-   */
-  async function celebrationHaptic() {
-    try {
-      // Pattern: light -> medium -> heavy -> success notification
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      await new Promise(resolve => setTimeout(resolve, 50));
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      await new Promise(resolve => setTimeout(resolve, 50));
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      await new Promise(resolve => setTimeout(resolve, 100));
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
-      // Fallback if haptics fail
-      console.error('Haptic error:', error);
-    }
   }
 
   /**

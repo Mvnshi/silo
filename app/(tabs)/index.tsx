@@ -13,7 +13,7 @@
  * 
  * Dependencies:
  * - React Native FlatList
- * - ItemCard component
+ * - ItemCardPro / CompactCard components
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -32,38 +32,21 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { format } from 'date-fns';
-import ItemCard from '@/components/ItemCard';
 import CompactCard from '@/components/CompactCard';
 import ItemCardPro from '@/components/ItemCardPro';
 import EmptyState from '@/components/ui/EmptyState';
 import { Item, Stack } from '@/lib/types';
-import { getItems, getStacks, addStack, updateItem, deleteItem } from '@/lib/storage';
+import { getItems, getStacks, addStack, updateItem, deleteItem, updateStack, deleteStack } from '@/lib/storage';
 import { aiSearch } from '@/lib/api';
 import { scheduleItemReview } from '@/lib/scheduler';
-
-/**
- * Celebration haptic - accelerated vibration pattern
- */
-async function celebrationHaptic() {
-  try {
-    // Pattern: light -> medium -> heavy -> success notification
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await new Promise(resolve => setTimeout(resolve, 50));
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    await new Promise(resolve => setTimeout(resolve, 50));
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    await new Promise(resolve => setTimeout(resolve, 100));
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  } catch (error) {
-    // Fallback if haptics fail
-    console.error('Haptic error:', error);
-  }
-}
+import { celebrationHaptic } from '@/lib/haptics';
 
 type ViewMode = 'list' | 'grid';
 
+/**
+ * Stacks screen: browse/search all saved items and filter by stack (collection).
+ */
 export default function StacksScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -444,7 +427,6 @@ export default function StacksScreen() {
               async (name) => {
                 if (!name || !name.trim()) return;
                 try {
-                  const { updateStack } = await import('@/lib/storage');
                   await updateStack(stackId, { name: name.trim() });
                   await loadData();
                 } catch (error) {
@@ -471,7 +453,6 @@ export default function StacksScreen() {
                   style: 'destructive',
                   onPress: async () => {
                     try {
-                      const { deleteStack } = await import('@/lib/storage');
                       await deleteStack(stackId);
                       await loadData();
                     } catch (error) {
@@ -519,9 +500,8 @@ export default function StacksScreen() {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <View style={styles.container}>
-        {/* Gradient Background */}
+    <View style={styles.container}>
+      {/* Gradient Background */}
         <LinearGradient
           colors={['#E8D4F5', '#F5E7FF', '#FFF0FF']}
           style={StyleSheet.absoluteFill}
@@ -721,7 +701,6 @@ export default function StacksScreen() {
         </View>
       )}
     </View>
-    </GestureHandlerRootView>
   );
 }
 
@@ -744,9 +723,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.13,
     shadowRadius: 12,
-  },
-  headerSpacer: {
-    height: 120, // Space for sticky header
   },
   searchContainer: {
     flexDirection: 'row',
@@ -814,25 +790,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 4,
     marginLeft: 8,
-  },
-  listContent: {
-    paddingHorizontal: 16,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  emptyText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#666',
-    marginTop: 16,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 8,
   },
 });
 

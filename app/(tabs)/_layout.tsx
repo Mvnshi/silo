@@ -2,10 +2,10 @@
  * Tabs Layout Component
  * 
  * Native iOS-style tab navigation with 5 main screens using NativeTabs:
- * - Reel: TikTok-style content feed
- * - Stacks: Organized collections
+ * - Streams (reel): TikTok-style content feed
+ * - Stacks (index): Organized collections
  * - Add: Add new content
- * - Calendar: Scheduled items
+ * - Silo (calendar): Calendar / map / bucket list
  * - Screenshots: Review recent screenshots
  * 
  * Features:

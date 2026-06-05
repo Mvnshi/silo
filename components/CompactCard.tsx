@@ -3,12 +3,12 @@
  * Square visual (image or gradient tile) + classification pill + title.
  * Preserves the swipe-left/right gesture. NativeWind + Reanimated.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { Text, View, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -27,7 +27,7 @@ interface CompactCardProps {
   onSwipeRight?: (itemId: string) => void;
 }
 
-export default function CompactCard({
+function CompactCard({
   item,
   onPress,
   onSwipeLeft,
@@ -39,6 +39,8 @@ export default function CompactCard({
   const cfg = classConfig(item.classification);
   const isDone =
     item.status === 'done' || item.bucketlist_completed === true || item.viewed === true;
+  // Fall back to the gradient-icon tile if the thumbnail fails to load.
+  const [imageFailed, setImageFailed] = useState(false);
 
   const panGesture = Gesture.Pan()
     .activeOffsetX([-5, 5])
@@ -67,9 +69,8 @@ export default function CompactCard({
   }));
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <GestureDetector gesture={panGesture}>
-        <Animated.View style={[animatedStyle, { flex: 1 }]}>
+    <GestureDetector gesture={panGesture}>
+      <Animated.View style={[animatedStyle, { flex: 1 }]}>
           <Pressable
             onPress={() => onPress(item.id)}
             onPressIn={() => {
@@ -87,11 +88,12 @@ export default function CompactCard({
             }}
           >
             <View className="aspect-square w-full overflow-hidden">
-              {item.imageUri ? (
+              {item.imageUri && !imageFailed ? (
                 <Image
                   source={{ uri: item.imageUri }}
                   style={{ width: '100%', height: '100%' }}
                   contentFit="cover"
+                  onError={() => setImageFailed(true)}
                 />
               ) : (
                 <LinearGradient
@@ -127,8 +129,10 @@ export default function CompactCard({
               </Text>
             </View>
           </Pressable>
-        </Animated.View>
-      </GestureDetector>
-    </GestureHandlerRootView>
+      </Animated.View>
+    </GestureDetector>
   );
 }
+
+// Memoized: this is a FlatList row in the Stacks grid feed.
+export default React.memo(CompactCard);

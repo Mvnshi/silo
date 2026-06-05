@@ -30,7 +30,7 @@ import { format } from 'date-fns';
 import { Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface ChatMessage {
   id: string;
@@ -102,11 +102,11 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
   }, [isExpanded]);
 
   useEffect(() => {
-    if (messages.length > 0) {
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    }
+    if (messages.length === 0) return;
+    const timer = setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+    return () => clearTimeout(timer);
   }, [messages]);
 
   /**
@@ -281,6 +281,7 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
               onPress={() => {
                 setIsExpanded(false);
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                onClose();
               }}
             >
               <Ionicons name="close" size={24} color="#666" />

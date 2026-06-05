@@ -1,19 +1,18 @@
 /**
  * Screenshots Screen
- * 
- * Displays recent screenshots from the device's photo library for quick
- * import and analysis. Users can select screenshots to analyze with AI
- * and add to their Silo.
- * 
+ *
+ * Tinder-style single-card swipe deck over the device's recent screenshots:
+ * swipe right to import (with best-effort AI analysis), swipe left to skip.
+ * Imported screenshots can be turned into a scheduled review.
+ *
  * Features:
- * - Grid view of recent screenshots
- * - Select multiple screenshots
- * - Batch import and AI analysis
- * - Delete screenshots after import
- * 
+ * - One card at a time with pan-driven swipe + progressive haptics
+ * - Swipe right = import & AI-analyze; swipe left = skip
+ * - Optional schedule suggestion after a successful import
+ *
  * Dependencies:
- * - expo-media-library: Photo library access
- * - expo-image-picker: Image selection
+ * - expo-media-library: Photo library access (via lib/screenshots)
+ * - react-native-gesture-handler / reanimated: Swipe gesture + animation
  */
 
 import React, { useState, useCallback, useRef } from 'react';
@@ -32,7 +31,7 @@ import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -48,9 +47,10 @@ import {
   Screenshot,
 } from '@/lib/screenshots';
 import { analyzeImage, suggestScheduleTime } from '@/lib/api';
-import { addItem, getUserId } from '@/lib/storage';
+import { addItem } from '@/lib/storage';
 import { createItem } from '@/lib/items';
 import { scheduleItemReview } from '@/lib/scheduler';
+import { celebrationHaptic } from '@/lib/haptics';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
@@ -70,8 +70,9 @@ export default function ScreenshotsScreen() {
   const opacity = useSharedValue(1);
   
   // Haptic feedback - use shared values to avoid worklet warnings
-  const hapticIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastHapticTime = useSharedValue(0);
+  // Guards against a fast double-swipe importing the same screenshot twice.
+  const importingRef = useRef(false);
 
   /**
    * Load recent screenshots from device
@@ -119,28 +120,12 @@ export default function ScreenshotsScreen() {
   }
 
   /**
-   * Celebration haptic - accelerated vibration pattern
-   */
-  async function celebrationHaptic() {
-    try {
-      // Pattern: light -> medium -> heavy -> success notification
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      await new Promise(resolve => setTimeout(resolve, 50));
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      await new Promise(resolve => setTimeout(resolve, 50));
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      await new Promise(resolve => setTimeout(resolve, 100));
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
-      // Fallback if haptics fail
-      console.error('Haptic error:', error);
-    }
-  }
-
-  /**
    * Handle swipe right (import)
    */
   async function handleSwipeRight(screenshot: Screenshot) {
+    // In-flight guard: a fast double-swipe must not import the same screenshot twice.
+    if (importingRef.current) return;
+    importingRef.current = true;
     try {
       setLoading(true);
       const item = await importScreenshot(screenshot);
@@ -191,6 +176,7 @@ export default function ScreenshotsScreen() {
       Alert.alert('Error', 'Failed to import screenshot');
     } finally {
       setLoading(false);
+      importingRef.current = false;
     }
   }
 
@@ -284,11 +270,6 @@ export default function ScreenshotsScreen() {
   try {
     panGesture = Gesture.Pan()
       .onStart(() => {
-        // Clear any existing haptic interval
-        if (hapticIntervalRef.current) {
-          clearInterval(hapticIntervalRef.current);
-          hapticIntervalRef.current = null;
-        }
         lastHapticTime.value = 0;
       })
       .onUpdate((event) => {
@@ -308,11 +289,6 @@ export default function ScreenshotsScreen() {
         );
       })
       .onEnd((event) => {
-        // Clear haptic interval when gesture ends
-        if (hapticIntervalRef.current) {
-          clearInterval(hapticIntervalRef.current);
-          hapticIntervalRef.current = null;
-        }
         const shouldSwipeRight = event.translationX > SWIPE_THRESHOLD;
         const shouldSwipeLeft = event.translationX < -SWIPE_THRESHOLD;
 
@@ -475,7 +451,7 @@ export default function ScreenshotsScreen() {
   }
 
   return (
-    <GestureHandlerRootView style={styles.container}>
+    <View style={styles.container}>
       {/* Gradient Background */}
       <LinearGradient
         colors={['#E8B4E8', '#F5D7F5', '#FFF0F5']}
@@ -511,7 +487,7 @@ export default function ScreenshotsScreen() {
           {renderCard()}
         </View>
       )}
-    </GestureHandlerRootView>
+    </View>
   );
 }
 

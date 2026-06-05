@@ -16,7 +16,7 @@
  * - StreamCard component
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   FlatList,
@@ -33,7 +33,6 @@ import {
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
@@ -42,11 +41,12 @@ import EmptyState from '@/components/ui/EmptyState';
 import { Item, Classification } from '@/lib/types';
 import { getItems, updateItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
+import { celebrationHaptic } from '@/lib/haptics';
+import { parseLocalDate, defaultReviewSlot } from '@/lib/datetime';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function ReelScreen() {
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const [items, setItems] = useState<Item[]>([]);
   const [filteredItems, setFilteredItems] = useState<Item[]>([]);
@@ -62,6 +62,8 @@ export default function ReelScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const durationOptions = [15, 30, 45, 60];
+  // Guards against a fast double-tap on "Schedule" creating duplicate events.
+  const savingScheduleRef = useRef(false);
 
   /**
    * Load items from storage
@@ -157,8 +159,8 @@ export default function ReelScreen() {
     
     // Pre-fill with existing schedule if available
     if (item.scheduled_date) {
-      const date = new Date(item.scheduled_date);
-      setScheduleDate(date);
+      // parseLocalDate avoids the UTC off-by-one of `new Date('YYYY-MM-DD')`.
+      setScheduleDate(parseLocalDate(item.scheduled_date));
       if (item.scheduled_time) {
         const [hours, minutes] = item.scheduled_time.split(':').map(Number);
         const time = new Date();
@@ -167,11 +169,10 @@ export default function ReelScreen() {
       }
     } else {
       // Default to tomorrow 9 AM
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(9, 0, 0, 0);
-      setScheduleDate(tomorrow);
-      setScheduleTime(tomorrow);
+      const slot = defaultReviewSlot();
+      const date = parseLocalDate(slot.date, slot.time);
+      setScheduleDate(date);
+      setScheduleTime(date);
     }
     
     // Pre-fill duration if available
@@ -188,16 +189,20 @@ export default function ReelScreen() {
    */
   async function handleSaveSchedule() {
     if (!scheduleItem) return;
-    
+
+    // In-flight guard: a fast double-tap must not create two calendar events.
+    if (savingScheduleRef.current) return;
+    savingScheduleRef.current = true;
+
     try {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      
+
       const dateStr = format(scheduleDate, 'yyyy-MM-dd');
       const timeStr = format(scheduleTime, 'HH:mm');
 
       // Schedule in calendar
       const scheduledEvent = await scheduleItemReview(scheduleItem, dateStr, timeStr, scheduleDuration);
-      
+
       if (scheduledEvent) {
         // Update item with schedule
         await updateItem(scheduleItem.id, {
@@ -205,7 +210,7 @@ export default function ReelScreen() {
           scheduled_time: timeStr,
           duration: scheduleDuration,
         });
-        
+
         // Reload items
         await loadItems();
         setShowScheduleModal(false);
@@ -218,6 +223,8 @@ export default function ReelScreen() {
       console.error('Failed to schedule item:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Error', 'Failed to schedule item');
+    } finally {
+      savingScheduleRef.current = false;
     }
   }
 
@@ -239,25 +246,6 @@ export default function ReelScreen() {
     } catch (error) {
       console.error('Failed to remove schedule:', error);
       Alert.alert('Error', 'Failed to remove schedule');
-    }
-  }
-
-  /**
-   * Celebration haptic - accelerated vibration pattern
-   */
-  async function celebrationHaptic() {
-    try {
-      // Pattern: light -> medium -> heavy -> success notification
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      await new Promise(resolve => setTimeout(resolve, 50));
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      await new Promise(resolve => setTimeout(resolve, 50));
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      await new Promise(resolve => setTimeout(resolve, 100));
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
-      // Fallback if haptics fail
-      console.error('Haptic error:', error);
     }
   }
 

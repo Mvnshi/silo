@@ -1,15 +1,18 @@
 /**
  * Root Layout Component
- * 
- * This is the root layout for the entire app. It sets up:
- * - Font loading
- * - Navigation container
- * - Global error handling
- * - Initial data seeding
- * 
+ *
+ * Root layout for the entire app. On mount it:
+ * - configures audio mode (expo-av) for background/silent-mode playback
+ * - runs storage migrations, then (dev only) seeds example data
+ * - drains pending iOS Share-Extension imports (on boot + every foreground)
+ *
+ * Wraps the navigator in a single app-wide GestureHandlerRootView so individual
+ * screens don't each need their own.
+ *
  * Dependencies:
  * - expo-router: File-based routing
  * - expo-av: Audio setup
+ * - react-native-gesture-handler: Root gesture context
  */
 
 import '../global.css';
@@ -17,6 +20,7 @@ import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { Stack } from 'expo-router';
 import { Audio } from 'expo-av';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { seedData, shouldSeedData } from '@/lib/seed';
@@ -74,10 +78,12 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style="dark" translucent={false} />
-      <Stack screenOptions={{ headerShown: false }} />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <StatusBar style="dark" translucent={false} />
+        <Stack screenOptions={{ headerShown: false }} />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

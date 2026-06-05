@@ -19,7 +19,7 @@
  * - lib/api: Backend AI analysis
  */
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -42,9 +42,9 @@ import TagPicker from '@/components/TagPicker';
 import ChatBot from '@/components/ChatBot';
 import { analyzeImage, extractLink, suggestScheduleTime } from '@/lib/api';
 import OptionCard from '@/components/ui/OptionCard';
-import { addItem, getUserId, updateItem } from '@/lib/storage';
+import { addItem, updateItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
-import { Classification, SocialPlatform } from '@/lib/types';
+import { Classification, CLASSIFICATIONS, SocialPlatform } from '@/lib/types';
 import { createItem } from '@/lib/items';
 import { detectPlatform } from '@/lib/embed';
 import { imageUriToBase64 } from '@/lib/screenshots';
@@ -69,6 +69,8 @@ export default function AddScreen() {
   const [author, setAuthor] = useState('');
   const [platform, setPlatform] = useState<SocialPlatform | undefined>(undefined);
   const [sourceUrl, setSourceUrl] = useState(''); // resolved/canonical URL to persist
+  // Guards against a fast double-tap on "Save" creating duplicate items.
+  const savingRef = useRef(false);
 
   /** Reset the entire capture form to its initial state (single source of truth). */
   function resetForm() {
@@ -217,6 +219,10 @@ export default function AddScreen() {
       return;
     }
 
+    // In-flight guard: a fast double-tap must not create two items.
+    if (savingRef.current) return;
+    savingRef.current = true;
+
     try {
       setLoading(true);
 
@@ -259,7 +265,6 @@ export default function AddScreen() {
                 place_latitude: latitude,
                 place_longitude: longitude,
               });
-              console.log(`📍 Geocoded ${addressToGeocode}: ${latitude}, ${longitude}`);
             }
           }
         } catch (error) {
@@ -321,6 +326,7 @@ export default function AddScreen() {
       Alert.alert('Error', 'Failed to save item');
     } finally {
       setLoading(false);
+      savingRef.current = false;
     }
   }
 
@@ -495,7 +501,7 @@ export default function AddScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Classification</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {['article', 'video', 'recipe', 'product', 'event', 'place', 'idea', 'fitness', 'food', 'career', 'academia', 'other'].map(type => (
+                {CLASSIFICATIONS.map(type => (
                   <TouchableOpacity
                     key={type}
                     style={[
@@ -564,41 +570,6 @@ const styles = StyleSheet.create({
   },
   typeSelection: {
     gap: 16,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 8,
-    marginTop: 0,
-  },
-  typeButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  typeButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginTop: 12,
-  },
-  typeButtonSubtext: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 4,
-  },
-  helpText: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 8,
-    fontStyle: 'italic',
   },
   form: {
     gap: 20,

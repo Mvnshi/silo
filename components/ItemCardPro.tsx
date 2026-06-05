@@ -5,19 +5,23 @@
  * Shows the target aesthetic — gradient icon tiles, soft brand-tinted shadows,
  * a category pill, clean type scale, staggered entrance + press-spring.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { Text, View, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, {
   FadeInDown,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  runOnJS,
 } from 'react-native-reanimated';
 import { Item } from '@/lib/types';
 import { classConfig } from '@/lib/classification';
+
+const SWIPE_THRESHOLD = 60;
 
 function timeAgo(iso?: string): string {
   if (!iso) return '';
@@ -47,20 +51,51 @@ interface Props {
   selected?: boolean;
 }
 
-export default function ItemCardPro({
+function ItemCardPro({
   item,
   index = 0,
   onPress,
   onLongPress,
+  onSwipeLeft,
+  onSwipeRight,
   selectMode = false,
   selected = false,
 }: Props) {
   const scale = useSharedValue(1);
-  const aStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const translateX = useSharedValue(0);
+  const opacity = useSharedValue(1);
+  const aStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }, { scale: scale.value }],
+    opacity: opacity.value,
+  }));
   const cfg = classConfig(item.classification);
   const isDone =
     item.status === 'done' || item.bucketlist_completed === true || item.viewed === true;
   const tags = Array.isArray(item.tags) ? item.tags.slice(0, 3) : [];
+  // Fall back to the gradient-icon tile if the thumbnail fails to load.
+  const [imageFailed, setImageFailed] = useState(false);
+
+  // Swipe left / right past a threshold, then spring back (mirrors CompactCard).
+  const panGesture = Gesture.Pan()
+    .activeOffsetX([-5, 5])
+    .failOffsetY([-30, 30])
+    .onStart(() => {
+      translateX.value = 0;
+      opacity.value = 1;
+    })
+    .onUpdate((event) => {
+      translateX.value = event.translationX;
+      opacity.value = Math.max(0.7, 1 - Math.abs(event.translationX) / SWIPE_THRESHOLD);
+    })
+    .onEnd((event) => {
+      if (event.translationX < -SWIPE_THRESHOLD && onSwipeLeft) {
+        runOnJS(onSwipeLeft)(item.id);
+      } else if (event.translationX > SWIPE_THRESHOLD && onSwipeRight) {
+        runOnJS(onSwipeRight)(item.id);
+      }
+      translateX.value = withSpring(0, { damping: 20, stiffness: 90 });
+      opacity.value = withSpring(1);
+    });
 
   return (
     <Animated.View
@@ -68,7 +103,8 @@ export default function ItemCardPro({
         .springify()
         .damping(18)}
     >
-      <Animated.View style={aStyle}>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={aStyle}>
         <Pressable
         onPress={() => onPress(item.id)}
         onLongPress={() => onLongPress?.(item.id)}
@@ -88,11 +124,12 @@ export default function ItemCardPro({
       >
         {/* Thumbnail or gradient icon tile */}
         <View className="h-[68px] w-[68px] overflow-hidden rounded-[20px]">
-          {item.imageUri ? (
+          {item.imageUri && !imageFailed ? (
             <Image
               source={{ uri: item.imageUri }}
               style={{ width: '100%', height: '100%' }}
               contentFit="cover"
+              onError={() => setImageFailed(true)}
             />
           ) : (
             <LinearGradient
@@ -145,8 +182,8 @@ export default function ItemCardPro({
 
           {(tags.length > 0 || !!item.duration) && (
             <View className="mt-2 flex-row items-center">
-              {tags.map((t, i) => (
-                <View key={i} className="mr-1.5 rounded-full bg-ink-100 px-2 py-0.5">
+              {tags.map((t) => (
+                <View key={t} className="mr-1.5 rounded-full bg-ink-100 px-2 py-0.5">
                   <Text className="text-[11px] font-medium text-ink-500">#{t}</Text>
                 </View>
               ))}
@@ -182,7 +219,11 @@ export default function ItemCardPro({
           <Ionicons name="chevron-forward" size={16} color="#cbd5e1" style={{ marginLeft: 4 }} />
         )}
         </Pressable>
-      </Animated.View>
+        </Animated.View>
+      </GestureDetector>
     </Animated.View>
   );
 }
+
+// Memoized: this is a FlatList row in the Stacks list feed.
+export default React.memo(ItemCardPro);

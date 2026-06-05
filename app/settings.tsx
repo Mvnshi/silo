@@ -18,17 +18,10 @@ import {
   saveSettings,
   getUserId,
   clearAll,
+  DEFAULT_SETTINGS,
 } from '@/lib/storage';
 import { UserSettings } from '@/lib/types';
 import { APP_VERSION, SUPPORT_EMAIL } from '@/lib/config';
-
-const DEFAULTS: UserSettings = {
-  notifications_enabled: true,
-  auto_schedule: true,
-  default_duration: 15,
-  preferred_review_times: ['09:00', '14:00', '19:00'],
-  theme: 'auto',
-};
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -87,7 +80,7 @@ function Row({
 export default function Settings() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [settings, setSettings] = useState<UserSettings>(DEFAULTS);
+  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [stats, setStats] = useState({ items: 0, stacks: 0, since: '' });
 
   useFocusEffect(
@@ -113,9 +106,15 @@ export default function Settings() {
   );
 
   const update = (patch: Partial<UserSettings>) => {
+    const prev = settings;
     const next = { ...settings, ...patch };
     setSettings(next);
-    saveSettings(next).catch(() => {});
+    // Optimistic write: if persistence fails, roll the UI back so it never
+    // diverges from what's actually on disk.
+    saveSettings(next).catch(() => {
+      setSettings(prev);
+      Alert.alert('Couldn’t save', 'Your change wasn’t saved. Please try again.');
+    });
     Haptics.selectionAsync();
   };
 
