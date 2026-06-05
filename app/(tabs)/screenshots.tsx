@@ -206,41 +206,34 @@ export default function ScreenshotsScreen() {
    * Import a single screenshot with AI analysis
    */
   async function importScreenshot(screenshot: Screenshot) {
+    // Always import the screenshot — AI analysis is best-effort (it needs the
+    // backend Worker + key). If analysis is unavailable, still save the image so
+    // the user never loses it (matches the URL/share-import contract).
+    let analysis: Awaited<ReturnType<typeof analyzeImage>> | null = null;
     try {
-      // Convert to base64
       const base64 = await imageUriToBase64(screenshot.uri);
       const mimeType = getMimeTypeFromFilename(screenshot.filename);
-
-      // Analyze with backend API
-      const analysis = await analyzeImage(base64, mimeType);
-
-      // Create item — createItem fills id/created_at/updated_at/status + defaults.
-      const item = createItem({
-        type: 'screenshot',
-        classification: analysis.classification,
-        title: analysis.title,
-        description: analysis.description,
-        imageUri: screenshot.uri,
-        script: analysis.script,
-        tags: analysis.tags || [],
-        duration: analysis.duration,
-        place_name: analysis.place_name,
-        place_address: analysis.place_address,
-      });
-
-      // (Voice narration is roadmap-only and default-off; no paid TTS.
-      //  No server-side embeddings either — the assistant retrieves on-device
-      //  via keyword + tag matching, which is free and needs no vector DB.)
-
-      // Save item
-      await addItem(item);
-
-      // Suggest calendar event after import
-      return item;
+      analysis = await analyzeImage(base64, mimeType);
     } catch (error) {
-      console.error('Failed to import screenshot:', error);
-      throw error;
+      console.warn('Screenshot AI analysis unavailable; importing without it:', error);
     }
+
+    // createItem fills id/created_at/updated_at/status + defaults.
+    const item = createItem({
+      type: 'screenshot',
+      classification: analysis?.classification ?? 'idea',
+      title: analysis?.title || 'Screenshot',
+      description: analysis?.description,
+      imageUri: screenshot.uri,
+      script: analysis?.script,
+      tags: analysis?.tags || [],
+      duration: analysis?.duration,
+      place_name: analysis?.place_name,
+      place_address: analysis?.place_address,
+    });
+
+    await addItem(item);
+    return item;
   }
 
   /**
