@@ -198,6 +198,10 @@ function StreamCard({
                 : { html: embed.html, baseUrl: embed.baseUrl }
             }
             style={styles.webview}
+            // The embed is a fixed player, not a scrolling page. Internal
+            // scrolling must stay OFF or the WebView swallows vertical pans
+            // and the feed's swipe-to-next-card gesture stops working.
+            scrollEnabled={false}
             allowsFullscreenVideo
             mediaPlaybackRequiresUserAction={false}
             javaScriptEnabled

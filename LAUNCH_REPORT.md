@@ -12,15 +12,16 @@
 | Builds & runs (iOS) | 🟢 VERIFIED (sim) | Builds + runs on iPhone 17 Pro (iOS 26.2) sim, zero red screens. Fixes: regenerated stale Podfile.lock; installed iOS 26.5 sim platform. EAS/device build still pending founder Expo projectId. |
 | Builds & runs (Android) | ⬜ UNVERIFIED | iOS-first; Android deferred. |
 | Type-check clean | 🟢 VERIFIED | `npx tsc --noEmit` EXIT 0 (after `tsconfig moduleResolution`→`bundler` fix). |
-| Lint clean | 🟡 Blocked | ESLint 9 needs flat `eslint.config.js` (none) + `eslint-config-expo`; `npm run lint` errors. Deferred to QA. |
+| Lint clean | 🟢 VERIFIED | Flat `eslint.config.js` + `eslint-config-expo@10` (SDK-aligned); `npx eslint .` → 0 errors (7 documented exhaustive-deps warnings). |
+| UI design system | 🟢 DONE (pass 6) | `lib/theme.ts` tokens + PressableScale/GlassCard/Skeleton; every screen brand-swept (0× `#007AFF` repo-wide); first-run onboarding; app icon + splash generated + wired. Driven end-to-end in-sim via computer control. |
 | Core navigation | 🟢 VERIFIED | All 5 native tabs (Streams/Stacks/Add/Silo/Screenshots) tapped + render clean at runtime. |
 | Add / import / save | 🟡 Real, gaps | Works; no stack assignment; no cancel; image-fail strands form. |
 | Persistence | 🟢 Hardened + verified | Schema versioning + migration + write-mutex + auto `updated_at`/`completed_at` (`lib/items.ts`, `lib/storage.ts`). Type-checks clean; migration ran at runtime (`storage migrated 0 -> 2`) and seeded items render. |
 | Stacks / categories | 🔴 Demo-only | User content can't be assigned to a stack. |
 | Streams feed | 🟡 Real, gaps | No detail nav; WebView memory risk. |
 | Screenshot swipe | 🟡 Real, gaps | No OCR/undo/dedupe; wrong iOS detection. |
-| Calendar scheduling | 🔴 Buggy | Timezone off-by-one; one-way sync; duplicate events. |
-| Map / location | 🟡 Conditional | Needs Google key (Android); no denied/empty state; geocode perf. |
+| Calendar scheduling | 🟢 Hardened | Timezone off-by-one fixed (`lib/datetime`); idempotent re-scheduling (no duplicate events); double-submit guards. |
+| Map / location | 🟢 Working (iOS) | Apple Maps via platform default (forced `PROVIDER_GOOGLE` rendered blank without the SDK — removed). Location permission asked only when the map opens (was: cold-start dialog, an App Review flag). Google key only needed if Android ships. |
 | Bucket list (engine) | 🔴 Missing | Only booleans; no conditions/triggers/notifications. |
 | AI assistant (RAG) | 🔴 Failed | Retrieval broken; degrades to prompt-stuffing; can hallucinate. |
 | Social link extractor | 🟢 Built + verified | **Part B.1 DONE:** universal Worker `extract` (oEmbed + OG via HTMLRewriter, egress-hardened) → Gemini classify → normalized item; token-free inline embeds. Verified via `wrangler dev` + real curl; app+worker `tsc` EXIT 0; `expo export` clean; sim relaunched. Full in-app demo gated on deployed Worker URL. |
@@ -30,7 +31,7 @@
 | Committed secrets | 🟢 Clean | Verified via full git-history scan; keys server-side. |
 | Permissions / privacy strings | 🟡 Partial | Generic strings; missing background-location + notifications config. |
 | Privacy Policy / ToS | 🔴 Missing | Mandatory for auto-renew subscriptions. |
-| Store assets / metadata | 🔴 Missing | Icon set/screenshots/description/keywords TBD. |
+| Store assets / metadata | 🟡 Partial | v1 icon + splash + adaptive icon generated and wired in `app.json` (designer refinement recommended). Store screenshots/description/keywords still TBD. |
 
 Legend: 🟢 ready · 🟡 partial/needs work · 🔴 blocker/missing · ⬜ unverified.
 
