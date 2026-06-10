@@ -51,17 +51,23 @@ import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import ItemCard from '@/components/ItemCard';
 import PressableScale from '@/components/ui/PressableScale';
+import GlassCard from '@/components/ui/GlassCard';
+import TodayView, { TodayEvent } from '@/components/TodayView';
 import { BRAND, ACCENT, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
-import { Item } from '@/lib/types';
-import { getItems, updateItem, addItem } from '@/lib/storage';
+import { Item, ScheduledEvent } from '@/lib/types';
+import { getItems, getItemById, updateItem, addItem, getEvents } from '@/lib/storage';
 import { createItem } from '@/lib/items';
 import { requestCalendarPermissions, scheduleItemReview } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
-import { parseLocalDate } from '@/lib/datetime';
+import { parseLocalDate, toLocalDateString } from '@/lib/datetime';
+import { classConfig } from '@/lib/classification';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-type ViewMode = 'calendar' | 'map' | 'bucketlist';
+// 'today' was added as the FIRST option (and default) so the Silo tab opens
+// onto a recommendation-first surface; the legacy calendar/map/bucket views are
+// preserved untouched behind their own segments.
+type ViewMode = 'today' | 'calendar' | 'map' | 'bucketlist';
 type CalendarViewMode = 'day' | 'week';
 
 interface CalendarEvent {
@@ -77,7 +83,7 @@ interface CalendarEvent {
 export default function CalendarScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [viewMode, setViewMode] = useState<ViewMode>('calendar');
+  const [viewMode, setViewMode] = useState<ViewMode>('today');
   const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>('day');
   const [items, setItems] = useState<Item[]>([]);
   const [allItems, setAllItems] = useState<Item[]>([]);
@@ -100,12 +106,12 @@ export default function CalendarScreen() {
   });
 
   /**
-   * Get current location — requested ONLY when the user opens the map view.
-   * An unprompted cold-start permission dialog is hostile UX (and an App
-   * Review flag); asking in context ("you opened the map") reads as natural.
+   * Get current location — requested when the user is on a screen that uses it
+   * (Today shows a "Near you" card, Map shows the map). Asking in context reads
+   * as natural; a cold-start dialog is hostile UX and an App Review flag.
    */
   useEffect(() => {
-    if (viewMode !== 'map') return;
+    if (viewMode !== 'map' && viewMode !== 'today') return;
     async function getLocation() {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
@@ -443,6 +449,86 @@ export default function CalendarScreen() {
 
   const weekDays = getWeekDays();
 
+  // ---------------------------------------------------------------------------
+  // Today-view glue: storage events for today + a few small handlers that wire
+  // the Today recommendation rows to the same code paths used elsewhere in this
+  // screen. Pure facade — no new business logic.
+  // ---------------------------------------------------------------------------
+
+  const [todayScheduledEvents, setTodayScheduledEvents] = useState<TodayEvent[]>([]);
+  useEffect(() => {
+    if (viewMode !== 'today') return;
+    let alive = true;
+    (async () => {
+      const evs = await getEvents();
+      const todayKey = toLocalDateString(new Date());
+      const mapped: TodayEvent[] = evs
+        .filter((e: ScheduledEvent) => e.date === todayKey)
+        .map((e: ScheduledEvent) => {
+          const [h, m] = (e.time || '00:00').split(':').map(Number);
+          const start = parseLocalDate(e.date);
+          start.setHours(h, m, 0, 0);
+          const end = new Date(start.getTime() + (e.duration || 15) * 60_000);
+          return { title: e.title, startDate: start, endDate: end, itemId: e.item_id };
+        });
+      if (alive) setTodayScheduledEvents(mapped);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [viewMode, items]);
+
+  /** Open an item detail screen. */
+  const openItem = useCallback(
+    (itemId: string) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      router.push(`/item/${itemId}`);
+    },
+    [router]
+  );
+
+  /** Route into the item-detail schedule picker — same modal the rest of the app uses. */
+  const openScheduleForItem = useCallback(
+    (item: Item) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      router.push(`/item/${item.id}?schedule=true`);
+    },
+    [router]
+  );
+
+  /** Mark a Today recommendation done; celebrate + reload. */
+  const markItemDone = useCallback(async (itemId: string) => {
+    try {
+      await updateItem(itemId, { viewed: true });
+      celebrationHaptic();
+      await loadItems();
+    } catch (err) {
+      console.error('mark done failed', err);
+    }
+  }, []);
+
+  /** Snooze a Today recommendation to tomorrow (sets scheduled_date only). */
+  const snoozeItemToTomorrow = useCallback(async (itemId: string) => {
+    try {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const item = await getItemById(itemId);
+      await updateItem(itemId, { scheduled_date: toLocalDateString(tomorrow) });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Best-effort calendar entry so the snooze actually shows up tomorrow.
+      if (item) {
+        try {
+          await scheduleItemReview(item, toLocalDateString(tomorrow), '09:00', item.duration || 15);
+        } catch {
+          // Calendar permission may be denied; the snooze still persists.
+        }
+      }
+      await loadItems();
+    } catch (err) {
+      console.error('snooze failed', err);
+    }
+  }, []);
+
   return (
     <View style={styles.container}>
       {/* Gradient Background */}
@@ -452,7 +538,37 @@ export default function CalendarScreen() {
       />
       {/* Header with Segmented Control */}
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <View style={styles.segmentedControl}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.segmentedControl}
+        >
+          {/* Today segment — first + default, the recommendation home. */}
+          <View style={styles.segmentWrap}>
+            <PressableScale
+              haptic="selection"
+              style={[
+                styles.segment,
+                viewMode === 'today' && styles.segmentActive,
+              ]}
+              onPress={() => setViewMode('today')}
+            >
+              <Ionicons
+                name="sparkles"
+                size={18}
+                color={viewMode === 'today' ? '#fff' : INK[500]}
+              />
+              <Text
+                style={[
+                  styles.segmentText,
+                  viewMode === 'today' && styles.segmentTextActive,
+                ]}
+              >
+                Today
+              </Text>
+            </PressableScale>
+          </View>
+
           {/* PressableScale fires the selection haptic on press-in */}
           <View style={styles.segmentWrap}>
             <PressableScale
@@ -528,8 +644,20 @@ export default function CalendarScreen() {
               </Text>
             </PressableScale>
           </View>
-        </View>
+        </ScrollView>
       </View>
+
+      {viewMode === 'today' && (
+        <TodayView
+          allItems={allItems}
+          events={[...calendarEvents, ...todayScheduledEvents]}
+          currentLocation={currentLocation}
+          onScheduleItem={openScheduleForItem}
+          onDoneItem={markItemDone}
+          onSnoozeItem={snoozeItemToTomorrow}
+          onOpenItem={openItem}
+        />
+      )}
 
       {viewMode === 'calendar' && (
         <View style={styles.calendarContainer}>

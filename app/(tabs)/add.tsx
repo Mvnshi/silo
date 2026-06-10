@@ -19,7 +19,7 @@
  * - lib/api: Backend AI analysis
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -28,32 +28,66 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-  Image,
+  Image as RNImage,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+// expo-image handles iOS PHAsset `ph://` URIs (screenshots from the photo
+// library); RN's stock Image does not, so use this for any photo-library URI.
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+
+/**
+ * Defer the expo-clipboard load via require(). It's a native module added in
+ * pass 7 — if the running binary was built before the pod landed, requiring it
+ * at module-load time throws "Cannot find native module 'ExpoClipboard'".
+ * Lazy-require + try/catch lets the rest of the screen work in that case (we
+ * just don't surface the clipboard suggestion). Cleared on first native rebuild.
+ */
+function readClipboardString(): Promise<string> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Clipboard = require('expo-clipboard');
+    return Clipboard.getStringAsync();
+  } catch {
+    return Promise.resolve('');
+  }
+}
 import TagPicker from '@/components/TagPicker';
 import ChatBot from '@/components/ChatBot';
 import { analyzeImage, extractLink, suggestScheduleTime } from '@/lib/api';
 import OptionCard from '@/components/ui/OptionCard';
 import PressableScale from '@/components/ui/PressableScale';
+import GlassCard from '@/components/ui/GlassCard';
 import Skeleton from '@/components/ui/Skeleton';
 import { BRAND, GRADIENTS, HAIRLINE, INK, RADIUS } from '@/lib/theme';
-import { addItem, updateItem } from '@/lib/storage';
+import { addItem, updateItem, getItems } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
-import { Classification, CLASSIFICATIONS, SocialPlatform } from '@/lib/types';
+import { Classification, CLASSIFICATIONS, SocialPlatform, Item } from '@/lib/types';
 import { createItem } from '@/lib/items';
 import { detectPlatform } from '@/lib/embed';
-import { imageUriToBase64 } from '@/lib/screenshots';
+import { imageUriToBase64, getRecentScreenshots, Screenshot } from '@/lib/screenshots';
+import { classConfig } from '@/lib/classification';
 import * as Location from 'expo-location';
+
+/** True iff `s` looks like a usable http(s) URL. */
+function isUrlLike(s: string): boolean {
+  try {
+    const u = new URL(s.trim());
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 export default function AddScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [inputType, setInputType] = useState<'url' | 'note' | 'image' | null>(null);
   const [url, setUrl] = useState('');
   const [noteText, setNoteText] = useState('');
@@ -73,6 +107,109 @@ export default function AddScreen() {
   const [sourceUrl, setSourceUrl] = useState(''); // resolved/canonical URL to persist
   // Guards against a fast double-tap on "Save" creating duplicate items.
   const savingRef = useRef(false);
+
+  // ---- Anticipatory-capture state (see "AT-A-GLANCE" zone below). ----
+  /** What the user typed/pasted in the always-visible quick-capture field. */
+  const [quickText, setQuickText] = useState('');
+  /** Most-recent URL we surfaced from the clipboard — guards against re-nagging. */
+  const handledClipboardRef = useRef<string | null>(null);
+  /** Last clipboard URL we want to offer one-tap save for. null = nothing to show. */
+  const [clipboardSuggestion, setClipboardSuggestion] = useState<string | null>(null);
+  /** A small peek of the user's recent screenshots (4) for one-tap import. */
+  const [recentShots, setRecentShots] = useState<Screenshot[]>([]);
+  /** Last 3 saved items so the user can re-enter quickly without rummaging. */
+  const [recentItems, setRecentItems] = useState<Item[]>([]);
+
+  /**
+   * On focus, light up the AT-A-GLANCE zone: clipboard sniff + recent shots +
+   * recent saves. Everything is best-effort — denied permissions or empty
+   * results simply hide that zone (we never bug the user with permission
+   * prompts here; the user opted in elsewhere).
+   */
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      (async () => {
+        try {
+          const text = (await readClipboardString()).trim();
+          if (alive && isUrlLike(text) && handledClipboardRef.current !== text) {
+            setClipboardSuggestion(text);
+          }
+        } catch {
+          /* clipboard unavailable on web/older OS; ignore */
+        }
+        try {
+          const shots = await getRecentScreenshots(4);
+          if (alive) setRecentShots(shots);
+        } catch {
+          if (alive) setRecentShots([]);
+        }
+        try {
+          const items = await getItems();
+          if (alive) {
+            setRecentItems(
+              items
+                .filter((i) => !i.archived)
+                .sort(
+                  (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                )
+                .slice(0, 3)
+            );
+          }
+        } catch {
+          /* storage error — leave the strip empty */
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [])
+  );
+
+  /** Quick-paste field submit — URL gets the extractor, anything else becomes a note. */
+  function commitQuickText() {
+    const value = quickText.trim();
+    if (!value) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (isUrlLike(value)) {
+      setInputType('url');
+      setUrl(value);
+      setQuickText('');
+      // Fire analyze on the next tick so the form mounts first.
+      setTimeout(() => handleAnalyzeUrl(), 0);
+    } else {
+      setInputType('note');
+      setNoteText(value);
+      setQuickText('');
+    }
+  }
+
+  /** One-tap save on the clipboard suggestion. */
+  function acceptClipboard() {
+    if (!clipboardSuggestion) return;
+    handledClipboardRef.current = clipboardSuggestion;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setInputType('url');
+    setUrl(clipboardSuggestion);
+    setClipboardSuggestion(null);
+    setTimeout(() => handleAnalyzeUrl(), 0);
+  }
+
+  /** Dismiss the clipboard suggestion without saving (don't nag again for the same URL). */
+  function dismissClipboard() {
+    if (!clipboardSuggestion) return;
+    handledClipboardRef.current = clipboardSuggestion;
+    Haptics.selectionAsync();
+    setClipboardSuggestion(null);
+  }
+
+  /** Tap a recent screenshot thumbnail to import + analyze (reuses existing flow). */
+  function importRecentShot(s: Screenshot) {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setImageUri(s.uri);
+    setInputType('image');
+    analyzeSelectedImage(s.uri);
+  }
 
   /** Reset the entire capture form to its initial state (single source of truth). */
   function resetForm() {
@@ -350,46 +487,191 @@ export default function AddScreen() {
         ]}
         contentInsetAdjustmentBehavior="automatic"
       >
-        {/* Input Type Selection */}
+        {/* Input Type Selection — anticipatory capture */}
         {!inputType && (
           <View style={styles.typeSelection}>
             <Text className="text-[34px] font-extrabold tracking-tight text-ink-900">Capture</Text>
-            <Text className="mb-6 mt-1.5 text-[15px] leading-[20px] text-ink-500">
-              Save anything — Silo classifies, tags, and organizes it for you.
+            <Text className="mb-4 mt-1.5 text-[15px] leading-[20px] text-ink-500">
+              Paste, jot, or snap — Silo files it.
             </Text>
-            
-            <OptionCard
-              index={0}
-              icon="link"
-              colors={['#6366f1', '#8b5cf6']}
-              title="Link"
-              subtitle="Paste any URL or article"
-              onPress={() => setInputType('url')}
-            />
-            <OptionCard
-              index={1}
-              icon="camera"
-              colors={['#ec4899', '#f472b6']}
-              title="Camera"
-              subtitle="Snap a photo to save"
-              onPress={() => handleSelectImage('camera')}
-            />
-            <OptionCard
-              index={2}
-              icon="images"
-              colors={['#06b6d4', '#22d3ee']}
-              title="Gallery"
-              subtitle="Import from your photos"
-              onPress={() => handleSelectImage('gallery')}
-            />
-            <OptionCard
-              index={3}
-              icon="create"
-              colors={['#10b981', '#34d399']}
-              title="Note"
-              subtitle="Jot a quick thought"
-              onPress={() => setInputType('note')}
-            />
+
+            {/* Always-visible quick-paste field. Acts as Save Link on URLs,
+                New Note on free text. */}
+            <View style={styles.quickField}>
+              <Ionicons name="sparkles" size={18} color={INK[400]} />
+              <TextInput
+                style={styles.quickInput}
+                placeholder="Paste a link or type a thought"
+                placeholderTextColor={INK[400]}
+                value={quickText}
+                onChangeText={setQuickText}
+                onSubmitEditing={commitQuickText}
+                returnKeyType="send"
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              {quickText.trim().length > 0 && (
+                <PressableScale haptic="light" onPress={commitQuickText} accessibilityLabel="Save">
+                  <LinearGradient
+                    colors={[...GRADIENTS.brand]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.quickSendBtn}
+                  >
+                    <Ionicons
+                      name={isUrlLike(quickText) ? 'arrow-forward' : 'pencil'}
+                      size={18}
+                      color="#fff"
+                    />
+                  </LinearGradient>
+                </PressableScale>
+              )}
+            </View>
+
+            {/* Clipboard suggestion — only renders when we have a fresh URL. */}
+            {clipboardSuggestion && (
+              <GlassCard
+                tint="light"
+                intensity={45}
+                radius={RADIUS.lg}
+                style={styles.clipCard}
+              >
+                <View style={styles.clipInner}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.clipEyebrow}>FROM YOUR CLIPBOARD</Text>
+                    <Text style={styles.clipUrl} numberOfLines={1}>
+                      {clipboardSuggestion}
+                    </Text>
+                  </View>
+                  <PressableScale
+                    haptic="selection"
+                    onPress={dismissClipboard}
+                    style={styles.clipDismiss}
+                    accessibilityLabel="Dismiss"
+                  >
+                    <Ionicons name="close" size={18} color={INK[500]} />
+                  </PressableScale>
+                  <PressableScale
+                    haptic="light"
+                    onPress={acceptClipboard}
+                    accessibilityLabel="Save link"
+                  >
+                    <LinearGradient
+                      colors={[...GRADIENTS.brand]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.clipSaveBtn}
+                    >
+                      <Text style={styles.clipSaveText}>Save</Text>
+                    </LinearGradient>
+                  </PressableScale>
+                </View>
+              </GlassCard>
+            )}
+
+            {/* Recent screenshots peek — one tap to import + analyze. */}
+            {recentShots.length > 0 && (
+              <View style={styles.peekSection}>
+                <Text style={styles.peekTitle}>From your photos</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.peekStrip}
+                >
+                  {recentShots.map((s) => (
+                    <PressableScale
+                      key={s.id}
+                      haptic="light"
+                      onPress={() => importRecentShot(s)}
+                      style={styles.peekTile}
+                    >
+                      <Image source={{ uri: s.uri }} style={styles.peekImg} />
+                    </PressableScale>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Last 3 saves — re-enter recent items without rummaging. */}
+            {recentItems.length > 0 && (
+              <View style={styles.peekSection}>
+                <Text style={styles.peekTitle}>You just saved</Text>
+                {recentItems.map((item) => {
+                  const cfg = classConfig(item.classification);
+                  return (
+                    <PressableScale
+                      key={item.id}
+                      haptic="light"
+                      onPress={() => router.push(`/item/${item.id}`)}
+                      style={styles.recentRow}
+                    >
+                      <LinearGradient
+                        colors={[cfg.from, cfg.to]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.recentIcon}
+                      >
+                        <Ionicons name={cfg.icon} size={16} color="#fff" />
+                      </LinearGradient>
+                      <View style={{ flex: 1, marginLeft: 10, minWidth: 0 }}>
+                        <Text style={styles.recentTitle} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        <Text style={styles.recentSub} numberOfLines={1}>
+                          {item.classification.toUpperCase()}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={INK[300]} />
+                    </PressableScale>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* The original 4 OptionCards — demoted to a compact grid. */}
+            <Text style={styles.orTitle}>Or capture something new</Text>
+            <View style={styles.optionGrid}>
+              <View style={styles.optionGridCell}>
+                <OptionCard
+                  index={0}
+                  icon="link"
+                  colors={['#6366f1', '#8b5cf6']}
+                  title="Link"
+                  subtitle="Paste a URL"
+                  onPress={() => setInputType('url')}
+                />
+              </View>
+              <View style={styles.optionGridCell}>
+                <OptionCard
+                  index={1}
+                  icon="camera"
+                  colors={['#ec4899', '#f472b6']}
+                  title="Camera"
+                  subtitle="Snap a photo"
+                  onPress={() => handleSelectImage('camera')}
+                />
+              </View>
+              <View style={styles.optionGridCell}>
+                <OptionCard
+                  index={2}
+                  icon="images"
+                  colors={['#06b6d4', '#22d3ee']}
+                  title="Gallery"
+                  subtitle="From photos"
+                  onPress={() => handleSelectImage('gallery')}
+                />
+              </View>
+              <View style={styles.optionGridCell}>
+                <OptionCard
+                  index={3}
+                  icon="create"
+                  colors={['#10b981', '#34d399']}
+                  title="Note"
+                  subtitle="Quick thought"
+                  onPress={() => setInputType('note')}
+                />
+              </View>
+            </View>
           </View>
         )}
 
@@ -463,7 +745,7 @@ export default function AddScreen() {
             {inputType === 'url' && (thumbnailUri || author || platform) ? (
               <View style={styles.previewCard}>
                 {thumbnailUri ? (
-                  <Image source={{ uri: thumbnailUri }} style={styles.previewThumb} resizeMode="cover" />
+                  <RNImage source={{ uri: thumbnailUri }} style={styles.previewThumb} resizeMode="cover" />
                 ) : (
                   <View style={[styles.previewThumb, styles.previewThumbFallback]}>
                     <Ionicons name="link" size={22} color="#6366f1" />
@@ -592,8 +874,109 @@ const styles = StyleSheet.create({
     paddingTop: 0,
   },
   typeSelection: {
-    gap: 16,
+    gap: 12,
   },
+  /* Anticipatory-capture zone styles */
+  quickField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fff',
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    shadowColor: INK[900],
+    shadowOpacity: 0.04,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  quickInput: { flex: 1, fontSize: 15, color: INK[900], paddingVertical: 10 },
+  quickSendBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clipCard: {
+    marginTop: 2,
+  },
+  clipInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 14,
+  },
+  clipEyebrow: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: INK[400],
+  },
+  clipUrl: { fontSize: 13, color: INK[800], marginTop: 4 },
+  clipDismiss: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clipSaveBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  clipSaveText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  peekSection: { gap: 8, marginTop: 6 },
+  peekTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    color: INK[400],
+    marginLeft: 2,
+  },
+  peekStrip: { gap: 10, paddingRight: 16 },
+  peekTile: {
+    width: 80,
+    height: 110,
+    borderRadius: RADIUS.md,
+    overflow: 'hidden',
+    backgroundColor: INK[100],
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+  },
+  peekImg: { width: '100%', height: '100%' },
+  recentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    padding: 10,
+  },
+  recentIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recentTitle: { fontSize: 14, fontWeight: '600', color: INK[900] },
+  recentSub: { fontSize: 10, fontWeight: '700', color: INK[400], marginTop: 2, letterSpacing: 0.6 },
+  orTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: INK[400],
+    letterSpacing: 0.6,
+    marginTop: 14,
+    marginLeft: 2,
+  },
+  optionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  optionGridCell: { width: '48%' },
   form: {
     gap: 20,
     backgroundColor: '#fff',
