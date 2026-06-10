@@ -426,7 +426,10 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    paddingTop: 60,
+    // Push title/badge BELOW the floating category-chip strip (which sits at
+    // top:0 + safe-area inset + ~40px chips). Tuned so a 4-line title clears
+    // the chips on every iPhone size.
+    paddingTop: 120,
     paddingHorizontal: 20,
     zIndex: 1,
   },

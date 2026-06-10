@@ -566,7 +566,10 @@ export default function ScreenshotsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  // Solid base color matches the page gradient's bottom stop. NativeTabs keeps
+  // adjacent tabs mounted; without this the previous tab's content shows
+  // through any gap in our own layout (especially while system dialogs are up).
+  container: { flex: 1, backgroundColor: '#FAF5FF' },
   header: { backgroundColor: 'transparent', padding: 16, alignItems: 'center' },
   headerTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5, color: INK[900] },
   headerSubtitle: { fontSize: 14, color: INK[500], marginTop: 4 },
