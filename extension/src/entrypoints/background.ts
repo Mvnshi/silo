@@ -8,9 +8,9 @@
  * between events. Persist everything via `chrome.storage` or Dexie.
  */
 import { defineBackground } from 'wxt/utils/define-background';
-import { registerContextMenus } from './menus';
-import { registerOmnibox } from './omnibox';
-import { registerCommands } from './commands';
+import { registerContextMenus } from '@/lib/background/menus';
+import { registerOmnibox } from '@/lib/background/omnibox';
+import { registerCommands } from '@/lib/background/commands';
 
 export default defineBackground(() => {
   // Idempotent: chrome will warn but not break if menus already exist.

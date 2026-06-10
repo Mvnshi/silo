@@ -8,8 +8,11 @@
  * Stub for M0 — fill in extractLink + analyzeImage when wiring the popup.
  */
 
+/** Extract-task request shape. Index signature lets callWorker's
+ *  `Record<string, unknown>` accept us without a cast. */
 interface ExtractRequest {
   url: string;
+  [k: string]: unknown;
 }
 
 export interface ExtractedLink {
@@ -26,8 +29,12 @@ export interface ExtractedLink {
   author?: string;
 }
 
-const API_BASE = import.meta.env.WXT_SILO_API_BASE_URL ?? '';
-const CLIENT_TOKEN = import.meta.env.WXT_SILO_CLIENT_TOKEN ?? '';
+// WXT exposes env vars via import.meta.env. The triple-slash reference at the
+// top of `tsconfig.json` doesn't always reach generated entrypoint types, so
+// we declare the two keys we care about inline. Keeps callers strict.
+const env = (import.meta as unknown as { env: Record<string, string | undefined> }).env ?? {};
+const API_BASE = env.WXT_SILO_API_BASE_URL ?? '';
+const CLIENT_TOKEN = env.WXT_SILO_CLIENT_TOKEN ?? '';
 
 async function callWorker<T>(task: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${API_BASE}/api/gemini`, {
@@ -46,4 +53,24 @@ export function extractLink(req: ExtractRequest): Promise<ExtractedLink> {
   return callWorker<ExtractedLink>('extract', req);
 }
 
-/* M0 stub — analyzeImage, ocrImage, summarize come in later milestones. */
+/**
+ * Worker response for `classify_image`. Mirrors the phone's
+ * `AnalyzeImageResponse` shape (see ../../lib/types.ts) — kept LOCAL so
+ * we don't fight the m0 agent over lib/types.ts ownership.
+ */
+interface AnalyzeImageResponse {
+  classification: string;
+  title: string;
+  description?: string;
+  tags?: string[];
+  duration?: number;
+  script?: string;
+}
+
+/** Classify/title/tag a raw image (right-click image save). */
+export function analyzeImage(
+  imageBase64: string,
+  mimeType: string
+): Promise<AnalyzeImageResponse> {
+  return callWorker<AnalyzeImageResponse>('classify_image', { imageBase64, mimeType });
+}

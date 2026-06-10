@@ -18,7 +18,7 @@ export default defineConfig({
     name: 'Silo',
     description: 'Save anything from the web. Silo files it.',
     version: '0.1.0',
-    permissions: ['activeTab', 'scripting', 'contextMenus', 'storage'],
+    permissions: ['activeTab', 'scripting', 'contextMenus', 'storage', 'notifications'],
     host_permissions: [],
     action: {
       default_title: 'Save to Silo',
