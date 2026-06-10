@@ -1,0 +1,30 @@
+{
+  "name": "silo-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Silo browser extension (Chrome, Firefox, Safari, Arc). See ../EXTENSION_SPEC.md.",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint --config ../eslint.config.js ."
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "dexie": "^4.0.10",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.7.0",
+    "wxt": "^0.20.0"
+  },
+  "comment": "Versions are best-guess for an MV3 React + WXT setup as of 2026. `npm install` will pick the latest minor; pin in package-lock once M0 lands."
+}
