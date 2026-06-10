@@ -175,8 +175,9 @@ export default function AddScreen() {
       setInputType('url');
       setUrl(value);
       setQuickText('');
-      // Fire analyze on the next tick so the form mounts first.
-      setTimeout(() => handleAnalyzeUrl(), 0);
+      // Pass the value explicitly; setUrl above hasn't committed yet for this
+      // tick, so reading state in handleAnalyzeUrl would see the empty string.
+      handleAnalyzeUrl(value);
     } else {
       setInputType('note');
       setNoteText(value);
@@ -187,12 +188,13 @@ export default function AddScreen() {
   /** One-tap save on the clipboard suggestion. */
   function acceptClipboard() {
     if (!clipboardSuggestion) return;
-    handledClipboardRef.current = clipboardSuggestion;
+    const value = clipboardSuggestion;
+    handledClipboardRef.current = value;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setInputType('url');
-    setUrl(clipboardSuggestion);
+    setUrl(value);
     setClipboardSuggestion(null);
-    setTimeout(() => handleAnalyzeUrl(), 0);
+    handleAnalyzeUrl(value);
   }
 
   /** Dismiss the clipboard suggestion without saving (don't nag again for the same URL). */
@@ -236,14 +238,19 @@ export default function AddScreen() {
    * via the Gemini chain. On a private/dead link the Worker returns ok:false with
    * whatever it has; on a hard failure we still populate the raw URL — either
    * way the user can save (never lose a save).
+   *
+   * Accepts an explicit `urlArg` so one-tap entry points (clipboard suggestion,
+   * quick-paste field) can pass the URL directly — bypassing the React-state
+   * race where setUrl()'s value isn't yet visible to the closure.
    */
-  async function handleAnalyzeUrl() {
-    if (!url.trim()) {
+  async function handleAnalyzeUrl(urlArg?: string) {
+    const candidate = (urlArg ?? url).trim();
+    if (!candidate) {
       Alert.alert('Error', 'Please enter a URL');
       return;
     }
 
-    const urlToAnalyze = url.trim();
+    const urlToAnalyze = candidate;
     try {
       new URL(urlToAnalyze);
     } catch {
@@ -697,7 +704,7 @@ export default function AddScreen() {
               />
               <PressableScale
                 haptic="light"
-                onPress={handleAnalyzeUrl}
+                onPress={() => handleAnalyzeUrl()}
                 disabled={loading}
                 style={loading && styles.buttonDisabled}
               >
