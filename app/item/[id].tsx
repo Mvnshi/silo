@@ -24,7 +24,6 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   Alert,
   Linking,
   ActivityIndicator,
@@ -37,6 +36,7 @@ import {
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Audio } from 'expo-av';
 import { format } from 'date-fns';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -53,6 +53,8 @@ import { Item } from '@/lib/types';
 import { getItemById, updateItem, deleteItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { parseLocalDate } from '@/lib/datetime';
+import PressableScale from '@/components/ui/PressableScale';
+import { BRAND, GRADIENTS, HAIRLINE, INK, RADIUS } from '@/lib/theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 100; // Minimum swipe distance to trigger back
@@ -440,7 +442,7 @@ export default function ItemDetailScreen() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color={BRAND[600]} />
       </View>
     );
   }
@@ -448,7 +450,7 @@ export default function ItemDetailScreen() {
   if (!item) {
     return (
       <View style={styles.errorContainer}>
-        <Ionicons name="alert-circle-outline" size={64} color="#ccc" />
+        <Ionicons name="alert-circle-outline" size={64} color={INK[300]} />
         <Text style={styles.errorText}>Item not found</Text>
       </View>
     );
@@ -459,33 +461,38 @@ export default function ItemDetailScreen() {
       <Animated.View style={[styles.container, animatedStyle]}>
         {/* Header with Back Button - Outside gesture detector to ensure it works */}
         <View style={[styles.header, { paddingTop: insets.top + 12 }]} pointerEvents="box-none">
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={handleBack}
-            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="arrow-back" size={24} color="#333" />
-          </TouchableOpacity>
+          <View style={styles.backButtonWrap}>
+            <PressableScale
+              haptic="light"
+              style={styles.backButton}
+              onPress={handleBack}
+              hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+            >
+              <Ionicons name="arrow-back" size={24} color={INK[700]} />
+            </PressableScale>
+          </View>
           <Text style={styles.headerTitle}>Item Details</Text>
           {!isEditing ? (
-            <TouchableOpacity
+            <PressableScale
+              haptic="light"
               style={styles.editButton}
               onPress={handleStartEdit}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <Ionicons name="create-outline" size={24} color="#007AFF" />
-            </TouchableOpacity>
+              <Ionicons name="create-outline" size={24} color={BRAND[600]} />
+            </PressableScale>
           ) : (
             <View style={styles.editActions}>
-              <TouchableOpacity
+              <PressableScale
+                haptic="light"
                 style={styles.editActionButton}
                 onPress={handleCancelEdit}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
                 <Text style={styles.editActionText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
+              </PressableScale>
+              <PressableScale
+                haptic="light"
                 style={[styles.editActionButton, styles.saveButtonHeader]}
                 onPress={handleSaveEdit}
                 disabled={saving}
@@ -496,7 +503,7 @@ export default function ItemDetailScreen() {
                 ) : (
                   <Text style={styles.saveButtonTextHeader}>Save</Text>
                 )}
-              </TouchableOpacity>
+              </PressableScale>
             </View>
           )}
         </View>
@@ -522,9 +529,14 @@ export default function ItemDetailScreen() {
 
       {/* Item Header */}
       <View style={styles.itemHeader}>
-        <View style={styles.badge}>
+        <LinearGradient
+          colors={GRADIENTS.brand}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.badge}
+        >
           <Text style={styles.badgeText}>{item.classification}</Text>
-        </View>
+        </LinearGradient>
         <Text style={styles.timestamp}>
           {format(new Date(item.created_at), 'MMM d, yyyy · h:mm a')}
         </Text>
@@ -539,7 +551,7 @@ export default function ItemDetailScreen() {
             value={editingTitle}
             onChangeText={setEditingTitle}
             placeholder="Item title"
-            placeholderTextColor="#999"
+            placeholderTextColor={INK[400]}
             multiline={false}
           />
         </View>
@@ -556,7 +568,7 @@ export default function ItemDetailScreen() {
             value={editingDescription}
             onChangeText={setEditingDescription}
             placeholder="Add a description..."
-            placeholderTextColor="#999"
+            placeholderTextColor={INK[400]}
             multiline
             numberOfLines={4}
             textAlignVertical="top"
@@ -570,37 +582,37 @@ export default function ItemDetailScreen() {
 
       {/* Audio Player */}
       {item.audio_url && (
-        <TouchableOpacity style={styles.audioPlayer} onPress={toggleAudio}>
+        <PressableScale haptic="light" style={styles.audioPlayer} onPress={toggleAudio}>
           <Ionicons
             name={isPlaying ? 'pause-circle' : 'play-circle'}
             size={48}
-            color="#007AFF"
+            color={BRAND[600]}
           />
           <Text style={styles.audioText}>
             {isPlaying ? 'Pause narration' : 'Play narration'}
           </Text>
-        </TouchableOpacity>
+        </PressableScale>
       )}
 
       {/* Metadata */}
       <View style={styles.metadata}>
         {item.duration && (
           <View style={styles.metadataItem}>
-            <Ionicons name="time-outline" size={20} color="#666" />
+            <Ionicons name="time-outline" size={20} color={INK[500]} />
             <Text style={styles.metadataText}>{item.duration} min</Text>
           </View>
         )}
 
         {item.url && (
-          <TouchableOpacity style={styles.metadataItem} onPress={openUrl}>
-            <Ionicons name="link-outline" size={20} color="#007AFF" />
+          <PressableScale haptic="light" style={styles.metadataItem} onPress={openUrl}>
+            <Ionicons name="link-outline" size={20} color={BRAND[600]} />
             <Text style={[styles.metadataText, styles.link]}>Open link</Text>
-          </TouchableOpacity>
+          </PressableScale>
         )}
 
         {item.place_name && (
           <View style={styles.metadataItem}>
-            <Ionicons name="location-outline" size={20} color="#666" />
+            <Ionicons name="location-outline" size={20} color={INK[500]} />
             <Text style={styles.metadataText}>{item.place_name}</Text>
           </View>
         )}
@@ -628,9 +640,9 @@ export default function ItemDetailScreen() {
               name={item.classification === 'fitness' ? 'fitness-outline' : 
                     item.classification === 'food' ? 'restaurant-outline' :
                     item.classification === 'academia' ? 'school-outline' :
-                    item.classification === 'career' ? 'briefcase-outline' : 'checkmark-circle-outline'} 
-              size={20} 
-              color="#666" 
+                    item.classification === 'career' ? 'briefcase-outline' : 'checkmark-circle-outline'}
+              size={20}
+              color={INK[500]}
             />
             <Text style={styles.sectionTitle}>
               {item.classification === 'fitness' ? 'Workout Steps' :
@@ -646,7 +658,7 @@ export default function ItemDetailScreen() {
           </View>
           <View style={styles.checklistItems}>
             {item.checklist.map((checklistItem) => (
-              <TouchableOpacity
+              <PressableScale
                 key={checklistItem.id}
                 style={styles.checklistItem}
                 onPress={async () => {
@@ -658,7 +670,6 @@ export default function ItemDetailScreen() {
                   await loadItem();
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }}
-                activeOpacity={0.7}
               >
                 <View style={[
                   styles.checklistCheckbox,
@@ -674,7 +685,7 @@ export default function ItemDetailScreen() {
                 ]}>
                   {checklistItem.text}
                 </Text>
-              </TouchableOpacity>
+              </PressableScale>
             ))}
           </View>
         </View>
@@ -683,7 +694,7 @@ export default function ItemDetailScreen() {
       {/* Notes Section */}
       <View style={styles.notesSection}>
         <View style={styles.notesHeader}>
-          <Ionicons name="document-text-outline" size={20} color="#666" />
+          <Ionicons name="document-text-outline" size={20} color={INK[500]} />
           <Text style={styles.sectionTitle}>Personal Notes</Text>
         </View>
         {isEditing ? (
@@ -692,7 +703,7 @@ export default function ItemDetailScreen() {
             value={editingNotes}
             onChangeText={setEditingNotes}
             placeholder="Add your personal notes, thoughts, or comments here..."
-            placeholderTextColor="#999"
+            placeholderTextColor={INK[400]}
             multiline
             numberOfLines={6}
             textAlignVertical="top"
@@ -713,7 +724,7 @@ export default function ItemDetailScreen() {
       {/* Scheduled Info */}
       {item.scheduled_date && (
         <View style={styles.scheduledSection}>
-          <Ionicons name="calendar" size={24} color="#007AFF" />
+          <Ionicons name="calendar" size={24} color={BRAND[600]} />
           <View style={styles.scheduledInfo}>
             <Text style={styles.scheduledLabel}>Scheduled</Text>
             <Text style={styles.scheduledDate}>
@@ -726,22 +737,28 @@ export default function ItemDetailScreen() {
 
       {/* Actions */}
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.actionButton} onPress={handleSchedulePress}>
-          <Ionicons name="calendar-outline" size={24} color="#007AFF" />
-          <Text style={[styles.actionText, styles.scheduleText]}>
-            {item.scheduled_date ? 'Reschedule' : 'Schedule'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.actionWrap}>
+          <PressableScale haptic="light" style={styles.actionButton} onPress={handleSchedulePress}>
+            <Ionicons name="calendar-outline" size={24} color={BRAND[600]} />
+            <Text style={[styles.actionText, styles.scheduleText]}>
+              {item.scheduled_date ? 'Reschedule' : 'Schedule'}
+            </Text>
+          </PressableScale>
+        </View>
 
-        <TouchableOpacity style={styles.actionButton} onPress={handleArchive}>
-          <Ionicons name="archive-outline" size={24} color="#666" />
-          <Text style={styles.actionText}>Archive</Text>
-        </TouchableOpacity>
+        <View style={styles.actionWrap}>
+          <PressableScale haptic="light" style={styles.actionButton} onPress={handleArchive}>
+            <Ionicons name="archive-outline" size={24} color={INK[500]} />
+            <Text style={styles.actionText}>Archive</Text>
+          </PressableScale>
+        </View>
 
-        <TouchableOpacity style={styles.actionButton} onPress={handleDelete}>
-          <Ionicons name="trash-outline" size={24} color="#ff3b30" />
-          <Text style={[styles.actionText, styles.deleteText]}>Delete</Text>
-        </TouchableOpacity>
+        <View style={styles.actionWrap}>
+          <PressableScale haptic="light" style={styles.actionButton} onPress={handleDelete}>
+            <Ionicons name="trash-outline" size={24} color="#ef4444" />
+            <Text style={[styles.actionText, styles.deleteText]}>Delete</Text>
+          </PressableScale>
+        </View>
       </View>
             </ScrollView>
 
@@ -756,65 +773,70 @@ export default function ItemDetailScreen() {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Schedule Item</Text>
-              <TouchableOpacity
+              <PressableScale
+                haptic="light"
                 onPress={() => setShowScheduleModal(false)}
                 style={styles.modalCloseButton}
               >
-                <Ionicons name="close" size={24} color="#333" />
-              </TouchableOpacity>
+                <Ionicons name="close" size={24} color={INK[700]} />
+              </PressableScale>
             </View>
 
             <View style={styles.modalBody}>
               {/* Date Picker */}
-              <TouchableOpacity
+              <PressableScale
+                haptic="light"
                 style={styles.pickerButton}
                 onPress={() => setShowDatePicker(true)}
               >
-                <Ionicons name="calendar-outline" size={24} color="#007AFF" />
+                <Ionicons name="calendar-outline" size={24} color={BRAND[600]} />
                 <View style={styles.pickerContent}>
                   <Text style={styles.pickerLabel}>Date</Text>
                   <Text style={styles.pickerValue}>
                     {format(scheduleDate, 'MMMM d, yyyy')}
                   </Text>
                 </View>
-              </TouchableOpacity>
+              </PressableScale>
 
               {/* Time Picker */}
-              <TouchableOpacity
+              <PressableScale
+                haptic="light"
                 style={styles.pickerButton}
                 onPress={() => setShowTimePicker(true)}
               >
-                <Ionicons name="time-outline" size={24} color="#007AFF" />
+                <Ionicons name="time-outline" size={24} color={BRAND[600]} />
                 <View style={styles.pickerContent}>
                   <Text style={styles.pickerLabel}>Time</Text>
                   <Text style={styles.pickerValue}>
                     {format(scheduleTime, 'h:mm a')}
                   </Text>
                 </View>
-              </TouchableOpacity>
+              </PressableScale>
 
               {/* Duration Picker */}
               <View style={styles.durationSection}>
                 <Text style={styles.pickerLabel}>Duration</Text>
                 <View style={styles.durationOptions}>
                   {durationOptions.map((duration) => (
-                    <TouchableOpacity
-                      key={duration}
-                      style={[
-                        styles.durationOption,
-                        scheduleDuration === duration && styles.durationOptionActive,
-                      ]}
-                      onPress={() => setScheduleDuration(duration)}
-                    >
-                      <Text
+                    <View key={duration} style={styles.durationWrap}>
+                      <PressableScale
+                        haptic="selection"
                         style={[
-                          styles.durationOptionText,
-                          scheduleDuration === duration && styles.durationOptionTextActive,
+                          styles.durationOption,
+                          scheduleDuration === duration && styles.durationOptionActive,
                         ]}
+                        onPress={() => setScheduleDuration(duration)}
                       >
-                        {duration} min
-                      </Text>
-                    </TouchableOpacity>
+                        <Text
+                          style={[
+                            styles.durationOptionText,
+                            scheduleDuration === duration && styles.durationOptionTextActive,
+                          ]}
+                        >
+                          {duration} min
+                        </Text>
+                      </PressableScale>
+                    </View>
                   ))}
                 </View>
               </View>
@@ -861,19 +883,28 @@ export default function ItemDetailScreen() {
               {/* Action Buttons */}
               <View style={styles.modalActions}>
                 {item.scheduled_date && (
-                  <TouchableOpacity
-                    style={[styles.modalButton, styles.removeButton]}
-                    onPress={handleRemoveSchedule}
-                  >
-                    <Text style={styles.removeButtonText}>Remove Schedule</Text>
-                  </TouchableOpacity>
+                  <View style={styles.modalButtonWrap}>
+                    <PressableScale
+                      haptic="light"
+                      style={[styles.modalButton, styles.removeButton]}
+                      onPress={handleRemoveSchedule}
+                    >
+                      <Text style={styles.removeButtonText}>Remove Schedule</Text>
+                    </PressableScale>
+                  </View>
                 )}
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.saveButton]}
-                  onPress={handleSaveSchedule}
-                >
-                  <Text style={styles.saveButtonText}>Save</Text>
-                </TouchableOpacity>
+                <View style={styles.modalButtonWrap}>
+                  <PressableScale haptic="light" onPress={handleSaveSchedule}>
+                    <LinearGradient
+                      colors={GRADIENTS.brand}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={[styles.modalButton, styles.saveButton]}
+                    >
+                      <Text style={styles.saveButtonText}>Save</Text>
+                    </LinearGradient>
+                  </PressableScale>
+                </View>
               </View>
             </View>
           </View>
@@ -889,18 +920,20 @@ export default function ItemDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: BRAND[50],
   },
   pickerContainer: {
     marginVertical: 16,
     backgroundColor: '#ffffff',
-    borderRadius: 12,
+    borderRadius: RADIUS.lg,
     padding: 8,
-    shadowColor: '#000',
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   header: {
     flexDirection: 'row',
@@ -909,19 +942,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
-  backButton: {
+  backButtonWrap: {
     zIndex: 1000,
     elevation: 1000, // Android
+  },
+  backButton: {
     padding: 8,
     marginLeft: -8,
   },
   headerTitle: {
     flex: 1,
     fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    color: INK[900],
     textAlign: 'center',
     marginLeft: -32, // Center by offsetting back button
   },
@@ -938,15 +974,15 @@ const styles = StyleSheet.create({
   editActionButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 8,
+    borderRadius: RADIUS.pill,
   },
   saveButtonHeader: {
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
     paddingHorizontal: 16,
   },
   editActionText: {
     fontSize: 16,
-    color: '#666',
+    color: INK[500],
     fontWeight: '600',
   },
   saveButtonTextHeader: {
@@ -964,21 +1000,23 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: BRAND[50],
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: BRAND[50],
   },
   errorText: {
     fontSize: 18,
-    color: '#999',
+    color: INK[500],
     marginTop: 16,
   },
   image: {
     width: '100%',
     height: 300,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: INK[100],
   },
   itemHeader: {
     flexDirection: 'row',
@@ -988,10 +1026,10 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   badge: {
-    backgroundColor: '#007AFF',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 16,
+    borderRadius: RADIUS.pill,
+    overflow: 'hidden',
   },
   badgeText: {
     color: '#fff',
@@ -1001,18 +1039,19 @@ const styles = StyleSheet.create({
   },
   timestamp: {
     fontSize: 12,
-    color: '#999',
+    color: INK[400],
   },
   title: {
     fontSize: 28,
-    fontWeight: '700',
-    color: '#333',
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    color: INK[900],
     paddingHorizontal: 16,
     marginBottom: 12,
   },
   description: {
     fontSize: 16,
-    color: '#666',
+    color: INK[500],
     lineHeight: 24,
     paddingHorizontal: 16,
     marginBottom: 16,
@@ -1024,12 +1063,19 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 16,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   audioText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#007AFF',
+    color: BRAND[600],
     marginLeft: 12,
   },
   metadata: {
@@ -1037,7 +1083,14 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 16,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
     gap: 12,
   },
   metadataItem: {
@@ -1046,11 +1099,11 @@ const styles = StyleSheet.create({
   },
   metadataText: {
     fontSize: 16,
-    color: '#666',
+    color: INK[600],
     marginLeft: 12,
   },
   link: {
-    color: '#007AFF',
+    color: BRAND[600],
   },
   tagsSection: {
     paddingHorizontal: 16,
@@ -1058,8 +1111,8 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+    fontWeight: '700',
+    color: INK[900],
     marginBottom: 12,
   },
   tags: {
@@ -1067,10 +1120,10 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   tag: {
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 16,
+    borderRadius: RADIUS.pill,
     marginRight: 8,
     marginBottom: 8,
   },
@@ -1086,7 +1139,14 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 16,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   scheduledInfo: {
     marginLeft: 12,
@@ -1095,12 +1155,12 @@ const styles = StyleSheet.create({
   scheduledLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#999',
+    color: INK[400],
     textTransform: 'uppercase',
   },
   scheduledDate: {
     fontSize: 16,
-    color: '#333',
+    color: INK[800],
     marginTop: 2,
   },
   actions: {
@@ -1109,36 +1169,45 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 12,
   },
-  actionButton: {
+  actionWrap: {
     flex: 1,
+  },
+  actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#fff',
     padding: 16,
-    borderRadius: 12,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   actionText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#666',
+    color: INK[500],
     marginLeft: 8,
   },
   deleteText: {
-    color: '#ff3b30',
+    color: '#ef4444',
   },
   scheduleText: {
-    color: '#007AFF',
+    color: BRAND[600],
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: RADIUS.xl,
+    borderTopRightRadius: RADIUS.xl,
     paddingBottom: 32,
     maxHeight: '80%',
   },
@@ -1148,12 +1217,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    color: INK[900],
   },
   modalCloseButton: {
     padding: 4,
@@ -1164,9 +1234,11 @@ const styles = StyleSheet.create({
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: BRAND[50],
     padding: 16,
-    borderRadius: 12,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
     marginBottom: 12,
   },
   pickerContent: {
@@ -1176,35 +1248,38 @@ const styles = StyleSheet.create({
   pickerLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#999',
+    color: INK[400],
     textTransform: 'uppercase',
     marginBottom: 4,
   },
   pickerValue: {
     fontSize: 16,
-    color: '#333',
+    fontWeight: '600',
+    color: INK[800],
   },
   modalActions: {
     flexDirection: 'row',
     gap: 12,
     marginTop: 8,
   },
-  modalButton: {
+  modalButtonWrap: {
     flex: 1,
+  },
+  modalButton: {
     padding: 16,
-    borderRadius: 12,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
   },
   saveButton: {
-    backgroundColor: '#007AFF',
+    overflow: 'hidden',
   },
   saveButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   removeButton: {
-    backgroundColor: '#ff3b30',
+    backgroundColor: '#ef4444',
   },
   removeButtonText: {
     color: '#fff',
@@ -1220,21 +1295,26 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 8,
   },
-  durationOption: {
+  durationWrap: {
     flex: 1,
+  },
+  durationOption: {
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: '#f5f5f5',
+    borderRadius: RADIUS.md,
+    backgroundColor: BRAND[50],
+    borderWidth: 1,
+    borderColor: HAIRLINE,
     alignItems: 'center',
   },
   durationOptionActive: {
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
+    borderColor: BRAND[600],
   },
   durationOptionText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#666',
+    color: INK[500],
   },
   durationOptionTextActive: {
     color: '#fff',
@@ -1246,18 +1326,18 @@ const styles = StyleSheet.create({
   editingLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
+    color: INK[500],
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   editingInput: {
     backgroundColor: '#fff',
-    borderRadius: 12,
+    borderRadius: RADIUS.md,
     padding: 16,
     fontSize: 16,
-    color: '#333',
+    color: INK[900],
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: HAIRLINE,
   },
   editingTextArea: {
     minHeight: 100,
@@ -1268,7 +1348,14 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 16,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   notesHeader: {
     flexDirection: 'row',
@@ -1277,13 +1364,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   notesInput: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
+    backgroundColor: INK[50],
+    borderRadius: RADIUS.sm,
     padding: 12,
     fontSize: 16,
-    color: '#333',
+    color: INK[900],
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: HAIRLINE,
     minHeight: 120,
   },
   notesContent: {
@@ -1291,12 +1378,12 @@ const styles = StyleSheet.create({
   },
   notesText: {
     fontSize: 16,
-    color: '#333',
+    color: INK[800],
     lineHeight: 24,
   },
   notesPlaceholder: {
     fontSize: 14,
-    color: '#999',
+    color: INK[400],
     fontStyle: 'italic',
   },
   checklistSection: {
@@ -1304,7 +1391,14 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 16,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   checklistHeader: {
     flexDirection: 'row',
@@ -1314,7 +1408,7 @@ const styles = StyleSheet.create({
   },
   checklistProgress: {
     fontSize: 14,
-    color: '#007AFF',
+    color: BRAND[600],
     fontWeight: '600',
     marginLeft: 'auto',
   },
@@ -1332,24 +1426,24 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 6,
     borderWidth: 2,
-    borderColor: '#ddd',
+    borderColor: INK[300],
     backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
   },
   checklistCheckboxCompleted: {
-    backgroundColor: '#4cd964',
-    borderColor: '#4cd964',
+    backgroundColor: BRAND[500],
+    borderColor: BRAND[500],
   },
   checklistText: {
     flex: 1,
     fontSize: 16,
-    color: '#333',
+    color: INK[800],
     lineHeight: 22,
   },
   checklistTextCompleted: {
     textDecorationLine: 'line-through',
-    color: '#999',
+    color: INK[400],
   },
 });
 

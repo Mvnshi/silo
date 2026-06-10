@@ -29,7 +29,32 @@ const KEYS = {
   EVENTS: '@silo:events',
   USER_ID: '@silo:userId',
   SCHEMA_VERSION: '@silo:schemaVersion',
+  ONBOARDED: '@silo:onboarded',
 };
+
+/* ---------------------------------------------------------------------------
+ * First-run onboarding flag
+ * ------------------------------------------------------------------------- */
+
+/** Whether the user has completed (or skipped) first-run onboarding. */
+export async function hasOnboarded(): Promise<boolean> {
+  try {
+    return (await AsyncStorage.getItem(KEYS.ONBOARDED)) === '1';
+  } catch {
+    // On a read error, err on the side of NOT re-showing onboarding to an
+    // existing user.
+    return true;
+  }
+}
+
+/** Mark first-run onboarding as completed (idempotent). */
+export async function setOnboarded(): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.ONBOARDED, '1');
+  } catch (error) {
+    console.warn('Failed to persist onboarding flag:', error);
+  }
+}
 
 /** Bump when the persisted Item/Stack shape changes; drives runMigrations(). */
 export const CURRENT_SCHEMA_VERSION = 2;

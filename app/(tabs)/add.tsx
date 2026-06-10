@@ -25,7 +25,6 @@ import {
   Text,
   StyleSheet,
   TextInput,
-  TouchableOpacity,
   ScrollView,
   Alert,
   ActivityIndicator,
@@ -42,6 +41,9 @@ import TagPicker from '@/components/TagPicker';
 import ChatBot from '@/components/ChatBot';
 import { analyzeImage, extractLink, suggestScheduleTime } from '@/lib/api';
 import OptionCard from '@/components/ui/OptionCard';
+import PressableScale from '@/components/ui/PressableScale';
+import Skeleton from '@/components/ui/Skeleton';
+import { BRAND, GRADIENTS, HAIRLINE, INK, RADIUS } from '@/lib/theme';
 import { addItem, updateItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { Classification, CLASSIFICATIONS, SocialPlatform } from '@/lib/types';
@@ -337,7 +339,7 @@ export default function AddScreen() {
     >
       {/* Gradient Background */}
       <LinearGradient
-        colors={['#EEF2FF', '#F5F3FF', '#FAF5FF']}
+        colors={[...GRADIENTS.page]}
         style={StyleSheet.absoluteFill}
       />
       <ChatBot onClose={() => {}} />
@@ -396,32 +398,40 @@ export default function AddScreen() {
           <View style={styles.form}>
             <View style={styles.inputGroup}>
               <View style={styles.urlHeader}>
-                <TouchableOpacity style={styles.backButton} onPress={() => resetForm()}>
-                  <Ionicons name="arrow-back" size={24} color="#333" />
-                </TouchableOpacity>
+                <PressableScale haptic="light" style={styles.backButton} onPress={() => resetForm()}>
+                  <Ionicons name="arrow-back" size={24} color={INK[700]} />
+                </PressableScale>
                 <Text style={styles.label}>URL</Text>
               </View>
               <TextInput
                 style={styles.input}
                 placeholder="https://example.com"
-                placeholderTextColor="#999"
+                placeholderTextColor={INK[400]}
                 value={url}
                 onChangeText={setUrl}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
               />
-              <TouchableOpacity
-                style={styles.analyzeButton}
+              <PressableScale
+                haptic="light"
                 onPress={handleAnalyzeUrl}
                 disabled={loading}
+                style={loading && styles.buttonDisabled}
               >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.analyzeButtonText}>Analyze with AI</Text>
-                )}
-              </TouchableOpacity>
+                <LinearGradient
+                  colors={[...GRADIENTS.brand]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.analyzeButton}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.analyzeButtonText}>Analyze with AI</Text>
+                  )}
+                </LinearGradient>
+              </PressableScale>
             </View>
           </View>
         )}
@@ -434,7 +444,7 @@ export default function AddScreen() {
               <TextInput
                 style={[styles.input, styles.textArea]}
                 placeholder="Write your note..."
-                placeholderTextColor="#999"
+                placeholderTextColor={INK[400]}
                 value={noteText}
                 onChangeText={text => {
                   setNoteText(text);
@@ -479,7 +489,7 @@ export default function AddScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Item title"
-                placeholderTextColor="#999"
+                placeholderTextColor={INK[400]}
                 value={title}
                 onChangeText={setTitle}
               />
@@ -490,7 +500,7 @@ export default function AddScreen() {
               <TextInput
                 style={[styles.input, styles.textArea]}
                 placeholder="Add a description..."
-                placeholderTextColor="#999"
+                placeholderTextColor={INK[400]}
                 value={description}
                 onChangeText={setDescription}
                 multiline
@@ -502,8 +512,9 @@ export default function AddScreen() {
               <Text style={styles.label}>Classification</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {CLASSIFICATIONS.map(type => (
-                  <TouchableOpacity
+                  <PressableScale
                     key={type}
+                    haptic="selection"
                     style={[
                       styles.classificationChip,
                       classification === type && styles.classificationChipActive,
@@ -518,7 +529,7 @@ export default function AddScreen() {
                     >
                       {type}
                     </Text>
-                  </TouchableOpacity>
+                  </PressableScale>
                 ))}
               </ScrollView>
             </View>
@@ -528,30 +539,42 @@ export default function AddScreen() {
               <TagPicker selectedTags={tags} onTagsChange={setTags} />
             </View>
 
-            <TouchableOpacity
-              style={styles.saveButton}
+            <PressableScale
+              haptic="light"
               onPress={handleSave}
               disabled={loading}
+              style={[styles.saveButtonWrap, loading && styles.buttonDisabled]}
             >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.saveButtonText}>Save Item</Text>
-              )}
-            </TouchableOpacity>
+              <LinearGradient
+                colors={[...GRADIENTS.brand]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.saveButton}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Save Item</Text>
+                )}
+              </LinearGradient>
+            </PressableScale>
 
-            <TouchableOpacity
+            <PressableScale
+              haptic="light"
               style={styles.cancelButton}
               onPress={() => setInputType(null)}
             >
               <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         )}
 
         {loading && !title && (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#007AFF" />
+            {/* Preview-shaped skeleton so the analysis wait feels like content arriving. */}
+            <Skeleton height={180} radius={RADIUS.lg} />
+            <Skeleton width="72%" height={18} style={styles.loadingLine} />
+            <Skeleton width="48%" height={14} style={styles.loadingLine} />
             <Text style={styles.loadingText}>Analyzing with AI...</Text>
           </View>
         )}
@@ -573,6 +596,16 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: 20,
+    backgroundColor: '#fff',
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    padding: 16,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   inputGroup: {
     gap: 8,
@@ -590,29 +623,33 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: INK[700],
   },
   input: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 12,
+    backgroundColor: INK[50],
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
     padding: 16,
     fontSize: 16,
-    color: '#333',
+    color: INK[900],
   },
   textArea: {
     minHeight: 100,
     textAlignVertical: 'top',
   },
   analyzeButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 12,
+    borderRadius: RADIUS.pill,
     padding: 16,
     alignItems: 'center',
   },
   analyzeButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
     color: '#fff',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
   classificationChip: {
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
@@ -621,32 +658,37 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginRight: 8,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    shadowColor: '#000',
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
   },
   classificationChipActive: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
+    backgroundColor: BRAND[600],
+    borderColor: BRAND[600],
   },
   classificationChipText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
+    color: INK[500],
     textTransform: 'capitalize',
   },
   classificationChipTextActive: {
     color: '#fff',
   },
+  // Layout wrapper around the gradient save pill (margin lives here so the
+  // press-scale transform doesn't shift it). The form is a column, so unlike
+  // reel.tsx's row variant this wrapper must NOT take flex: 1 — in an
+  // auto-height parent that would collapse the button to zero height.
+  saveButtonWrap: {
+    marginTop: 8,
+  },
   saveButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 12,
+    borderRadius: RADIUS.pill,
     padding: 16,
     alignItems: 'center',
-    marginTop: 8,
   },
   saveButtonText: {
     fontSize: 18,
@@ -660,15 +702,19 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#007AFF',
+    color: BRAND[600],
   },
   loadingContainer: {
     alignItems: 'center',
     paddingVertical: 40,
   },
+  // Skeleton text line under the preview-shaped block.
+  loadingLine: {
+    marginTop: 12,
+  },
   loadingText: {
     fontSize: 16,
-    color: '#666',
+    color: INK[500],
     marginTop: 16,
   },
   previewCard: {
@@ -702,11 +748,11 @@ const styles = StyleSheet.create({
   previewAuthor: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#333',
+    color: INK[700],
   },
   previewTitle: {
     fontSize: 13,
-    color: '#666',
+    color: INK[500],
   },
 });
 

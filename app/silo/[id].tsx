@@ -21,7 +21,6 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  TouchableOpacity,
   Alert,
   ActivityIndicator,
 } from 'react-native';
@@ -30,6 +29,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import ItemCard from '@/components/ItemCard';
+import PressableScale from '@/components/ui/PressableScale';
+import { BRAND, INK, HAIRLINE } from '@/lib/theme';
 import { Stack, Item } from '@/lib/types';
 import { getStackById, getItems, updateStack, deleteStack, updateItem } from '@/lib/storage';
 import { celebrationHaptic } from '@/lib/haptics';
@@ -178,7 +179,7 @@ export default function StackDetailScreen() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color={BRAND[600]} />
       </View>
     );
   }
@@ -186,7 +187,7 @@ export default function StackDetailScreen() {
   if (!stack) {
     return (
       <View style={styles.errorContainer}>
-        <Ionicons name="alert-circle-outline" size={64} color="#ccc" />
+        <Ionicons name="alert-circle-outline" size={64} color={INK[300]} />
         <Text style={styles.errorText}>Stack not found</Text>
       </View>
     );
@@ -195,31 +196,36 @@ export default function StackDetailScreen() {
   return (
     <View style={styles.container}>
       {/* Stack Header */}
-      <View style={[styles.header, { backgroundColor: stack.color, paddingTop: insets.top + 12 }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <View style={styles.headerContent}>
           <Text style={styles.stackName}>{stack.name}</Text>
           {stack.description && (
             <Text style={styles.stackDescription}>{stack.description}</Text>
           )}
-          <Text style={styles.itemCount}>
-            {items.length} {items.length === 1 ? 'item' : 'items'}
-          </Text>
+          <View style={styles.countRow}>
+            <View style={[styles.stackDot, { backgroundColor: stack.color }]} />
+            <Text style={styles.itemCount}>
+              {items.length} {items.length === 1 ? 'item' : 'items'}
+            </Text>
+          </View>
         </View>
 
         <View style={styles.headerActions}>
-          <TouchableOpacity
+          <PressableScale
+            haptic="light"
             style={styles.headerButton}
             onPress={handleEditStack}
           >
-            <Ionicons name="pencil" size={20} color="#fff" />
-          </TouchableOpacity>
+            <Ionicons name="pencil" size={18} color={BRAND[600]} />
+          </PressableScale>
 
-          <TouchableOpacity
+          <PressableScale
+            haptic="light"
             style={styles.headerButton}
             onPress={handleDeleteStack}
           >
-            <Ionicons name="trash" size={20} color="#fff" />
-          </TouchableOpacity>
+            <Ionicons name="trash" size={18} color="#ef4444" />
+          </PressableScale>
         </View>
       </View>
 
@@ -242,7 +248,7 @@ export default function StackDetailScreen() {
         contentInsetAdjustmentBehavior="automatic"
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="folder-open-outline" size={64} color="#ccc" />
+            <Ionicons name="folder-open-outline" size={64} color={INK[300]} />
             <Text style={styles.emptyText}>No items in this stack</Text>
             <Text style={styles.emptySubtext}>
               Add items from the feed or add screen
@@ -257,21 +263,23 @@ export default function StackDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: BRAND[50],
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: BRAND[50],
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: BRAND[50],
   },
   errorText: {
     fontSize: 18,
-    color: '#999',
+    color: INK[500],
     marginTop: 16,
   },
   header: {
@@ -283,18 +291,29 @@ const styles = StyleSheet.create({
   stackName: {
     fontSize: 32,
     fontWeight: '800',
-    color: '#fff',
+    letterSpacing: -0.5,
+    color: INK[900],
     marginBottom: 8,
   },
   stackDescription: {
     fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: INK[500],
     marginBottom: 8,
+  },
+  countRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stackDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
   },
   itemCount: {
     fontSize: 14,
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: INK[400],
   },
   headerActions: {
     flexDirection: 'row',
@@ -304,9 +323,16 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: HAIRLINE,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   listContent: {
     padding: 16,
@@ -319,12 +345,12 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#666',
+    color: INK[700],
     marginTop: 16,
   },
   emptySubtext: {
     fontSize: 14,
-    color: '#999',
+    color: INK[400],
     marginTop: 8,
     textAlign: 'center',
   },

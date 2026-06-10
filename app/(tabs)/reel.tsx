@@ -34,10 +34,14 @@ import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
 import StreamCard from '@/components/StreamCard';
 import EmptyState from '@/components/ui/EmptyState';
+import GlassCard from '@/components/ui/GlassCard';
+import PressableScale from '@/components/ui/PressableScale';
+import { BRAND, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
 import { Item, Classification } from '@/lib/types';
 import { getItems, updateItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
@@ -327,30 +331,38 @@ export default function ReelScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.categoryScroll}
         >
-          {categories.map((cat) => (
-            <TouchableOpacity
-              key={cat.value}
-              style={[
-                styles.categoryChip,
-                selectedCategory === cat.value && styles.categoryChipActive,
-              ]}
-              onPress={() => handleCategorySelect(cat.value)}
-            >
-              <Ionicons 
-                name={cat.icon} 
-                size={16} 
-                color={selectedCategory === cat.value ? '#fff' : '#999'} 
-              />
-              <Text
-                style={[
-                  styles.categoryChipText,
-                  selectedCategory === cat.value && styles.categoryChipTextActive,
-                ]}
+          {categories.map((cat) => {
+            const active = selectedCategory === cat.value;
+            return (
+              <PressableScale
+                key={cat.value}
+                haptic="selection"
+                onPress={() => handleCategorySelect(cat.value)}
               >
-                {cat.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                {/* Dark glass pill; active swaps the interior for a brand gradient fill. */}
+                <GlassCard tint="dark" intensity={35} radius={RADIUS.pill}>
+                  {active ? (
+                    <LinearGradient
+                      colors={GRADIENTS.brand}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.categoryChip}
+                    >
+                      <Ionicons name={cat.icon} size={16} color="#fff" />
+                      <Text style={[styles.categoryChipText, styles.categoryChipTextActive]}>
+                        {cat.label}
+                      </Text>
+                    </LinearGradient>
+                  ) : (
+                    <View style={styles.categoryChip}>
+                      <Ionicons name={cat.icon} size={16} color="rgba(255,255,255,0.75)" />
+                      <Text style={styles.categoryChipText}>{cat.label}</Text>
+                    </View>
+                  )}
+                </GlassCard>
+              </PressableScale>
+            );
+          })}
         </ScrollView>
       </View>
 
@@ -388,7 +400,7 @@ export default function ReelScreen() {
                 }}
                 style={styles.modalCloseButton}
               >
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={INK[900]} />
               </TouchableOpacity>
             </View>
 
@@ -414,7 +426,7 @@ export default function ReelScreen() {
                   setShowDatePicker(true);
                 }}
               >
-                <Ionicons name="calendar-outline" size={24} color="#007AFF" />
+                <Ionicons name="calendar-outline" size={24} color={BRAND[600]} />
                 <View style={styles.pickerContent}>
                   <Text style={styles.pickerLabel}>Date</Text>
                   <Text style={styles.pickerValue}>
@@ -431,7 +443,7 @@ export default function ReelScreen() {
                   setShowTimePicker(true);
                 }}
               >
-                <Ionicons name="time-outline" size={24} color="#007AFF" />
+                <Ionicons name="time-outline" size={24} color={BRAND[600]} />
                 <View style={styles.pickerContent}>
                   <Text style={styles.pickerLabel}>Time</Text>
                   <Text style={styles.pickerValue}>
@@ -520,12 +532,19 @@ export default function ReelScreen() {
                     <Text style={styles.removeButtonText}>Remove Schedule</Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.saveButton]}
-                  onPress={handleSaveSchedule}
-                >
-                  <Text style={styles.saveButtonText}>Schedule</Text>
-                </TouchableOpacity>
+                {/* Flex wrapper: PressableScale's outer Pressable can't take flex itself. */}
+                <View style={styles.saveButtonWrap}>
+                  <PressableScale haptic="light" onPress={handleSaveSchedule}>
+                    <LinearGradient
+                      colors={GRADIENTS.brand}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.saveButton}
+                    >
+                      <Text style={styles.saveButtonText}>Schedule</Text>
+                    </LinearGradient>
+                  </PressableScale>
+                </View>
               </View>
             </View>
           </TouchableOpacity>
@@ -561,42 +580,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   categoryChip: {
+    // Glass surface + radius come from the GlassCard wrapper.
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginRight: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     gap: 6,
-  },
-  categoryChipActive: {
-    backgroundColor: '#007AFF',
   },
   categoryChipText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#999',
+    color: 'rgba(255,255,255,0.75)',
   },
   categoryChipTextActive: {
     color: '#fff',
-  },
-  emptyContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-    marginTop: 16,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 8,
   },
   modalOverlay: {
     flex: 1,
@@ -607,7 +604,7 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#fff',
-    borderRadius: 20,
+    borderRadius: RADIUS.xl,
     width: '100%',
     maxWidth: 400,
     maxHeight: '80%',
@@ -623,31 +620,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
   modalTitle: {
     fontSize: 22,
-    fontWeight: '700',
-    color: '#333',
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    color: INK[900],
   },
   modalCloseButton: {
     padding: 4,
   },
   modalItemPreview: {
     padding: 16,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: INK[50],
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
   modalItemTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: INK[900],
     marginBottom: 4,
   },
   modalItemDescription: {
     fontSize: 14,
-    color: '#666',
+    color: INK[500],
   },
   modalBody: {
     padding: 20,
@@ -655,7 +653,7 @@ const styles = StyleSheet.create({
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: INK[100],
     padding: 16,
     borderRadius: 12,
     marginBottom: 12,
@@ -666,13 +664,13 @@ const styles = StyleSheet.create({
   },
   pickerLabel: {
     fontSize: 12,
-    color: '#666',
+    color: INK[500],
     marginBottom: 4,
     fontWeight: '600',
   },
   pickerValue: {
     fontSize: 16,
-    color: '#333',
+    color: INK[900],
     fontWeight: '600',
   },
   pickerContainer: {
@@ -700,16 +698,16 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: INK[100],
     alignItems: 'center',
   },
   durationOptionActive: {
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
   },
   durationOptionText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
+    color: INK[500],
   },
   durationOptionTextActive: {
     color: '#fff',
@@ -722,19 +720,24 @@ const styles = StyleSheet.create({
   modalButton: {
     flex: 1,
     paddingVertical: 16,
-    borderRadius: 12,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
   },
   removeButton: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: INK[100],
   },
   removeButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#ff3b30',
   },
+  saveButtonWrap: {
+    flex: 1,
+  },
   saveButton: {
-    backgroundColor: '#007AFF',
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: 'center',
   },
   saveButtonText: {
     fontSize: 16,

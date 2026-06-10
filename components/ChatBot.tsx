@@ -25,6 +25,7 @@ import { ragQuery } from '@/lib/api';
 import { getUserId, getItems , addItem } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { createItem } from '@/lib/items';
+import { BRAND, INK, HAIRLINE } from '@/lib/theme';
 import { format } from 'date-fns';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -267,7 +268,7 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.avatar}>
-                <Ionicons name="sparkles" size={24} color="#007AFF" />
+                <Ionicons name="sparkles" size={24} color={BRAND[600]} />
               </View>
               <View>
                 <Text style={styles.headerTitle}>AI Assistant</Text>
@@ -282,7 +283,7 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
                 onClose();
               }}
             >
-              <Ionicons name="close" size={24} color="#666" />
+              <Ionicons name="close" size={24} color={INK[500]} />
             </TouchableOpacity>
           </View>
 
@@ -318,7 +319,7 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
                 {message.suggestedEvent && (
                   <View style={styles.eventSuggestion}>
                     <View style={styles.eventSuggestionHeader}>
-                      <Ionicons name="calendar" size={20} color="#007AFF" />
+                      <Ionicons name="calendar" size={20} color={BRAND[600]} />
                       <Text style={styles.eventSuggestionTitle}>Suggested Event</Text>
                     </View>
                     <Text style={styles.eventSuggestionName}>{message.suggestedEvent.title}</Text>
@@ -340,7 +341,7 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
 
             {loading && (
               <View style={styles.botMessage}>
-                <ActivityIndicator size="small" color="#007AFF" />
+                <ActivityIndicator size="small" color={BRAND[600]} />
               </View>
             )}
           </ScrollView>
@@ -350,7 +351,7 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
             <TextInput
               style={styles.input}
               placeholder="Ask about your saved content..."
-              placeholderTextColor="#999"
+              placeholderTextColor={INK[400]}
               value={inputText}
               onChangeText={setInputText}
               multiline
@@ -366,7 +367,7 @@ export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
               <Ionicons
                 name="send"
                 size={20}
-                color={inputText.trim() && !loading ? '#fff' : '#999'}
+                color={inputText.trim() && !loading ? '#fff' : INK[400]}
               />
             </TouchableOpacity>
           </View>
@@ -398,10 +399,10 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: BRAND[600],
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -434,7 +435,7 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -445,18 +446,18 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#E3F2FD',
+    backgroundColor: BRAND[100],
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#333',
+    color: INK[900],
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#666',
+    color: INK[500],
     marginTop: 2,
   },
   closeButton: {
@@ -479,11 +480,11 @@ const styles = StyleSheet.create({
   },
   userMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
   },
   botMessage: {
     alignSelf: 'flex-start',
-    backgroundColor: '#f0f0f0',
+    backgroundColor: INK[100],
   },
   messageText: {
     fontSize: 16,
@@ -493,16 +494,16 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   botMessageText: {
-    color: '#333',
+    color: INK[800],
   },
   eventSuggestion: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: BRAND[50],
     borderRadius: 12,
     padding: 12,
     marginTop: 6,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#BBDEFB',
+    borderColor: BRAND[200],
   },
   eventSuggestionHeader: {
     flexDirection: 'row',
@@ -513,23 +514,23 @@ const styles = StyleSheet.create({
   eventSuggestionTitle: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#007AFF',
+    color: BRAND[600],
     textTransform: 'uppercase',
   },
   eventSuggestionName: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#333',
+    color: INK[900],
     marginBottom: 4,
   },
   eventSuggestionDetails: {
     fontSize: 14,
-    color: '#666',
+    color: INK[500],
     marginBottom: 8,
   },
   eventSuggestionDesc: {
     fontSize: 14,
-    color: '#666',
+    color: INK[500],
     marginBottom: 12,
     lineHeight: 20,
   },
@@ -537,7 +538,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
@@ -554,30 +555,30 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingBottom: 2, // Reduced padding
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
+    borderTopColor: HAIRLINE,
     backgroundColor: '#fff',
     gap: 8,
   },
   input: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: INK[100],
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#333',
+    color: INK[800],
     maxHeight: 100,
   },
   sendButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
     justifyContent: 'center',
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    backgroundColor: '#e0e0e0',
+    backgroundColor: INK[200],
   },
 });
 

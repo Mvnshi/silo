@@ -32,7 +32,10 @@ import {
   TextInput,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+// Platform-default map provider: Apple Maps on iOS (no SDK pod, no API key,
+// native look). Forcing PROVIDER_GOOGLE without the Google Maps SDK renders a
+// blank map + red error on iOS; revisit only if Android ships (it needs a key).
+import MapView, { Marker } from 'react-native-maps';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -47,6 +50,8 @@ import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import ItemCard from '@/components/ItemCard';
+import PressableScale from '@/components/ui/PressableScale';
+import { BRAND, ACCENT, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
 import { Item } from '@/lib/types';
 import { getItems, updateItem, addItem } from '@/lib/storage';
 import { createItem } from '@/lib/items';
@@ -95,9 +100,12 @@ export default function CalendarScreen() {
   });
 
   /**
-   * Get current location
+   * Get current location — requested ONLY when the user opens the map view.
+   * An unprompted cold-start permission dialog is hostile UX (and an App
+   * Review flag); asking in context ("you opened the map") reads as natural.
    */
   useEffect(() => {
+    if (viewMode !== 'map') return;
     async function getLocation() {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
@@ -123,7 +131,7 @@ export default function CalendarScreen() {
       }
     }
     getLocation();
-  }, []);
+  }, [viewMode]);
 
   /**
    * Load all items from storage and calendar events
@@ -439,86 +447,87 @@ export default function CalendarScreen() {
     <View style={styles.container}>
       {/* Gradient Background */}
       <LinearGradient
-        colors={['#B4E8F5', '#D7F5FF', '#F0F9FF']}
+        colors={GRADIENTS.page}
         style={StyleSheet.absoluteFill}
       />
       {/* Header with Segmented Control */}
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <View style={styles.segmentedControl}>
-          <TouchableOpacity
-            style={[
-              styles.segment,
-              viewMode === 'calendar' && styles.segmentActive,
-            ]}
-            onPress={() => {
-              Haptics.selectionAsync();
-              setViewMode('calendar');
-            }}
-          >
-            <Ionicons
-              name="calendar-outline"
-              size={18}
-              color={viewMode === 'calendar' ? '#fff' : '#666'}
-            />
-            <Text
+          {/* PressableScale fires the selection haptic on press-in */}
+          <View style={styles.segmentWrap}>
+            <PressableScale
+              haptic="selection"
               style={[
-                styles.segmentText,
-                viewMode === 'calendar' && styles.segmentTextActive,
+                styles.segment,
+                viewMode === 'calendar' && styles.segmentActive,
               ]}
+              onPress={() => setViewMode('calendar')}
             >
-              Calendar
-            </Text>
-          </TouchableOpacity>
+              <Ionicons
+                name="calendar-outline"
+                size={18}
+                color={viewMode === 'calendar' ? '#fff' : INK[500]}
+              />
+              <Text
+                style={[
+                  styles.segmentText,
+                  viewMode === 'calendar' && styles.segmentTextActive,
+                ]}
+              >
+                Calendar
+              </Text>
+            </PressableScale>
+          </View>
 
-          <TouchableOpacity
-            style={[
-              styles.segment,
-              viewMode === 'map' && styles.segmentActive,
-            ]}
-            onPress={() => {
-              Haptics.selectionAsync();
-              setViewMode('map');
-            }}
-          >
-            <Ionicons
-              name="map-outline"
-              size={18}
-              color={viewMode === 'map' ? '#fff' : '#666'}
-            />
-            <Text
+          <View style={styles.segmentWrap}>
+            <PressableScale
+              haptic="selection"
               style={[
-                styles.segmentText,
-                viewMode === 'map' && styles.segmentTextActive,
+                styles.segment,
+                viewMode === 'map' && styles.segmentActive,
               ]}
+              onPress={() => setViewMode('map')}
             >
-              Map
-            </Text>
-          </TouchableOpacity>
+              <Ionicons
+                name="map-outline"
+                size={18}
+                color={viewMode === 'map' ? '#fff' : INK[500]}
+              />
+              <Text
+                style={[
+                  styles.segmentText,
+                  viewMode === 'map' && styles.segmentTextActive,
+                ]}
+              >
+                Map
+              </Text>
+            </PressableScale>
+          </View>
 
-          <TouchableOpacity
-            style={[
-              styles.segment,
-              viewMode === 'bucketlist' && styles.segmentActive,
-            ]}
-            onPress={() => {
-              Haptics.selectionAsync();
-              setViewMode('bucketlist');
-            }}
-          >
-            <Ionicons
-              name="list-outline"
-              size={18}
-              color={viewMode === 'bucketlist' ? '#fff' : '#666'}
-            />
-            <Text
+          <View style={styles.segmentWrap}>
+            <PressableScale
+              haptic="selection"
               style={[
-                styles.segmentText,
-                viewMode === 'bucketlist' && styles.segmentTextActive,
+                styles.segment,
+                viewMode === 'bucketlist' && styles.segmentActive,
               ]}
+              onPress={() => setViewMode('bucketlist')}
             >
-              Bucket List
-            </Text>
-          </TouchableOpacity>
+              <Ionicons
+                name="list-outline"
+                size={18}
+                color={viewMode === 'bucketlist' ? '#fff' : INK[500]}
+              />
+              <Text
+                style={[
+                  styles.segmentText,
+                  viewMode === 'bucketlist' && styles.segmentTextActive,
+                ]}
+              >
+                Bucket List
+              </Text>
+            </PressableScale>
+          </View>
         </View>
       </View>
 
@@ -578,7 +587,7 @@ export default function CalendarScreen() {
                   }}
                   style={styles.dayNavButton}
                 >
-                  <Ionicons name="chevron-back" size={24} color="#333" />
+                  <Ionicons name="chevron-back" size={24} color={INK[700]} />
                 </TouchableOpacity>
                 <View style={styles.dayTitleContainer}>
                   <Text style={styles.dayTitle}>
@@ -598,7 +607,7 @@ export default function CalendarScreen() {
                   }}
                   style={styles.dayNavButton}
                 >
-                  <Ionicons name="chevron-forward" size={24} color="#333" />
+                  <Ionicons name="chevron-forward" size={24} color={INK[700]} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -615,7 +624,7 @@ export default function CalendarScreen() {
                   }}
                   style={styles.weekNavButton}
                 >
-                  <Ionicons name="chevron-back" size={24} color="#333" />
+                  <Ionicons name="chevron-back" size={24} color={INK[700]} />
                 </TouchableOpacity>
                 <View style={styles.weekTitleContainer}>
                   <Text style={styles.weekTitle}>
@@ -640,7 +649,7 @@ export default function CalendarScreen() {
                   }}
                   style={styles.weekNavButton}
                 >
-                  <Ionicons name="chevron-forward" size={24} color="#333" />
+                  <Ionicons name="chevron-forward" size={24} color={INK[700]} />
                 </TouchableOpacity>
               </View>
 
@@ -691,15 +700,23 @@ export default function CalendarScreen() {
               <Text style={styles.timelineTitle}>
                 {format(selectedDate, 'EEEE, MMMM d')}
               </Text>
-              <TouchableOpacity
+              <PressableScale
+                haptic="light"
                 style={styles.addButton}
                 onPress={() => {
                   setNewEventDate(selectedDate);
                   setShowAddEventModal(true);
                 }}
               >
-                <Ionicons name="add-circle" size={24} color="#007AFF" />
-              </TouchableOpacity>
+                <LinearGradient
+                  colors={GRADIENTS.brand}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.addButtonGradient}
+                >
+                  <Ionicons name="add" size={20} color="#fff" />
+                </LinearGradient>
+              </PressableScale>
             </View>
 
             {(() => {
@@ -723,7 +740,7 @@ export default function CalendarScreen() {
                       if ('startDate' in item) {
                         const event = item as CalendarEvent;
                         return (
-                          <TouchableOpacity
+                          <PressableScale
                             style={styles.eventCard}
                             onPress={() => {
                               // If it's a Silo event (starts with "Review:"), try to find the matching item
@@ -794,10 +811,10 @@ export default function CalendarScreen() {
                             }}
                           >
                             <View style={styles.eventCardIcon}>
-                              <Ionicons 
-                                name={event.isSiloEvent ? "checkmark-circle" : "calendar-outline"} 
-                                size={20} 
-                                color={event.isSiloEvent ? "#4CAF50" : "#007AFF"} 
+                              <Ionicons
+                                name={event.isSiloEvent ? "checkmark-circle" : "calendar-outline"}
+                                size={20}
+                                color={event.isSiloEvent ? "#22c55e" : BRAND[600]}
                               />
                             </View>
                             <View style={styles.eventCardContent}>
@@ -809,17 +826,17 @@ export default function CalendarScreen() {
                                 {event.isSiloEvent && ' • Silo'}
                               </Text>
                             </View>
-                            <Ionicons name="chevron-forward" size={20} color="#999" />
-                          </TouchableOpacity>
+                            <Ionicons name="chevron-forward" size={20} color={INK[300]} />
+                          </PressableScale>
                         );
                       } else {
                         return (
-                          <TouchableOpacity
+                          <PressableScale
                             style={styles.eventCard}
                             onPress={() => handleItemPress((item as Item).id)}
                           >
                             <View style={styles.eventCardIcon}>
-                              <Ionicons name="time" size={20} color="#007AFF" />
+                              <Ionicons name="time" size={20} color={BRAND[600]} />
                             </View>
                             <View style={styles.eventCardContent}>
                               <Text style={styles.eventCardTitle}>
@@ -829,8 +846,8 @@ export default function CalendarScreen() {
                                 {(item as Item).scheduled_time} ({(item as Item).duration || 15} min)
                               </Text>
                             </View>
-                            <Ionicons name="chevron-forward" size={20} color="#999" />
-                          </TouchableOpacity>
+                            <Ionicons name="chevron-forward" size={20} color={INK[300]} />
+                          </PressableScale>
                         );
                       }
                     }}
@@ -850,7 +867,7 @@ export default function CalendarScreen() {
               } else {
                 return (
                   <View style={styles.emptyEventsContainer}>
-                    <Ionicons name="calendar-outline" size={48} color="#ccc" />
+                    <Ionicons name="calendar-outline" size={48} color={INK[300]} />
                     <Text style={styles.emptyEventsText}>No events scheduled</Text>
                     <Text style={styles.emptyEventsSubtext}>
                       Tap the + button to add an event
@@ -868,7 +885,6 @@ export default function CalendarScreen() {
         <View style={styles.mapContainer}>
           <MapView
             style={styles.map}
-            provider={PROVIDER_GOOGLE}
             initialRegion={mapRegion}
             onRegionChangeComplete={(region) => {
               // Only update if user manually changed region (not on initial load)
@@ -887,10 +903,10 @@ export default function CalendarScreen() {
               <Marker
                 coordinate={currentLocation}
                 title="Your Location"
-                pinColor="#007AFF"
+                pinColor={BRAND[600]}
               >
                 <View style={styles.currentLocationMarker}>
-                  <Ionicons name="location" size={32} color="#007AFF" />
+                  <Ionicons name="location" size={32} color={BRAND[600]} />
                 </View>
               </Marker>
             )}
@@ -908,7 +924,7 @@ export default function CalendarScreen() {
                 onPress={() => handleItemPress(item.id)}
               >
                 <View style={styles.markerContainer}>
-                  <Ionicons name="location" size={24} color="#FF6B6B" />
+                  <Ionicons name="location" size={24} color={ACCENT[500]} />
                 </View>
               </Marker>
             ))}
@@ -927,7 +943,7 @@ export default function CalendarScreen() {
                     style={styles.mapItemCard}
                     onPress={() => handleItemPress(item.id)}
                   >
-                    <Ionicons name="location" size={20} color="#007AFF" />
+                    <Ionicons name="location" size={20} color={BRAND[600]} />
                     <View style={styles.mapItemContent}>
                       <Text style={styles.mapItemTitle} numberOfLines={1}>
                         {item.title}
@@ -936,7 +952,7 @@ export default function CalendarScreen() {
                         {item.place_name || item.place_address || 'Location'}
                       </Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={20} color="#999" />
+                    <Ionicons name="chevron-forward" size={20} color={INK[300]} />
                   </TouchableOpacity>
                 )}
                 keyExtractor={item => item.id}
@@ -963,7 +979,7 @@ export default function CalendarScreen() {
 
           {bucketlistItems.length === 0 ? (
             <View style={styles.emptyContainer}>
-              <Ionicons name="list-outline" size={64} color="#ccc" />
+              <Ionicons name="list-outline" size={64} color={INK[300]} />
               <Text style={styles.emptyText}>No bucket list items yet</Text>
               <Text style={styles.emptySubtext}>
                 Hold down on any card to add it to your bucket list
@@ -981,7 +997,7 @@ export default function CalendarScreen() {
                     <Ionicons
                       name={item.bucketlist_completed ? 'checkbox' : 'checkbox-outline'}
                       size={24}
-                      color={item.bucketlist_completed ? '#4cd964' : '#999'}
+                      color={item.bucketlist_completed ? '#22c55e' : INK[300]}
                     />
                   </TouchableOpacity>
                   <View style={styles.bucketlistItemContent}>
@@ -1019,7 +1035,7 @@ export default function CalendarScreen() {
                 onPress={() => setShowAddEventModal(false)}
                 style={styles.modalCloseButton}
               >
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={INK[700]} />
               </TouchableOpacity>
             </View>
 
@@ -1029,14 +1045,14 @@ export default function CalendarScreen() {
                 placeholder="Event title"
                 value={newEventTitle}
                 onChangeText={setNewEventTitle}
-                placeholderTextColor="#999"
+                placeholderTextColor={INK[400]}
               />
 
               <TouchableOpacity
                 style={styles.pickerButton}
                 onPress={() => setShowDatePicker(true)}
               >
-                <Ionicons name="calendar-outline" size={24} color="#007AFF" />
+                <Ionicons name="calendar-outline" size={24} color={BRAND[600]} />
                 <View style={styles.pickerContent}>
                   <Text style={styles.pickerLabel}>Date</Text>
                   <Text style={styles.pickerValue}>
@@ -1049,7 +1065,7 @@ export default function CalendarScreen() {
                 style={styles.pickerButton}
                 onPress={() => setShowTimePicker(true)}
               >
-                <Ionicons name="time-outline" size={24} color="#007AFF" />
+                <Ionicons name="time-outline" size={24} color={BRAND[600]} />
                 <View style={styles.pickerContent}>
                   <Text style={styles.pickerLabel}>Time</Text>
                   <Text style={styles.pickerValue}>
@@ -1120,12 +1136,20 @@ export default function CalendarScreen() {
                 </View>
               )}
 
-              <TouchableOpacity
+              <PressableScale
+                haptic="light"
                 style={styles.saveButton}
                 onPress={handleCreateEvent}
               >
-                <Text style={styles.saveButtonText}>Create Event</Text>
-              </TouchableOpacity>
+                <LinearGradient
+                  colors={GRADIENTS.brand}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.saveButtonGradient}
+                >
+                  <Text style={styles.saveButtonText}>Create Event</Text>
+                </LinearGradient>
+              </PressableScale>
             </View>
           </View>
         </View>
@@ -1154,7 +1178,7 @@ const styles = StyleSheet.create({
   pickerDoneButton: {
     marginTop: 8,
     paddingVertical: 12,
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
     borderRadius: 8,
     alignItems: 'center',
   },
@@ -1165,43 +1189,45 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: INK[50],
   },
   header: {
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     paddingBottom: 12,
     paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
   },
   segmentedControl: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    borderRadius: RADIUS.pill,
     padding: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
     elevation: 3,
   },
-  segment: {
+  segmentWrap: {
     flex: 1,
+  },
+  segment: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingHorizontal: 12,
+    borderRadius: RADIUS.pill,
     gap: 6,
   },
   segmentActive: {
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
   },
   segmentText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
+    color: INK[500],
   },
   segmentTextActive: {
     color: '#fff',
@@ -1211,40 +1237,44 @@ const styles = StyleSheet.create({
   },
   viewModeToggle: {
     flexDirection: 'row',
-    backgroundColor: '#f0f0f0',
-    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    borderRadius: RADIUS.pill,
     padding: 4,
     margin: 12,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
   },
   viewModeButton: {
     flex: 1,
     paddingVertical: 8,
     paddingHorizontal: 16,
-    borderRadius: 8,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
   viewModeButtonActive: {
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
   },
   viewModeText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
+    color: INK[500],
   },
   viewModeTextActive: {
     color: '#fff',
   },
   dayViewContainer: {
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    borderRadius: RADIUS.lg,
     margin: 12,
     marginTop: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
     elevation: 3,
   },
   dayHeader: {
@@ -1253,7 +1283,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
   dayNavButton: {
     padding: 8,
@@ -1265,14 +1295,14 @@ const styles = StyleSheet.create({
   dayTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#333',
+    color: INK[900],
     marginBottom: 4,
   },
   todayButton: {
     paddingHorizontal: 12,
     paddingVertical: 4,
-    backgroundColor: '#007AFF',
-    borderRadius: 12,
+    backgroundColor: BRAND[600],
+    borderRadius: RADIUS.pill,
   },
   todayButtonText: {
     fontSize: 12,
@@ -1280,14 +1310,16 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   weekViewContainer: {
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    borderRadius: RADIUS.lg,
     margin: 12,
     marginTop: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
     elevation: 3,
   },
   weekViewHeader: {
@@ -1296,7 +1328,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
   weekNavButton: {
     padding: 8,
@@ -1308,7 +1340,7 @@ const styles = StyleSheet.create({
   weekTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#333',
+    color: INK[900],
     marginBottom: 4,
   },
   weekDaysContainer: {
@@ -1325,24 +1357,24 @@ const styles = StyleSheet.create({
     marginHorizontal: 2,
   },
   weekDayCellToday: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: BRAND[100],
   },
   weekDayCellSelected: {
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
   },
   weekDayName: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#666',
+    color: INK[400],
     marginBottom: 4,
   },
   weekDayNumber: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
+    color: INK[900],
   },
   weekDayNumberToday: {
-    color: '#007AFF',
+    color: BRAND[700],
     fontWeight: '700',
   },
   weekDayNumberSelected: {
@@ -1354,11 +1386,11 @@ const styles = StyleSheet.create({
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
   },
   eventsContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
   },
   timelineHeader: {
     flexDirection: 'row',
@@ -1366,15 +1398,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
   timelineTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#333',
+    color: INK[900],
   },
   addButton: {
-    padding: 4,
+    borderRadius: RADIUS.pill,
+    shadowColor: BRAND[600],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  addButtonGradient: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   eventsList: {
     padding: 16,
@@ -1382,21 +1426,23 @@ const styles = StyleSheet.create({
   eventCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    backgroundColor: '#ffffff',
     padding: 12,
-    borderRadius: 12,
+    borderRadius: RADIUS.lg,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
     elevation: 2,
   },
   eventCardIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#E3F2FD',
+    backgroundColor: BRAND[50],
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -1407,12 +1453,12 @@ const styles = StyleSheet.create({
   eventCardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: INK[900],
     marginBottom: 4,
   },
   eventCardTime: {
     fontSize: 14,
-    color: '#666',
+    color: INK[400],
   },
   emptyEventsContainer: {
     flex: 1,
@@ -1423,12 +1469,12 @@ const styles = StyleSheet.create({
   emptyEventsText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#666',
+    color: INK[600],
     marginTop: 16,
   },
   emptyEventsSubtext: {
     fontSize: 14,
-    color: '#999',
+    color: INK[400],
     marginTop: 8,
     textAlign: 'center',
     paddingHorizontal: 32,
@@ -1466,7 +1512,7 @@ const styles = StyleSheet.create({
   mapSectionTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#333',
+    color: INK[900],
     marginBottom: 12,
     paddingHorizontal: 16,
   },
@@ -1476,7 +1522,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: HAIRLINE,
   },
   mapItemContent: {
     flex: 1,
@@ -1485,12 +1531,12 @@ const styles = StyleSheet.create({
   mapItemTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: INK[900],
     marginBottom: 4,
   },
   mapItemLocation: {
     fontSize: 14,
-    color: '#666',
+    color: INK[400],
   },
   modalOverlay: {
     flex: 1,
@@ -1510,12 +1556,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
+    fontWeight: '700',
+    color: INK[900],
   },
   modalCloseButton: {
     padding: 4,
@@ -1524,17 +1570,17 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   input: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: INK[100],
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
-    color: '#333',
+    color: INK[900],
     marginBottom: 12,
   },
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: INK[100],
     padding: 16,
     borderRadius: 12,
     marginBottom: 12,
@@ -1546,20 +1592,28 @@ const styles = StyleSheet.create({
   pickerLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#999',
+    color: INK[400],
     textTransform: 'uppercase',
     marginBottom: 4,
   },
   pickerValue: {
     fontSize: 16,
-    color: '#333',
+    color: INK[900],
   },
   saveButton: {
-    backgroundColor: '#007AFF',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
+    borderRadius: RADIUS.pill,
     marginTop: 8,
+    shadowColor: BRAND[600],
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  saveButtonGradient: {
+    padding: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: 'center',
+    overflow: 'hidden',
   },
   saveButtonText: {
     color: '#fff',

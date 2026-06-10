@@ -119,3 +119,26 @@ Expo Go** — it needs a dev build. Verified so far: `expo prebuild` generates t
 
 Until then I'll keep moving on everything that doesn't require these (SSRF
 hardening, calendar fix, feature hardening) and flag each gate as I reach it.
+
+## 5. Launch checklist (founder-side, in order)
+
+Everything code-side is done locally; these are the account/asset gates only
+**you** can clear. Each line says what it unblocks.
+
+| # | Action | Cost | Unblocks |
+|---|---|---|---|
+| 1 | **Google AI Studio** → create Gemini API key → `cd workers && npx wrangler secret put GEMINI_API_KEY --config ../wrangler.toml` | free tier | Real AI classify/extract/assistant in prod |
+| 2 | **Cloudflare** account → `npm run deploy` (in `workers/`) → put the printed URL into `.env` `EXPO_PUBLIC_API_BASE_URL` | $0 (free tier) | The production backend |
+| 3 | Same shell: `npx wrangler secret put APP_CLIENT_TOKEN --config ../wrangler.toml` (paste the value from `.env` `EXPO_PUBLIC_CLIENT_TOKEN`) | $0 | Locks the Worker to your app |
+| 4 | `npx wrangler kv namespace create RATE_LIMIT_KV` → paste id into `wrangler.toml` (uncomment block) → redeploy | $0 | Per-IP rate limiting in prod |
+| 5 | **Apple Developer Program** enrollment ($99/yr) → put your **Team ID** into `app.json` → `ios.appleTeamId` | $99/yr | Device builds, TestFlight, App Store, Share-Extension App Group on real devices |
+| 6 | **App Store Connect**: create the app record (bundle `com.silo.app`), reserve the name "Silo" | — | TestFlight + submission |
+| 7 | **Expo/EAS** account → `npx eas init` → `npx eas build --platform ios --profile production` | free tier OK | Reproducible cloud builds (no local Xcode needed) |
+| 8 | **Support email + privacy policy URL** (App Review requires both; `SUPPORT_EMAIL` in `lib/config.ts` is a placeholder — set the real one). Host the privacy policy anywhere public (GitHub Pages works). | $0 | Passing App Review |
+| 9 | **App Store assets**: the generated `assets/icon.png` is a solid v1; commission a designer pass when budget allows. Screenshots: 6.7" + 6.5" sets (capture from the sim). | $0–ish | Store listing |
+| 10 | **Pricing decision**: launch free (recommended — build resurfacing habit first) vs. enable the $6.99/mo / $39.99/yr config (then: RevenueCat account + StoreKit products) | — | Revenue path |
+| 11 | (Android later) Google Maps API key + Play Console — explicitly deferred; iOS-first. | — | Android release |
+
+**Domain note:** you mentioned `silo.pro` — point it at the privacy policy +
+landing page, and consider `api.silo.pro` as a custom domain for the Worker
+(Cloudflare makes this one click).

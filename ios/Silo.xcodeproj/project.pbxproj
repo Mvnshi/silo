@@ -9,41 +9,101 @@
 /* Begin PBXBuildFile section */
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
-		81E5A74911776AC74BFB3B07 /* libPods-Silo.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C3C1F52A554E6A4A47B9888 /* libPods-Silo.a */; };
+		519C0A9A09802A6E1C364E85 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA3820153AE88ADD083DA5F6 /* ExpoModulesProvider.swift */; };
+		899CA2DEBEBBE07DC5CAA878 /* libPods-Silo.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1547488DAAFCEE5DA1775E9F /* libPods-Silo.a */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
-		E8D62044792104072B2959CC /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C808F49B07CB15C1119226A /* ExpoModulesProvider.swift */; };
+		C54EC953F30DB6C9C56348F2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 0BB62EDFCADE6CCF20AA9816 /* PrivacyInfo.xcprivacy */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
-		F200E0CFAFBC09E761E0DBE4 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = CC674DEDA7B7633D0D00272E /* PrivacyInfo.xcprivacy */; };
+		XX7BB892E121AB1ABF71B4XX /* share.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = XXFB7BDE85E076D7002565XX /* share.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		XX1193E48FC02D859703A1XX /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = XXB89C95D387B9323D237DXX;
+			remoteInfo = share;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		XX72A8CFBF0FBA13A79902XX /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				XX7BB892E121AB1ABF71B4XX /* share.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
-		13B07F961A680F5B00A75B9A /* Silo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Silo.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = Silo/Images.xcassets; sourceTree = "<group>"; };
-		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = Silo/Info.plist; sourceTree = "<group>"; };
-		4C808F49B07CB15C1119226A /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Silo/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
-		87D5261FEE26E437FB9818C8 /* Pods-Silo.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Silo.release.xcconfig"; path = "Target Support Files/Pods-Silo/Pods-Silo.release.xcconfig"; sourceTree = "<group>"; };
-		891F671BFB18FE13E40852D6 /* Pods-Silo.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Silo.debug.xcconfig"; path = "Target Support Files/Pods-Silo/Pods-Silo.debug.xcconfig"; sourceTree = "<group>"; };
-		9C3C1F52A554E6A4A47B9888 /* libPods-Silo.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Silo.a"; sourceTree = BUILT_PRODUCTS_DIR; };
-		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = Silo/SplashScreen.storyboard; sourceTree = "<group>"; };
-		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
-		CC674DEDA7B7633D0D00272E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Silo/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
-		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Silo/AppDelegate.swift; sourceTree = "<group>"; };
-		F11748442D0722820044C1D9 /* Silo-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "Silo-Bridging-Header.h"; path = "Silo/Silo-Bridging-Header.h"; sourceTree = "<group>"; };
+		0BB62EDFCADE6CCF20AA9816 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Silo/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		13B07F961A680F5B00A75B9A /* Silo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; fileEncoding = 4; includeInIndex = 0; path = Silo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = Silo/Images.xcassets; sourceTree = "<group>"; };
+		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = text.plist.xml; name = Info.plist; path = Silo/Info.plist; sourceTree = "<group>"; };
+		1547488DAAFCEE5DA1775E9F /* libPods-Silo.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Silo.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = Silo/SplashScreen.storyboard; sourceTree = "<group>"; };
+		AA3820153AE88ADD083DA5F6 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Silo/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
+		AEC2B9EBECD6332696C89C31 /* Pods-Silo.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Silo.release.xcconfig"; path = "Target Support Files/Pods-Silo/Pods-Silo.release.xcconfig"; sourceTree = "<group>"; };
+		B4FB33BD681014C5A41CBCB7 /* Pods-Silo.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Silo.debug.xcconfig"; path = "Target Support Files/Pods-Silo/Pods-Silo.debug.xcconfig"; sourceTree = "<group>"; };
+		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
+		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = undefined; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Silo/AppDelegate.swift; sourceTree = "<group>"; };
+		F11748442D0722820044C1D9 /* Silo-Bridging-Header.h */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.c.h; name = "Silo-Bridging-Header.h"; path = "Silo/Silo-Bridging-Header.h"; sourceTree = "<group>"; };
+		XXFB7BDE85E076D7002565XX /* share.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; fileEncoding = 4; includeInIndex = 0; path = share.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		XXCDFB18B64C7390C5D7D0XX /* Exceptions for "share" folder in "share" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				"expo-target.config.js",
+			);
+			target = XXB89C95D387B9323D237DXX /* share */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		XXC64A230E50801E4820F7XX /* share */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				XXCDFB18B64C7390C5D7D0XX /* Exceptions for "share" folder in "share" target */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = share;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		13B07F8C1A680F5B00A75B9A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				81E5A74911776AC74BFB3B07 /* libPods-Silo.a in Frameworks */,
+				899CA2DEBEBBE07DC5CAA878 /* libPods-Silo.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		06A157FE16CE63AC3B92DAC6 /* Silo */ = {
+			isa = PBXGroup;
+			children = (
+				AA3820153AE88ADD083DA5F6 /* ExpoModulesProvider.swift */,
+			);
+			name = Silo;
+			sourceTree = "<group>";
+		};
 		13B07FAE1A68108700A75B9A /* Silo */ = {
 			isa = PBXGroup;
 			children = (
@@ -53,7 +113,7 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
-				CC674DEDA7B7633D0D00272E /* PrivacyInfo.xcprivacy */,
+				0BB62EDFCADE6CCF20AA9816 /* PrivacyInfo.xcprivacy */,
 			);
 			name = Silo;
 			sourceTree = "<group>";
@@ -62,27 +122,9 @@
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				9C3C1F52A554E6A4A47B9888 /* libPods-Silo.a */,
+				1547488DAAFCEE5DA1775E9F /* libPods-Silo.a */,
 			);
 			name = Frameworks;
-			sourceTree = "<group>";
-		};
-		45D81EA103A701194D858199 /* Pods */ = {
-			isa = PBXGroup;
-			children = (
-				891F671BFB18FE13E40852D6 /* Pods-Silo.debug.xcconfig */,
-				87D5261FEE26E437FB9818C8 /* Pods-Silo.release.xcconfig */,
-			);
-			name = Pods;
-			path = Pods;
-			sourceTree = "<group>";
-		};
-		7F8438FB17B84E9E06B583C6 /* ExpoModulesProviders */ = {
-			isa = PBXGroup;
-			children = (
-				F659D3A4A5D5D7035B0E67BE /* Silo */,
-			);
-			name = ExpoModulesProviders;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -95,12 +137,13 @@
 		83CBB9F61A601CBA00E9B192 = {
 			isa = PBXGroup;
 			children = (
+				XX3E41C1850246162C0061XX /* expo:targets */,
 				13B07FAE1A68108700A75B9A /* Silo */,
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
-				45D81EA103A701194D858199 /* Pods */,
-				7F8438FB17B84E9E06B583C6 /* ExpoModulesProviders */,
+				9FB01791A876D1CE5747BD2B /* Pods */,
+				FD5873A16D22C60C83471FF8 /* ExpoModulesProviders */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -111,8 +154,19 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* Silo.app */,
+				XXFB7BDE85E076D7002565XX /* share.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		9FB01791A876D1CE5747BD2B /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				B4FB33BD681014C5A41CBCB7 /* Pods-Silo.debug.xcconfig */,
+				AEC2B9EBECD6332696C89C31 /* Pods-Silo.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
 			sourceTree = "<group>";
 		};
 		BB2F792B24A3F905000567C9 /* Supporting */ = {
@@ -124,12 +178,21 @@
 			path = Silo/Supporting;
 			sourceTree = "<group>";
 		};
-		F659D3A4A5D5D7035B0E67BE /* Silo */ = {
+		FD5873A16D22C60C83471FF8 /* ExpoModulesProviders */ = {
 			isa = PBXGroup;
 			children = (
-				4C808F49B07CB15C1119226A /* ExpoModulesProvider.swift */,
+				06A157FE16CE63AC3B92DAC6 /* Silo */,
 			);
-			name = Silo;
+			name = ExpoModulesProviders;
+			sourceTree = "<group>";
+		};
+		XX3E41C1850246162C0061XX /* expo:targets */ = {
+			isa = PBXGroup;
+			children = (
+				XXC64A230E50801E4820F7XX /* share */,
+			);
+			name = "expo:targets";
+			path = ../targets;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -140,22 +203,43 @@
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "Silo" */;
 			buildPhases = (
 				08A4A3CD28434E44B6B9DE2E /* [CP] Check Pods Manifest.lock */,
-				19AFA863FE9FA94521BA7C94 /* [Expo] Configure project */,
+				6E0D355646231C9D1E0B2B9B /* [Expo] Configure project */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */,
-				EDD09D75BD8BEC1A8B2B8739 /* [CP] Embed Pods Frameworks */,
+				XX72A8CFBF0FBA13A79902XX /* Embed Foundation Extensions */,
+				F3660C1AEAE0959587AC859E /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				XX960259CF5C77D79C4E17XX /* PBXTargetDependency */,
 			);
 			name = Silo;
 			productName = Silo;
 			productReference = 13B07F961A680F5B00A75B9A /* Silo.app */;
 			productType = "com.apple.product-type.application";
+		};
+		XXB89C95D387B9323D237DXX /* share */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = XX07DEDAAF35E77A368C99XX /* Build configuration list for PBXNativeTarget "share" */;
+			buildPhases = (
+				XXE45443DC38DCFE1DB622XX /* Sources */,
+				XXFA5A8CCDD805DF7AEF9CXX /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				XXC64A230E50801E4820F7XX /* share */,
+			);
+			name = share;
+			productName = share;
+			productReference = XXFB7BDE85E076D7002565XX /* share.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -167,6 +251,11 @@
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
 						LastSwiftMigration = 1250;
+					};
+					XXB89C95D387B9323D237DXX = {
+						CreatedOnToolsVersion = 14.3;
+						DevelopmentTeam = undefined;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -184,6 +273,7 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* Silo */,
+				XXB89C95D387B9323D237DXX /* share */,
 			);
 		};
 /* End PBXProject section */
@@ -196,7 +286,14 @@
 				BB2F792D24A3F905000567C9 /* Expo.plist in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
-				F200E0CFAFBC09E761E0DBE4 /* PrivacyInfo.xcprivacy in Resources */,
+				C54EC953F30DB6C9C56348F2 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		XXFA5A8CCDD805DF7AEF9CXX /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -209,11 +306,15 @@
 			buildActionMask = 2147483647;
 			files = (
 			);
+			inputFileListPaths = (
+			);
 			inputPaths = (
 				"$(SRCROOT)/.xcode.env",
 				"$(SRCROOT)/.xcode.env.local",
 			);
 			name = "Bundle React Native code and images";
+			outputFileListPaths = (
+			);
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -242,7 +343,7 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		19AFA863FE9FA94521BA7C94 /* [Expo] Configure project */ = {
+		6E0D355646231C9D1E0B2B9B /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -300,7 +401,7 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Silo/Pods-Silo-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
-		EDD09D75BD8BEC1A8B2B8739 /* [CP] Embed Pods Frameworks */ = {
+		F3660C1AEAE0959587AC859E /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -330,17 +431,33 @@
 			buildActionMask = 2147483647;
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
-				E8D62044792104072B2959CC /* ExpoModulesProvider.swift in Sources */,
+				519C0A9A09802A6E1C364E85 /* ExpoModulesProvider.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		XXE45443DC38DCFE1DB622XX /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		XX960259CF5C77D79C4E17XX /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = XXB89C95D387B9323D237DXX /* share */;
+			targetProxy = XX1193E48FC02D859703A1XX /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 891F671BFB18FE13E40852D6 /* Pods-Silo.debug.xcconfig */;
+			baseConfigurationReference = B4FB33BD681014C5A41CBCB7 /* Pods-Silo.debug.xcconfig */;
 			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Silo/Silo.entitlements;
@@ -356,7 +473,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -375,8 +492,9 @@
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 87D5261FEE26E437FB9818C8 /* Pods-Silo.release.xcconfig */;
+			baseConfigurationReference = AEC2B9EBECD6332696C89C31 /* Pods-Silo.release.xcconfig */;
 			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Silo/Silo.entitlements;
@@ -387,7 +505,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -521,6 +639,87 @@
 			};
 			name = Release;
 		};
+		XX5CE6B431DFF086E88348XX /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = ../targets/share/generated.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ../targets/share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Add to Silo";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
+				PRODUCT_BUNDLE_IDENTIFIER = com.silo.app.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		XXCE3B009263BF3A95A782XX /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = ../targets/share/generated.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ../targets/share/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Add to Silo";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				MTL_FAST_MATH = YES;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
+				PRODUCT_BUNDLE_IDENTIFIER = com.silo.app.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -538,6 +737,15 @@
 			buildConfigurations = (
 				83CBBA201A601CBA00E9B192 /* Debug */,
 				83CBBA211A601CBA00E9B192 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		XX07DEDAAF35E77A368C99XX /* Build configuration list for PBXNativeTarget "share" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				XX5CE6B431DFF086E88348XX /* Debug */,
+				XXCE3B009263BF3A95A782XX /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

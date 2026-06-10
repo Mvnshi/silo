@@ -4,6 +4,7 @@
     "slug": "silo",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "scheme": "silo",
     "newArchEnabled": true,
@@ -24,6 +25,10 @@
     },
     "android": {
       "package": "com.silo.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F5F3FF"
+      },
       "permissions": [
         "READ_CALENDAR",
         "WRITE_CALENDAR",
@@ -34,6 +39,15 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#F5F3FF"
+        }
+      ],
       "expo-av",
       "expo-calendar",
       "expo-file-system",

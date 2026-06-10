@@ -21,7 +21,6 @@ import {
   Text,
   StyleSheet,
   Alert,
-  ActivityIndicator,
   Dimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -50,6 +49,8 @@ import { addItem } from '@/lib/storage';
 import { createItem } from '@/lib/items';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
+import { BRAND, INK, GRADIENTS } from '@/lib/theme';
+import Skeleton from '@/components/ui/Skeleton';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
@@ -409,7 +410,7 @@ export default function ScreenshotsScreen() {
     if (currentIndex >= screenshots.length) {
       return (
         <View style={styles.emptyCard}>
-          <Ionicons name="checkmark-circle" size={64} color="#4CAF50" />
+          <Ionicons name="checkmark-circle" size={64} color="#22c55e" />
           <Text style={styles.emptyCardText}>All done!</Text>
           <Text style={styles.emptyCardSubtext}>
             Swipe right on screenshots to import them
@@ -453,7 +454,7 @@ export default function ScreenshotsScreen() {
     <View style={styles.container}>
       {/* Gradient Background */}
       <LinearGradient
-        colors={['#E8B4E8', '#F5D7F5', '#FFF0F5']}
+        colors={GRADIENTS.page}
         style={StyleSheet.absoluteFill}
       />
       
@@ -469,13 +470,12 @@ export default function ScreenshotsScreen() {
 
       {/* Swipeable Cards */}
       {loading && currentIndex === 0 ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#E8B4E8" />
-          <Text style={styles.loadingText}>Loading screenshots...</Text>
+        <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 100 }]}>
+          <Skeleton width={CARD_WIDTH} height={CARD_HEIGHT} radius={24} />
         </View>
       ) : screenshots.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="images-outline" size={64} color="#D4A5D4" />
+          <Ionicons name="images-outline" size={64} color={BRAND[300]} />
           <Text style={styles.emptyText}>No screenshots found</Text>
           <Text style={styles.emptySubtext}>
             Take screenshots to import them here
@@ -501,12 +501,13 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#5A3A5A',
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    color: INK[900],
   },
   headerSubtitle: {
     fontSize: 14,
-    color: '#8B6B8B',
+    color: INK[500],
     marginTop: 4,
   },
   cardContainer: {
@@ -521,7 +522,7 @@ const styles = StyleSheet.create({
     height: CARD_HEIGHT,
     borderRadius: 24,
     backgroundColor: '#fff',
-    shadowColor: '#E8B4E8',
+    shadowColor: BRAND[400],
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.25,
     shadowRadius: 20,
@@ -534,7 +535,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: 24,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: INK[100],
   },
   swipeOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -585,7 +586,7 @@ const styles = StyleSheet.create({
     padding: 32,
     position: 'absolute',
     top: 0,
-    shadowColor: '#E8B4E8',
+    shadowColor: BRAND[400],
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.25,
     shadowRadius: 20,
@@ -593,25 +594,16 @@ const styles = StyleSheet.create({
   },
   emptyCardText: {
     fontSize: 24,
-    fontWeight: '700',
-    color: '#5A3A5A',
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    color: INK[900],
     marginTop: 16,
   },
   emptyCardSubtext: {
     fontSize: 16,
-    color: '#8B6B8B',
+    color: INK[500],
     marginTop: 8,
     textAlign: 'center',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    fontSize: 16,
-    color: '#8B6B8B',
-    marginTop: 16,
   },
   emptyContainer: {
     flex: 1,
@@ -622,12 +614,12 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#5A3A5A',
+    color: INK[900],
     marginTop: 16,
   },
   emptySubtext: {
     fontSize: 14,
-    color: '#8B6B8B',
+    color: INK[500],
     marginTop: 8,
     textAlign: 'center',
   },

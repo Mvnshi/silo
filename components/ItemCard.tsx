@@ -34,6 +34,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Item } from '@/lib/types';
 import { classConfig } from '@/lib/classification';
+import { BRAND, INK } from '@/lib/theme';
 import { format } from 'date-fns';
 
 const SWIPE_THRESHOLD = 80;
@@ -212,13 +213,13 @@ function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSwipeRight }: Ite
           {/* Indicators */}
           <View style={styles.indicators}>
             {item.audio_url && (
-              <Ionicons name="volume-medium" size={16} color="#999" />
+              <Ionicons name="volume-medium" size={16} color={INK[400]} />
             )}
             {item.scheduled_date && (
-              <Ionicons 
-                name="calendar-outline" 
-                size={16} 
-                color="#007AFF" 
+              <Ionicons
+                name="calendar-outline"
+                size={16}
+                color={BRAND[600]}
                 style={{ marginLeft: 8 }}
               />
             )}
@@ -240,7 +241,7 @@ function ItemCard({ item, onPress, onLongPress, onSwipeLeft, onSwipeRight }: Ite
             )}
             {item.duration && (
               <View style={styles.duration}>
-                <Ionicons name="time-outline" size={14} color="#999" />
+                <Ionicons name="time-outline" size={14} color={INK[400]} />
                 <Text style={styles.durationText}>{item.duration}m</Text>
               </View>
             )}
@@ -303,23 +304,23 @@ const styles = StyleSheet.create({
   classification: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#666',
+    color: INK[500],
     textTransform: 'capitalize',
   },
   timestamp: {
     fontSize: 12,
-    color: '#999',
+    color: INK[400],
   },
   title: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#333',
+    color: INK[900],
     marginBottom: 4,
     lineHeight: 22,
   },
   description: {
     fontSize: 14,
-    color: '#666',
+    color: INK[500],
     lineHeight: 20,
     marginBottom: 8,
   },
@@ -334,7 +335,7 @@ const styles = StyleSheet.create({
   },
   tag: {
     fontSize: 12,
-    color: '#007AFF',
+    color: BRAND[600],
     marginRight: 8,
   },
   indicators: {
@@ -348,7 +349,7 @@ const styles = StyleSheet.create({
   },
   durationText: {
     fontSize: 12,
-    color: '#999',
+    color: INK[400],
     marginLeft: 2,
   },
   titleCompleted: {

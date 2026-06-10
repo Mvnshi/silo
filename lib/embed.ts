@@ -19,7 +19,8 @@
 import { Item, SocialPlatform } from './types';
 
 export type EmbedSource =
-  | { kind: 'uri'; uri: string }
+  /** headers: sent with the initial WebView request only (e.g. Referer — see YouTube note below). */
+  | { kind: 'uri'; uri: string; headers?: Record<string, string> }
   | { kind: 'html'; html: string; baseUrl: string }
   | { kind: 'none' };
 
@@ -125,7 +126,18 @@ export function getEmbed(item: Pick<Item, 'url' | 'platform'>): EmbedSource {
   switch (platform) {
     case 'youtube': {
       const id = youtubeId(url);
-      return id ? { kind: 'uri', uri: `https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0` } : { kind: 'none' };
+      // A Referer header is REQUIRED: refererless embed loads fail with
+      // "Error 153 — video player configuration error". It must be a normal
+      // third-party site origin — claiming youtube.com itself gets rejected
+      // with error 152. WKWebView sends custom headers on the initial request,
+      // which is the one YouTube validates.
+      return id
+        ? {
+            kind: 'uri',
+            uri: `https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0`,
+            headers: { Referer: 'https://silo.app/' },
+          }
+        : { kind: 'none' };
     }
     case 'vimeo': {
       const id = vimeoId(url);

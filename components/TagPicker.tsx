@@ -23,6 +23,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { BRAND, INK } from '@/lib/theme';
 
 interface TagPickerProps {
   selectedTags: string[];
@@ -97,11 +98,11 @@ export default function TagPicker({
     <View style={styles.container}>
       {/* Input Field */}
       <View style={styles.inputContainer}>
-        <Ionicons name="pricetag-outline" size={20} color="#666" />
+        <Ionicons name="pricetag-outline" size={20} color={INK[500]} />
         <TextInput
           style={styles.input}
           placeholder="Add a tag..."
-          placeholderTextColor="#999"
+          placeholderTextColor={INK[400]}
           value={inputValue}
           onChangeText={setInputValue}
           onSubmitEditing={handleSubmit}
@@ -112,7 +113,7 @@ export default function TagPicker({
         />
         {inputValue.length > 0 && (
           <TouchableOpacity onPress={handleSubmit}>
-            <Ionicons name="add-circle" size={24} color="#007AFF" />
+            <Ionicons name="add-circle" size={24} color={BRAND[600]} />
           </TouchableOpacity>
         )}
       </View>
@@ -152,7 +153,7 @@ export default function TagPicker({
                 onPress={() => addTag(tag)}
               >
                 <Text style={styles.suggestedTagText}>#{tag}</Text>
-                <Ionicons name="add" size={16} color="#007AFF" />
+                <Ionicons name="add" size={16} color={BRAND[600]} />
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -176,7 +177,7 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: INK[100],
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -185,7 +186,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    color: '#333',
+    color: INK[800],
     marginLeft: 8,
     paddingVertical: 4,
   },
@@ -195,7 +196,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
+    color: INK[500],
     marginBottom: 8,
   },
   tagsContainer: {
@@ -205,7 +206,7 @@ const styles = StyleSheet.create({
   selectedTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
@@ -224,23 +225,23 @@ const styles = StyleSheet.create({
   suggestedTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: BRAND[50],
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
     marginRight: 8,
     borderWidth: 1,
-    borderColor: '#007AFF',
+    borderColor: BRAND[200],
   },
   suggestedTagText: {
-    color: '#007AFF',
+    color: BRAND[600],
     fontSize: 14,
     fontWeight: '600',
     marginRight: 4,
   },
   limitText: {
     fontSize: 12,
-    color: '#999',
+    color: INK[400],
     textAlign: 'center',
     marginTop: 8,
   },

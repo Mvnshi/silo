@@ -21,7 +21,6 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   Dimensions,
   ScrollView,
   ActivityIndicator,
@@ -32,6 +31,9 @@ import { WebView } from 'react-native-webview';
 import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import GlassCard from '@/components/ui/GlassCard';
+import PressableScale from '@/components/ui/PressableScale';
+import { GRADIENTS, RADIUS } from '@/lib/theme';
 import { Item } from '@/lib/types';
 import { getEmbed } from '@/lib/embed';
 import { classConfig, classGradient } from '@/lib/classification';
@@ -177,13 +179,24 @@ function StreamCard({
             <Ionicons name={platformIcon(item.platform)} size={64} color="#fff" />
             <Text style={styles.embedFallbackTitle}>{item.title || 'Open this post'}</Text>
             <Text style={styles.embedFallbackSub}>Couldn’t load the embed here.</Text>
-            <TouchableOpacity style={styles.embedOpenBtn} onPress={openSource}>
-              <Text style={styles.embedOpenBtnText}>Open link</Text>
-            </TouchableOpacity>
+            <PressableScale haptic="light" onPress={openSource}>
+              <LinearGradient
+                colors={GRADIENTS.brand}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.embedOpenBtn}
+              >
+                <Text style={styles.embedOpenBtnText}>Open link</Text>
+              </LinearGradient>
+            </PressableScale>
           </View>
         ) : (
           <WebView
-            source={embed.kind === 'uri' ? { uri: embed.uri } : { html: embed.html, baseUrl: embed.baseUrl }}
+            source={
+              embed.kind === 'uri'
+                ? { uri: embed.uri, headers: embed.headers }
+                : { html: embed.html, baseUrl: embed.baseUrl }
+            }
             style={styles.webview}
             allowsFullscreenVideo
             mediaPlaybackRequiresUserAction={false}
@@ -228,6 +241,7 @@ function StreamCard({
               <Image source={{ uri: item.imageUri }} style={StyleSheet.absoluteFill} resizeMode="cover" blurRadius={2} />
             ) : null}
             <ActivityIndicator size="large" color="#fff" />
+            <Text style={styles.embedLoadingText}>Loading…</Text>
           </View>
         )}
 
@@ -247,20 +261,26 @@ function StreamCard({
           </View>
         </View>
 
-        {/* Action Buttons */}
+        {/* Action Buttons — 54px circular dark-glass targets */}
         <View style={styles.actions}>
-          <TouchableOpacity style={styles.actionButton} onPress={() => onSchedule(item.id)}>
-            <Ionicons name="calendar" size={32} color="#fff" />
+          <PressableScale haptic="light" style={styles.actionButton} onPress={() => onSchedule(item.id)}>
+            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
+              <Ionicons name="calendar" size={24} color="#fff" />
+            </GlassCard>
             <Text style={styles.actionLabel}>Schedule</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton} onPress={() => onComplete(item.id)}>
-            <Ionicons name="checkmark-circle" size={32} color="#fff" />
+          </PressableScale>
+          <PressableScale haptic="light" style={styles.actionButton} onPress={() => onComplete(item.id)}>
+            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
+              <Ionicons name="checkmark-circle" size={24} color="#fff" />
+            </GlassCard>
             <Text style={styles.actionLabel}>Done</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton} onPress={() => onArchive(item.id)}>
-            <Ionicons name="archive" size={32} color="#fff" />
+          </PressableScale>
+          <PressableScale haptic="light" style={styles.actionButton} onPress={() => onArchive(item.id)}>
+            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
+              <Ionicons name="archive" size={24} color="#fff" />
+            </GlassCard>
             <Text style={styles.actionLabel}>Archive</Text>
-          </TouchableOpacity>
+          </PressableScale>
         </View>
       </View>
     );
@@ -325,51 +345,63 @@ function StreamCard({
           )}
         </ScrollView>
 
-        {/* Action Buttons */}
+        {/* Action Buttons — 54px circular dark-glass targets */}
         <View style={styles.actions}>
           {/* Audio Playback / Read Button */}
           {item.audio_url ? (
-            <TouchableOpacity
+            <PressableScale
+              haptic="light"
               style={styles.actionButton}
               onPress={togglePlayback}
             >
-              <Ionicons
-                name={isPlaying ? 'pause-circle' : 'play-circle'}
-                size={48}
-                color="#fff"
-              />
+              <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
+                <Ionicons
+                  name={isPlaying ? 'pause' : 'play'}
+                  size={24}
+                  color="#fff"
+                />
+              </GlassCard>
               <Text style={styles.actionLabel}>
                 {isPlaying ? 'Pause' : 'Read'}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
           ) : null}
 
           {/* Schedule */}
-          <TouchableOpacity 
+          <PressableScale
+            haptic="light"
             style={styles.actionButton}
             onPress={() => onSchedule(item.id)}
           >
-            <Ionicons name="calendar" size={32} color="#fff" />
+            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
+              <Ionicons name="calendar" size={24} color="#fff" />
+            </GlassCard>
             <Text style={styles.actionLabel}>Schedule</Text>
-          </TouchableOpacity>
+          </PressableScale>
 
           {/* Mark as Completed */}
-          <TouchableOpacity 
+          <PressableScale
+            haptic="light"
             style={styles.actionButton}
             onPress={() => onComplete(item.id)}
           >
-            <Ionicons name="checkmark-circle" size={32} color="#fff" />
+            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
+              <Ionicons name="checkmark-circle" size={24} color="#fff" />
+            </GlassCard>
             <Text style={styles.actionLabel}>Done</Text>
-          </TouchableOpacity>
+          </PressableScale>
 
           {/* Archive */}
-          <TouchableOpacity 
+          <PressableScale
+            haptic="light"
             style={styles.actionButton}
             onPress={() => onArchive(item.id)}
           >
-            <Ionicons name="archive" size={32} color="#fff" />
+            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
+              <Ionicons name="archive" size={24} color="#fff" />
+            </GlassCard>
             <Text style={styles.actionLabel}>Archive</Text>
-          </TouchableOpacity>
+          </PressableScale>
         </View>
       </LinearGradient>
     </View>
@@ -499,12 +531,19 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 18,
+  },
+  // 54px circle behind each rail icon (GlassCard supplies blur + hairline).
+  actionGlass: {
+    width: 54,
+    height: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   actionLabel: {
     color: '#fff',
     fontSize: 12,
-    marginTop: 4,
+    marginTop: 6,
     fontWeight: '600',
   },
   reelAuthor: {
@@ -530,7 +569,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   embedFallbackSub: {
-    color: '#9aa0a6',
+    color: 'rgba(255,255,255,0.6)',
     marginTop: 8,
     fontSize: 14,
     textAlign: 'center',
@@ -539,8 +578,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: '#6366f1',
-    borderRadius: 10,
+    borderRadius: RADIUS.pill,
   },
   embedOpenBtnText: {
     color: '#fff',
@@ -551,6 +589,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  embedLoadingText: {
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 10,
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
 

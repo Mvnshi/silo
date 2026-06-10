@@ -36,6 +36,9 @@ import { format } from 'date-fns';
 import CompactCard from '@/components/CompactCard';
 import ItemCardPro from '@/components/ItemCardPro';
 import EmptyState from '@/components/ui/EmptyState';
+import GlassCard from '@/components/ui/GlassCard';
+import PressableScale from '@/components/ui/PressableScale';
+import { BRAND, INK, HAIRLINE, RADIUS } from '@/lib/theme';
 import { Item, Stack } from '@/lib/types';
 import { getItems, getStacks, addStack, updateItem, deleteItem, updateStack, deleteStack } from '@/lib/storage';
 import { aiSearch } from '@/lib/api';
@@ -477,7 +480,7 @@ export default function StacksScreen() {
           const newStack: Stack = {
             id: `stack_${Date.now()}`,
             name: name.trim(),
-            color: '#667eea',
+            color: BRAND[500],
             item_count: 0,
             created_at: new Date().toISOString(),
           };
@@ -520,22 +523,22 @@ export default function StacksScreen() {
         </View>
         {/* Search Bar */}
         <View style={styles.searchContainer}>
-          <Ionicons name="search" size={20} color="#999" />
+          <Ionicons name="search" size={20} color={INK[400]} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search items..."
-            placeholderTextColor="#999"
+            placeholderTextColor={INK[400]}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoCapitalize="none"
             autoCorrect={false}
           />
           {isAiSearching && (
-            <Ionicons name="sparkles" size={20} color="#007AFF" />
+            <Ionicons name="sparkles" size={20} color={BRAND[600]} />
           )}
           {searchQuery.length > 0 && !isAiSearching && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={20} color="#999" />
+              <Ionicons name="close-circle" size={20} color={INK[400]} />
             </TouchableOpacity>
           )}
           {/* View Mode Toggle */}
@@ -546,10 +549,10 @@ export default function StacksScreen() {
               setViewMode(viewMode === 'list' ? 'grid' : 'list');
             }}
           >
-            <Ionicons 
-              name={viewMode === 'list' ? 'grid' : 'list'} 
-              size={20} 
-              color="#007AFF" 
+            <Ionicons
+              name={viewMode === 'list' ? 'grid' : 'list'}
+              size={20}
+              color={BRAND[600]}
             />
           </TouchableOpacity>
         </View>
@@ -560,14 +563,15 @@ export default function StacksScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.stacksContainer}
         >
-          <TouchableOpacity
+          <PressableScale
+            haptic="selection"
             style={[
               styles.stackChip,
               !selectedStackId && styles.stackChipActive,
             ]}
             onPress={() => setSelectedStackId(null)}
           >
-            <Ionicons name="apps" size={16} color={!selectedStackId ? '#fff' : '#333'} />
+            <Ionicons name="apps" size={16} color={!selectedStackId ? '#fff' : INK[700]} />
             <Text
               style={[
                 styles.stackChipText,
@@ -576,19 +580,17 @@ export default function StacksScreen() {
             >
               All
             </Text>
-          </TouchableOpacity>
+          </PressableScale>
 
           {stacks.map(stack => (
-            <TouchableOpacity
+            <PressableScale
               key={stack.id}
+              haptic="selection"
               style={[
                 styles.stackChip,
                 selectedStackId === stack.id && styles.stackChipActive,
               ]}
-              onPress={() => {
-                Haptics.selectionAsync();
-                setSelectedStackId(stack.id);
-              }}
+              onPress={() => setSelectedStackId(stack.id)}
               onLongPress={() => handleStackLongPress(stack.id)}
             >
               <View
@@ -602,18 +604,17 @@ export default function StacksScreen() {
               >
                 {stack.name}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
           ))}
 
-          <TouchableOpacity
+          <PressableScale
+            haptic="light"
             style={styles.createStackButton}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              handleCreateStack();
-            }}
+            onPress={handleCreateStack}
           >
-            <Ionicons name="add-circle-outline" size={20} color="#007AFF" />
-          </TouchableOpacity>
+            <Ionicons name="add" size={16} color={BRAND[600]} />
+            <Text style={styles.createStackText}>New stack</Text>
+          </PressableScale>
         </ScrollView>
       </View>
 
@@ -679,18 +680,22 @@ export default function StacksScreen() {
       )}
 
       {selectMode && (
-        <View style={{ position: 'absolute', left: 16, right: 16, bottom: insets.bottom + 90, flexDirection: 'row', alignItems: 'center', backgroundColor: '#0f172a', borderRadius: 24, paddingVertical: 13, paddingHorizontal: 18, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 16 }}>
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, flex: 1 }}>
-            {selectedIds.size} selected
-          </Text>
-          <TouchableOpacity onPress={bulkMarkDone} disabled={selectedIds.size === 0} style={{ opacity: selectedIds.size === 0 ? 0.4 : 1, marginRight: 20, flexDirection: 'row', alignItems: 'center' }}>
-            <Ionicons name="checkmark-done" size={18} color="#4ade80" />
-            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13, marginLeft: 5 }}>Done</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={bulkDelete} disabled={selectedIds.size === 0} style={{ opacity: selectedIds.size === 0 ? 0.4 : 1, flexDirection: 'row', alignItems: 'center' }}>
-            <Ionicons name="trash" size={18} color="#f87171" />
-            <Text style={{ color: '#f87171', fontWeight: '700', fontSize: 13, marginLeft: 5 }}>Delete</Text>
-          </TouchableOpacity>
+        <View style={{ position: 'absolute', left: 16, right: 16, bottom: insets.bottom + 90, shadowColor: BRAND[600], shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 20 }}>
+          <GlassCard tint="light" intensity={55} radius={RADIUS.xl}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: 18 }}>
+              <Text style={{ color: INK[900], fontWeight: '700', fontSize: 14, flex: 1 }}>
+                {selectedIds.size} selected
+              </Text>
+              <PressableScale haptic="light" onPress={bulkMarkDone} disabled={selectedIds.size === 0} style={{ opacity: selectedIds.size === 0 ? 0.4 : 1, marginRight: 20, flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="checkmark-done" size={18} color={BRAND[600]} />
+                <Text style={{ color: BRAND[600], fontWeight: '700', fontSize: 13, marginLeft: 5 }}>Done</Text>
+              </PressableScale>
+              <PressableScale haptic="light" onPress={bulkDelete} disabled={selectedIds.size === 0} style={{ opacity: selectedIds.size === 0 ? 0.4 : 1, flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="trash" size={18} color="#ef4444" />
+                <Text style={{ color: '#ef4444', fontWeight: '700', fontSize: 13, marginLeft: 5 }}>Delete</Text>
+              </PressableScale>
+            </View>
+          </GlassCard>
         </View>
       )}
     </View>
@@ -720,21 +725,23 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: '#fff',
     marginBottom: 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: '#333',
+    color: INK[900],
     marginLeft: 8,
   },
   stacksContainer: {
@@ -743,25 +750,32 @@ const styles = StyleSheet.create({
   stackChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    backgroundColor: '#fff',
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
     marginRight: 8,
     minWidth: 60,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowColor: INK[900],
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
     elevation: 2,
   },
   stackChipActive: {
-    backgroundColor: '#007AFF',
+    backgroundColor: BRAND[600],
+    borderColor: BRAND[600],
+    shadowColor: BRAND[600],
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
   },
   stackChipText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: INK[700],
     marginLeft: 6,
     flexShrink: 0,
   },
@@ -774,9 +788,21 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   createStackButton: {
-    justifyContent: 'center',
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
+    backgroundColor: BRAND[100],
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: BRAND[200],
+    marginRight: 8,
+  },
+  createStackText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: BRAND[600],
+    marginLeft: 4,
   },
   viewModeButton: {
     justifyContent: 'center',

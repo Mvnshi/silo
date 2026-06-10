@@ -1,6 +1,8 @@
 # Silo — Master TODO & Cross-Session Memory
 
 > **This is the resume point for every session.** Re-read this + [`AUDIT.md`](AUDIT.md) + [`LAUNCH_REPORT.md`](LAUNCH_REPORT.md) before doing anything. Keep this file in sync constantly.
+>
+> **North star:** [`VISION.md`](VISION.md) — recommendation-first AI over a 3-layer context ladder (saved intent → living context → ambient). Every feature decision should trace back to it.
 
 ---
 

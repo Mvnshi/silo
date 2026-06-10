@@ -28,6 +28,7 @@ module.exports = [
       'ios/**', // native prebuild output
       'android/**', // native prebuild output
       '.expo/**',
+      '.wrangler/**', // wrangler dev build artifacts
       'dist/**', // expo export output
       'expo-env.d.ts',
     ],
