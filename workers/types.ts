@@ -26,6 +26,16 @@ export interface Env {
   // routes are rate-limited; when absent, limiting is skipped (logged). Bind in
   // wrangler.toml: [[kv_namespaces]] binding = "RATE_LIMIT_KV", id = "<id>".
   RATE_LIMIT_KV?: KVNamespace;
+
+  // --- Sync (see SYNC.md) ---
+  // D1 database backing POST /api/sync. When absent, sync returns 503 and the
+  // rest of the Worker is unaffected. Bind in wrangler.toml: [[d1_databases]]
+  // binding = "SYNC_DB". Works locally under `wrangler dev` with no cloud setup.
+  SYNC_DB?: D1Database;
+
+  // When 'true', /api/sync requires an account session (Mode 2 / public).
+  // Default/unset = pairing-code spaces with no accounts (Mode 1 / self-host).
+  REQUIRE_AUTH?: string;
 }
 
 /**

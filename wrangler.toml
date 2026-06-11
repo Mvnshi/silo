@@ -24,3 +24,18 @@ compatibility_date = "2024-01-01"
 # binding = "RATE_LIMIT_KV"
 # id = "<your-kv-namespace-id>"
 
+# Sync (POST /api/sync) is backed by D1. See SYNC.md.
+# LOCAL (Mode 1): `wrangler dev` auto-creates a local SQLite file under
+#   .wrangler/ — no cloud account, no `database_id` needed. Sync works offline.
+# CLOUD (Mode 2/3): create the DB once and paste its id:
+#   wrangler d1 create silo-sync   # then set database_id below + deploy
+[[d1_databases]]
+binding = "SYNC_DB"
+database_name = "silo-sync"
+database_id = "local"   # placeholder; replace with the real id before a cloud deploy
+
+# Mode switch (see SYNC.md). false/unset = pairing-code spaces (local/self-host),
+# 'true' = account-gated spaces (public). Set via wrangler.toml or a secret.
+[vars]
+REQUIRE_AUTH = "false"
+

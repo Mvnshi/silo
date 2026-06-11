@@ -14,6 +14,7 @@
 
 import { Env } from './types';
 import { handleGemini } from './gemini';
+import { handleSync } from './sync';
 import { applySecurity, corsHeaders } from './middleware';
 
 export default {
@@ -31,6 +32,14 @@ export default {
       const blocked = await applySecurity(request, env, path);
       if (blocked) return blocked;
       return handleGemini(request, env, corsHeaders);
+    }
+
+    // Sync (see SYNC.md). Same security gate (shared-token + rate limit); the
+    // per-space identity (pairing code vs account) is enforced inside.
+    if (path === '/api/sync' && request.method === 'POST') {
+      const blocked = await applySecurity(request, env, path);
+      if (blocked) return blocked;
+      return handleSync(request, env, corsHeaders);
     }
 
     // Service description (open).
