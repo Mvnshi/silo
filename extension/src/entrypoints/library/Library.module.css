@@ -68,6 +68,36 @@
   box-shadow: 0 0 0 3px var(--brand-100);
 }
 
+/* Sync status chip — sits beside the search field. Unpaired: quiet slate on
+   white. Paired: violet on the brand tint so "synced" reads at a glance. */
+.syncChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--ink-700);
+  background: #fff;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
+}
+.syncChip:hover {
+  box-shadow: 0 6px 16px rgba(124, 58, 237, 0.14);
+}
+.syncChip:active {
+  transform: scale(0.97);
+}
+.syncChipPaired {
+  color: var(--brand-600);
+  background: var(--brand-50);
+  border-color: var(--brand-100);
+}
+
 .chips {
   display: flex;
   gap: 8px;
@@ -257,4 +287,141 @@
   border-radius: 999px;
   background: linear-gradient(135deg, #8b5cf6, #6366f1);
   box-shadow: 0 16px 32px rgba(139, 92, 246, 0.35);
+}
+
+/* ---- Sync pairing modal (S2) -------------------------------------------- */
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.modalCard {
+  width: 100%;
+  max-width: 28rem;
+  box-sizing: border-box;
+  padding: 28px;
+  background: #fff;
+  border-radius: 22px;
+  box-shadow: 0 24px 64px rgba(124, 58, 237, 0.25);
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  color: var(--ink-900);
+}
+
+.modalText {
+  margin: 8px 0 6px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-500);
+}
+
+.modalLabel {
+  display: block;
+  margin: 16px 0 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--brand-600);
+}
+
+.modalInputRow {
+  display: flex;
+  gap: 8px;
+}
+
+.modalInput {
+  flex: 1;
+  width: 100%;
+  min-width: 0; /* let the flex row shrink the input, not overflow the card */
+  box-sizing: border-box;
+  padding: 11px 14px;
+  font-size: 14px;
+  color: var(--ink-900);
+  background: #fff;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  outline: none;
+}
+.modalInput:focus {
+  border-color: var(--brand-200);
+  box-shadow: 0 0 0 3px var(--brand-100);
+}
+
+.modalMono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  letter-spacing: 0.4px;
+}
+
+.generateBtn {
+  flex: none;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--brand-600);
+  background: var(--brand-50);
+  border: 1px solid var(--brand-100);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.generateBtn:active {
+  transform: scale(0.97);
+}
+
+.modalCta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 24px;
+  padding: 13px 18px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(139, 92, 246, 0.35);
+  transition: transform 0.12s ease, opacity 0.15s ease;
+}
+.modalCta:active {
+  transform: scale(0.98);
+}
+.modalCta:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
+.modalError {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: #b91c1c;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 999px;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

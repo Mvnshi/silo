@@ -3,14 +3,27 @@
  * Profile + stats, real preferences (persisted to UserSettings), data export +
  * delete-all (privacy/trust), and About. Reached from the Stacks header.
  */
-import React, { useCallback, useState } from 'react';
-import { Text, View, Pressable, ScrollView, Switch, Alert, Share, Linking } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Text,
+  View,
+  Pressable,
+  ScrollView,
+  Switch,
+  Alert,
+  Share,
+  Linking,
+  TextInput,
+  ActivityIndicator,
+  Platform,
+} from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { format } from 'date-fns';
+import PressableScale from '@/components/ui/PressableScale';
 import {
   getItems,
   getStacks,
@@ -18,10 +31,48 @@ import {
   saveSettings,
   getUserId,
   clearAll,
+  getSyncState,
+  setSyncState,
+  SyncState,
   DEFAULT_SETTINGS,
 } from '@/lib/storage';
+import { syncNow, newSpaceKey } from '@/lib/sync';
+import { BRAND, GRADIENTS, HAIRLINE, INK } from '@/lib/theme';
 import { UserSettings } from '@/lib/types';
 import { APP_VERSION, SUPPORT_EMAIL } from '@/lib/config';
+
+/** Same env default lib/api.ts + lib/sync.ts read; shown as the URL prefill. */
+const ENV_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || '';
+
+/** Monospace for the space code / join input — codes must read unambiguously. */
+const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
+
+/** Must match the server's SPACE_KEY_RE (workers/sync.ts). */
+const SPACE_KEY_RE = /^[A-Za-z0-9_-]{6,128}$/;
+
+/**
+ * Mirror of add.tsx's lazy expo-clipboard require (see that file's WHY: a
+ * binary built before the pod landed throws on module-load-time import).
+ */
+function writeClipboardString(text: string): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Clipboard = require('expo-clipboard');
+    return Clipboard.setStringAsync(text);
+  } catch {
+    return Promise.resolve();
+  }
+}
+
+/** "just now" / "4m ago" / "3h ago" / "2d ago" — settings-row friendly. */
+function relTime(iso: string): string {
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -83,18 +134,47 @@ export default function Settings() {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [stats, setStats] = useState({ items: 0, stacks: 0, since: '' });
 
+  // --- Sync section state (S1) ---
+  const [sync, setSync] = useState<SyncState>({
+    spaceKey: null,
+    cursor: 0,
+    serverUrl: null,
+    lastSyncAt: null,
+  });
+  const [serverUrl, setServerUrl] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear pending flash timers on unmount so they can't set state on a dead screen.
+  useEffect(
+    () => () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    },
+    []
+  );
+
   useFocusEffect(
     useCallback(() => {
       let active = true;
       (async () => {
-        const [s, items, stacks, uid] = await Promise.all([
+        const [s, items, stacks, uid, ss] = await Promise.all([
           getSettings(),
           getItems(),
           getStacks(),
           getUserId(),
+          getSyncState(),
         ]);
         if (!active) return;
         setSettings(s);
+        setSync(ss);
+        setServerUrl(ss.serverUrl ?? ENV_BASE_URL);
         const ts = parseInt(uid.split('_')[1] || '0', 10);
         const since = ts ? format(new Date(ts), 'MMM yyyy') : '—';
         setStats({ items: items.length, stacks: stacks.length, since });
@@ -104,6 +184,87 @@ export default function Settings() {
       };
     }, [])
   );
+
+  const copyCode = async () => {
+    if (!sync.spaceKey) return;
+    await writeClipboardString(sync.spaceKey);
+    Haptics.selectionAsync();
+    setCopied(true);
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(false), 1500);
+  };
+
+  const regenerate = async () => {
+    const fresh = newSpaceKey();
+    // A new code is a new space: cursor restarts so the next sync re-uploads everything.
+    await setSyncState({ spaceKey: fresh, cursor: 0 });
+    setSync((prev) => ({ ...prev, spaceKey: fresh, cursor: 0 }));
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const confirmRegenerate = () => {
+    // No code yet → nothing to unpair; mint one silently.
+    if (!sync.spaceKey) {
+      regenerate();
+      return;
+    }
+    Alert.alert(
+      'Regenerate space code?',
+      'This unpairs your other devices. They keep their data but stop syncing until they join the new code.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Regenerate', style: 'destructive', onPress: () => regenerate() },
+      ]
+    );
+  };
+
+  const joinSpace = async () => {
+    const code = joinCode.trim();
+    if (!SPACE_KEY_RE.test(code)) {
+      setJoinError('Codes are 6–128 letters, numbers, “-” or “_”.');
+      return;
+    }
+    // Adopting another device's space: cursor restarts so the first sync pulls all of it.
+    await setSyncState({ spaceKey: code, cursor: 0 });
+    setSync((prev) => ({ ...prev, spaceKey: code, cursor: 0 }));
+    setJoinCode('');
+    setJoinError(null);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const saveServerUrl = () => {
+    const url = serverUrl.trim();
+    // Empty input = "use the env default" (stored as null, like unset).
+    setSyncState({ serverUrl: url || null }).catch(() => {});
+    setSync((prev) => ({ ...prev, serverUrl: url || null }));
+  };
+
+  const runSync = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncError(null);
+    setSyncResult(null);
+    try {
+      // Make sure what's typed in the URL field is what's used, even if the
+      // input never blurred (tapping the CTA can dismiss the keyboard without
+      // delivering the blur-save first).
+      const url = serverUrl.trim();
+      if (url !== (sync.serverUrl ?? ENV_BASE_URL)) {
+        await setSyncState({ serverUrl: url || null });
+      }
+      const r = await syncNow();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Re-read: syncNow may have minted the space code + bumped lastSyncAt.
+      setSync(await getSyncState());
+      setSyncResult(`Up ${r.pushed} / Down ${r.pulled}`);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setSyncResult(null), 2500);
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const update = (patch: Partial<UserSettings>) => {
     const prev = settings;
@@ -196,6 +357,156 @@ export default function Settings() {
             </View>
           ))}
         </View>
+
+        {/* Sync across devices (S1 — pairing code + server + manual sync) */}
+        <Section title="Sync across devices">
+          {/* Status header: paired state + relative last-synced time */}
+          <View
+            className="flex-row items-center px-4 py-3"
+            style={{ borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
+          >
+            <View
+              className="h-9 w-9 items-center justify-center rounded-xl"
+              style={{ backgroundColor: BRAND[50] }}
+            >
+              <Ionicons name="cloud-outline" size={18} color={BRAND[600]} />
+            </View>
+            <View className="ml-3 flex-1">
+              <Text className="text-[15px] font-semibold text-ink-900">
+                {sync.spaceKey ? 'Paired' : 'Not paired yet'}
+              </Text>
+              <Text className="mt-0.5 text-[12px] text-ink-400">
+                {sync.lastSyncAt ? `Synced ${relTime(sync.lastSyncAt)}` : 'Never synced'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Space code: monospace pill + copy + regenerate */}
+          <View className="px-4 py-3" style={{ borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+            <Text className="text-[12px] font-semibold uppercase tracking-wider text-ink-400">
+              Space code
+            </Text>
+            <View className="mt-2 flex-row items-center">
+              <View
+                className="flex-1 justify-center rounded-full px-4 py-2"
+                style={{ backgroundColor: BRAND[50], borderWidth: 1, borderColor: HAIRLINE }}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{ fontFamily: MONO, fontSize: 13, color: sync.spaceKey ? BRAND[700] : INK[400] }}
+                >
+                  {sync.spaceKey ?? 'created on first sync'}
+                </Text>
+              </View>
+              <PressableScale
+                haptic="light"
+                onPress={copyCode}
+                disabled={!sync.spaceKey}
+                className="ml-2 rounded-full px-3.5 py-2"
+                style={{ backgroundColor: sync.spaceKey ? BRAND[600] : INK[200] }}
+              >
+                <Text className="text-[13px] font-bold text-white">{copied ? 'Copied' : 'Copy'}</Text>
+              </PressableScale>
+              <PressableScale
+                haptic="light"
+                onPress={confirmRegenerate}
+                className="ml-2 h-9 w-9 items-center justify-center rounded-full"
+                style={{ backgroundColor: INK[100] }}
+              >
+                <Ionicons name="refresh" size={16} color={INK[600]} />
+              </PressableScale>
+            </View>
+          </View>
+
+          {/* Join an existing space (typed/pasted from another device) */}
+          <View className="px-4 py-3" style={{ borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+            <Text className="text-[12px] font-semibold uppercase tracking-wider text-ink-400">
+              Join existing space
+            </Text>
+            <View className="mt-2 flex-row items-center">
+              <TextInput
+                value={joinCode}
+                onChangeText={(t) => {
+                  setJoinCode(t);
+                  if (joinError) setJoinError(null);
+                }}
+                placeholder="silo-…"
+                placeholderTextColor={INK[300]}
+                autoCapitalize="none"
+                autoCorrect={false}
+                className="flex-1 rounded-full px-4 py-2 text-ink-900"
+                style={{ fontFamily: MONO, fontSize: 13, backgroundColor: INK[50], borderWidth: 1, borderColor: HAIRLINE }}
+              />
+              <PressableScale
+                haptic="light"
+                onPress={joinSpace}
+                className="ml-2 rounded-full px-4 py-2"
+                style={{ backgroundColor: BRAND[600] }}
+              >
+                <Text className="text-[13px] font-bold text-white">Join</Text>
+              </PressableScale>
+            </View>
+            {!!joinError && <Text className="mt-1.5 text-[12px] text-red-500">{joinError}</Text>}
+          </View>
+
+          {/* Server URL (saved on blur; empty = env default) */}
+          <View className="px-4 py-3" style={{ borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+            <Text className="text-[12px] font-semibold uppercase tracking-wider text-ink-400">
+              Server URL
+            </Text>
+            <TextInput
+              value={serverUrl}
+              onChangeText={setServerUrl}
+              onBlur={saveServerUrl}
+              placeholder="http://192.168.1.20:8787"
+              placeholderTextColor={INK[300]}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              className="mt-2 rounded-full px-4 py-2 text-ink-900"
+              style={{ fontFamily: MONO, fontSize: 13, backgroundColor: INK[50], borderWidth: 1, borderColor: HAIRLINE }}
+            />
+            <Text className="ml-1 mt-1.5 text-[12px] text-ink-400">
+              Your laptop on Wi-Fi (Mode 1) or your deployed Worker (Mode 2) — see SYNC.md
+            </Text>
+          </View>
+
+          {/* Sync now: spinner while running, then a brief "Up N / Down M" flash */}
+          <View className="px-4 pb-4 pt-3">
+            <PressableScale haptic="light" onPress={runSync} disabled={syncing}>
+              <LinearGradient
+                colors={GRADIENTS.brand}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: 999,
+                  paddingVertical: 13,
+                  shadowColor: '#8b5cf6',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 12,
+                }}
+              >
+                {syncing ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name={syncResult ? 'checkmark-circle' : 'sync'} size={16} color="#fff" />
+                    <Text className="ml-2 text-[15px] font-bold text-white">
+                      {syncResult ?? 'Sync now'}
+                    </Text>
+                  </>
+                )}
+              </LinearGradient>
+            </PressableScale>
+            {!!syncError && (
+              <Text className="mt-2 text-center text-[12px] text-red-500">{syncError}</Text>
+            )}
+          </View>
+        </Section>
 
         {/* Preferences */}
         <Section title="Preferences">

@@ -206,6 +206,9 @@ export function App() {
       });
       await addItem(item);
       setSaveState('saved');
+      // Fire-and-forget: nudge the background SW to sync this save. The popup
+      // closes in 1.5s and must never wait on (or surface) network state.
+      void chrome.runtime.sendMessage({ type: 'silo:sync-now' }).catch(() => {});
       window.setTimeout(() => {
         window.close();
       }, 1500);

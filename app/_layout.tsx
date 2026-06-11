@@ -19,6 +19,7 @@ import '../global.css';
 import { useEffect, useState } from 'react';
 import { AppState, View, LogBox } from 'react-native';
 import { Stack, Redirect, usePathname } from 'expo-router';
+import { syncNow } from '@/lib/sync';
 
 // Known, tracked noise only — never blanket-ignore:
 // - expo-av deprecation: migration to expo-audio/expo-video is in TODO.md.
@@ -90,6 +91,9 @@ export default function RootLayout() {
       await seedDevData();
       // Import anything the iOS Share Extension queued into the App Group.
       await drainPendingShares();
+      // One sync per cold start, after the drain so fresh shares ride along.
+      // Best-effort: unconfigured/offline must never affect startup.
+      syncNow().catch(() => {});
     }
 
     setupAudio();
@@ -98,7 +102,11 @@ export default function RootLayout() {
     // Re-drain whenever the app returns to the foreground — the usual path after
     // tapping "Add to Silo" in another app and switching back.
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') drainPendingShares().catch(() => {});
+      if (state !== 'active') return;
+      drainPendingShares()
+        .catch(() => {})
+        // Sync AFTER the drain resolves so a just-shared save pushes in the same pass.
+        .then(() => syncNow().catch(() => {}));
     });
     return () => sub.remove();
   }, []);

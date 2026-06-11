@@ -203,13 +203,12 @@ cost *you* nothing — Mode 1 is your laptop, Mode 3 is their bill.
 
 ## Milestones
 
-- [ ] **S0 — Worker sync core**: D1 schema + `/api/sync` push-pull, `REQUIRE_AUTH=false`. Verify with curl: two fake clients converge. *(This commit.)*
-- [ ] **S1 — Phone client**: `lib/sync.ts` + soft deletes + Settings pairing UI + "Sync now".
-- [ ] **S2 — Extension client**: `lib/sync.ts` in the background SW + options page pairing UI.
-- [ ] **S3 — Live round-trip**: save on phone → appears in the extension library, and back. Screenshot + IndexedDB read as proof.
+- [x] **S0 — Worker sync core**: D1 schema + `/api/sync` push-pull, `REQUIRE_AUTH=false`. ✅ Verified via curl: two simulated clients converge; stale older-timestamp write rejected (LWW).
+- [x] **S1 — Phone client**: `lib/sync.ts` + soft deletes + Settings pairing UI + "Sync now". ✅ Cold-start sync pushed the full 27-item library on first pair.
+- [x] **S2 — Extension client**: `lib/sync.ts` via the background SW + library pairing modal + status chip. ✅ `{pushed:0, pulled:27}` on pair; idempotent re-sync `{0,0}` (no echo).
+- [x] **S3 — Live round-trip**: ✅ PROVEN 2026-06-11 — phone library (27 items) → server → browser library renders them ("27 saved · synced across devices"); browser spotlight note → server → top card in the phone's Stacks ("Synced from browser ✨"). Harness: `extension/scripts/verify-sync.mjs` (pair / expect / push-note modes), screenshots on both sides.
 - [ ] **S4 — Accounts (Mode 2)**: `auth.ts` signup/login, `REQUIRE_AUTH=true`, session tokens. Ship the public path.
 - [ ] **S5 — E2E encryption (optional)**: encrypt `json` client-side from the pairing-code-derived key.
 
-S0 is built in the same change as this doc. S1–S5 are sequenced so each is
-shippable and Mode 1 works end-to-end after S3 — long before any cloud/account
-work.
+Mode 1 is fully working end-to-end as of S3. S4 turns on the public path when
+the founder is ready; S5 hardens it.

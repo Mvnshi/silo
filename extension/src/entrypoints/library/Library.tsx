@@ -12,9 +12,19 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Classification, Item } from '@/lib/types';
-import { getItems, deleteItem } from '@/lib/store';
+import type { SyncState } from '@/lib/store';
+import { getItems, deleteItem, getSyncState, setSyncState } from '@/lib/store';
+import { DEFAULT_SERVER_URL, generateSpaceKey } from '@/lib/sync';
 import { searchItems } from '@/lib/search';
 import styles from './Library.module.css';
+
+/** Background SW's reply to 'silo:sync-now' (see lib/background/messages.ts). */
+interface SyncNowResponse {
+  ok: boolean;
+  pushed?: number;
+  pulled?: number;
+  error?: string;
+}
 
 /** Gradient pairs per classification — mirrors the phone's classConfig vibe. */
 const CLASS_GRADIENTS: Record<Classification, [string, string]> = {
@@ -43,6 +53,16 @@ function relativeDate(iso: string): string {
   return `${Math.floor(days / 365)}y ago`;
 }
 
+/** Compact last-synced age for the chip: "now", "2m", "3h", "5d". */
+function relativeSync(iso: string): string {
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (!Number.isFinite(mins) || mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  return `${Math.floor(hrs / 24)}d`;
+}
+
 export function Library() {
   const [items, setItems] = useState<Item[]>([]);
   const [query, setQuery] = useState(
@@ -54,13 +74,44 @@ export function Library() {
     new URLSearchParams(window.location.hash.replace(/^#/, '')).get('item')
   );
 
+  const [sync, setSync] = useState<SyncState | null>(null);
+  const [syncOpen, setSyncOpen] = useState(false);
+
   const reload = useCallback(async () => {
     setItems(await getItems());
   }, []);
 
+  const refreshSync = useCallback(async () => {
+    setSync(await getSyncState());
+  }, []);
+
   useEffect(() => {
     void reload();
-  }, [reload]);
+    void refreshSync();
+  }, [reload, refreshSync]);
+
+  // Sync in the background on open; refresh the grid + chip when it lands.
+  // Guarded so a plain-browser dev tab (no chrome.runtime) still renders.
+  useEffect(() => {
+    let cancelled = false;
+    try {
+      void chrome.runtime
+        .sendMessage({ type: 'silo:sync-now' })
+        .then((res: SyncNowResponse | undefined) => {
+          if (cancelled || !res?.ok) return;
+          void reload();
+          void refreshSync();
+        })
+        .catch(() => {
+          /* SW unreachable or sync failed — the library is local-first */
+        });
+    } catch {
+      /* chrome.runtime missing outside the extension context */
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [reload, refreshSync]);
 
   // Debounced search through the shared tokenized index.
   useEffect(() => {
@@ -115,7 +166,7 @@ export function Library() {
         <div>
           <h1 className={styles.title}>Your Silo</h1>
           <p className={styles.subtitle}>
-            {items.length} saved · all on this device
+            {items.length} saved · {sync?.lastSyncAt ? 'synced across devices' : 'all on this device'}
           </p>
         </div>
         <input
@@ -126,6 +177,15 @@ export function Library() {
           onChange={(e) => setQuery(e.target.value)}
           autoFocus={!highlightId.current}
         />
+        <button
+          type="button"
+          className={`${styles.syncChip} ${sync?.lastSyncAt ? styles.syncChipPaired : ''}`}
+          onClick={() => setSyncOpen(true)}
+          title="Sync across devices"
+        >
+          <CloudIcon />
+          {sync?.lastSyncAt ? `Synced • ${relativeSync(sync.lastSyncAt)}` : 'Set up sync'}
+        </button>
       </header>
 
       <div className={styles.chips}>
@@ -220,6 +280,169 @@ export function Library() {
           })}
         </div>
       )}
+
+      {syncOpen && sync ? (
+        <SyncModal
+          initial={sync}
+          onClose={() => setSyncOpen(false)}
+          onSynced={() => {
+            void reload();
+            void refreshSync();
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * Pairing modal — enter (or mint) a space code, point at a server, sync.
+ * Persists to the kv 'syncState' row, then asks the background SW to run the
+ * actual round-trip so page and SW never race two sync loops.
+ */
+function SyncModal({
+  initial,
+  onClose,
+  onSynced,
+}: {
+  initial: SyncState;
+  onClose: () => void;
+  onSynced: () => void;
+}) {
+  const [code, setCode] = useState(initial.spaceKey ?? '');
+  const [server, setServer] = useState(initial.serverUrl ?? DEFAULT_SERVER_URL);
+  const [phase, setPhase] = useState<'idle' | 'busy' | 'done'>('idle');
+  const [result, setResult] = useState<{ up: number; down: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Esc closes from anywhere — standard modal manners.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  // Let "Up N / Down M" flash briefly, then re-arm the button.
+  useEffect(() => {
+    if (phase !== 'done') return;
+    const t = window.setTimeout(() => setPhase('idle'), 2500);
+    return () => window.clearTimeout(t);
+  }, [phase]);
+
+  const onSubmit = useCallback(async () => {
+    setPhase('busy');
+    setError(null);
+    try {
+      const nextKey = code.trim() || null;
+      await setSyncState({
+        spaceKey: nextKey,
+        serverUrl: server.trim() || null,
+        // Pairing into a DIFFERENT space invalidates the old cursor; resetting
+        // to 0 triggers the full first upload (idempotent server merge).
+        ...(nextKey !== initial.spaceKey ? { cursor: 0 } : {}),
+      });
+      const res = (await chrome.runtime.sendMessage({
+        type: 'silo:sync-now',
+      })) as SyncNowResponse | undefined;
+      if (!res?.ok) throw new Error(res?.error || 'Sync failed — is the server running?');
+      setResult({ up: res.pushed ?? 0, down: res.pulled ?? 0 });
+      setPhase('done');
+      onSynced(); // grid + chip refresh while the result flashes
+    } catch (err) {
+      setPhase('idle');
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [code, server, initial.spaceKey, onSynced]);
+
+  return (
+    // Backdrop click closes; clicks inside the card don't bubble to it.
+    <div
+      className={styles.modalOverlay}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className={styles.modalCard} role="dialog" aria-modal="true" aria-label="Sync across devices">
+        <h2 className={styles.modalTitle}>Sync across devices</h2>
+        <p className={styles.modalText}>
+          Use the same space code on your phone and this browser — saves flow both ways. The code
+          is the secret; share it only with your own devices.
+        </p>
+
+        <label className={styles.modalLabel} htmlFor="silo-space-code">
+          Space code
+        </label>
+        <div className={styles.modalInputRow}>
+          <input
+            id="silo-space-code"
+            className={`${styles.modalInput} ${styles.modalMono}`}
+            type="text"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="silo-…"
+            spellCheck={false}
+            autoComplete="off"
+          />
+          {code.trim() === '' ? (
+            <button type="button" className={styles.generateBtn} onClick={() => setCode(generateSpaceKey())}>
+              Generate
+            </button>
+          ) : null}
+        </div>
+
+        <label className={styles.modalLabel} htmlFor="silo-server-url">
+          Server URL
+        </label>
+        <input
+          id="silo-server-url"
+          className={styles.modalInput}
+          type="url"
+          value={server}
+          onChange={(e) => setServer(e.target.value)}
+          placeholder={DEFAULT_SERVER_URL || 'http://192.168.x.x:8787'}
+          spellCheck={false}
+          autoComplete="off"
+        />
+
+        <button
+          type="button"
+          className={styles.modalCta}
+          disabled={phase === 'busy'}
+          onClick={() => void onSubmit()}
+        >
+          {phase === 'busy' ? (
+            <>
+              <span className={styles.spinner} aria-hidden />
+              Syncing…
+            </>
+          ) : phase === 'done' && result ? (
+            `Up ${result.up} / Down ${result.down} ✓`
+          ) : (
+            'Save & Sync now'
+          )}
+        </button>
+        {error ? <p className={styles.modalError}>{error}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function CloudIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+    </svg>
   );
 }

@@ -13,6 +13,10 @@
  *     empty store. A mutation must therefore never overwrite a populated store
  *     with a short array after an empty read. `mutateArray` aborts if the parsed
  *     array is empty while the raw stored value is non-empty.
+ *  3. **Sync bookkeeping** (S1, SYNC.md): the user-facing mutators (addItem /
+ *     updateItem / deleteItem) record dirty ids + delete tombstones for the
+ *     sync client, while the applyRemote* paths deliberately do NOT — applying
+ *     a pulled change must never echo it back on the next push.
  *
  * The raw JSON writer is private; all callers go through the add/update/delete
  * helpers so the lock + guard always apply.
@@ -30,6 +34,10 @@ const KEYS = {
   USER_ID: '@silo:userId',
   SCHEMA_VERSION: '@silo:schemaVersion',
   ONBOARDED: '@silo:onboarded',
+  // Sync (S1, SYNC.md). Key names are a contract with the e2e harness — don't rename.
+  SYNC_STATE: '@silo:syncState',
+  SYNC_DIRTY: '@silo:syncDirty',
+  SYNC_TOMBSTONES: '@silo:syncTombstones',
 };
 
 /* ---------------------------------------------------------------------------
@@ -152,23 +160,37 @@ export async function getItemById(id: string): Promise<Item | null> {
 /** Add a new item to the front of the list. */
 export async function addItem(item: Item): Promise<void> {
   const normalized = normalizeItem(item);
-  return mutateArray<Item>(KEYS.ITEMS, (items) => [normalized, ...items]);
+  await mutateArray<Item>(KEYS.ITEMS, (items) => [normalized, ...items]);
+  // Local user write → queue for the next sync push (remote applies skip this).
+  await markDirty(normalized.id);
 }
 
 /** Apply a partial update to an item, maintaining `updated_at` / `completed_at`. */
 export async function updateItem(id: string, updates: Partial<Item>): Promise<void> {
-  return mutateArray<Item>(KEYS.ITEMS, (items) => {
+  let touched = false;
+  await mutateArray<Item>(KEYS.ITEMS, (items) => {
     const index = items.findIndex((item) => item.id === id);
     if (index < 0) return items;
+    touched = true;
     // touchItem maintains updated_at / completed_at and re-derives status.
     const next = items.slice();
     next[index] = touchItem(items[index], updates);
     return next;
   });
+  // Only a real edit dirties; a miss must not enqueue a phantom id for sync.
+  if (touched) await markDirty(id);
 }
 
 export async function deleteItem(id: string): Promise<void> {
-  return mutateArray<Item>(KEYS.ITEMS, (items) => items.filter((item) => item.id !== id));
+  await mutateArray<Item>(KEYS.ITEMS, (items) => items.filter((item) => item.id !== id));
+  // Soft-delete bookkeeping: the tombstone propagates the delete to other
+  // devices on the next sync…
+  await mutateArray<SyncTombstone>(KEYS.SYNC_TOMBSTONES, (tombstones) => [
+    ...tombstones.filter((t) => t.id !== id),
+    { id, updated_at: new Date().toISOString() },
+  ]);
+  // …and any pending edit for the item is now moot.
+  await clearDirtyIds([id]);
 }
 
 /* ---------------------------------------------------------------------------
@@ -256,6 +278,107 @@ export async function getUserId(): Promise<string> {
 }
 
 /* ---------------------------------------------------------------------------
+ * Sync bookkeeping (S1 — see SYNC.md and lib/sync.ts for the protocol side)
+ * ------------------------------------------------------------------------- */
+
+/** Persistent sync client state (cursor = server high-water mark). */
+export interface SyncState {
+  spaceKey: string | null;
+  cursor: number;
+  serverUrl: string | null;
+  lastSyncAt: string | null;
+}
+
+/** A propagating delete: keeps the conflict clock of the moment of deletion. */
+export interface SyncTombstone {
+  id: string;
+  updated_at: string;
+}
+
+const DEFAULT_SYNC_STATE: SyncState = {
+  spaceKey: null,
+  cursor: 0,
+  serverUrl: null,
+  lastSyncAt: null,
+};
+
+/** Sync state with defaults applied, so partial/unset stores never yield undefined fields. */
+export async function getSyncState(): Promise<SyncState> {
+  const stored = await readJson<Partial<SyncState>>(KEYS.SYNC_STATE, {});
+  return { ...DEFAULT_SYNC_STATE, ...stored };
+}
+
+/** Merge a partial patch into the stored sync state (locked read-modify-write). */
+export async function setSyncState(patch: Partial<SyncState>): Promise<void> {
+  return withLock(KEYS.SYNC_STATE, async () => {
+    const stored = await readJson<Partial<SyncState>>(KEYS.SYNC_STATE, {});
+    await writeJson(KEYS.SYNC_STATE, { ...DEFAULT_SYNC_STATE, ...stored, ...patch });
+  });
+}
+
+/** Item ids with local edits not yet pushed to the sync server. */
+export async function getDirtyIds(): Promise<string[]> {
+  const raw = await readJson<string[]>(KEYS.SYNC_DIRTY, []);
+  return Array.isArray(raw) ? raw : [];
+}
+
+/** Append an id to the dirty set (deduped). Private: only local mutators dirty. */
+async function markDirty(id: string): Promise<void> {
+  return mutateArray<string>(KEYS.SYNC_DIRTY, (ids) =>
+    ids.includes(id) ? ids : [...ids, id]
+  );
+}
+
+/** Drop ids from the dirty set — call ONLY after the server accepted the push. */
+export async function clearDirtyIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const drop = new Set(ids);
+  return mutateArray<string>(KEYS.SYNC_DIRTY, (current) =>
+    current.filter((id) => !drop.has(id))
+  );
+}
+
+/** Local deletes not yet pushed to the sync server. */
+export async function getTombstones(): Promise<SyncTombstone[]> {
+  const raw = await readJson<SyncTombstone[]>(KEYS.SYNC_TOMBSTONES, []);
+  return Array.isArray(raw) ? raw : [];
+}
+
+/** Drop pushed tombstones — call ONLY after the server accepted the push. */
+export async function clearTombstones(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const drop = new Set(ids);
+  return mutateArray<SyncTombstone>(KEYS.SYNC_TOMBSTONES, (tombstones) =>
+    tombstones.filter((t) => !drop.has(t.id))
+  );
+}
+
+/**
+ * Upsert an item arriving from sync, last-write-wins by `updated_at`. Runs
+ * through the same locked/guarded path as user mutations but deliberately does
+ * NOT mark the id dirty — applying a pulled change must never echo it back.
+ */
+export async function applyRemotePut(item: Item): Promise<void> {
+  const incoming = normalizeItem(item); // backfills updated_at, tags, status…
+  return mutateArray<Item>(KEYS.ITEMS, (items) => {
+    const index = items.findIndex((it) => it.id === incoming.id);
+    if (index < 0) return [incoming, ...items];
+    // LWW: replace only when the incoming write is strictly newer. Stored items
+    // may predate updated_at, so fall back to created_at as their clock.
+    const localClock = items[index].updated_at ?? items[index].created_at ?? '';
+    if (localClock >= (incoming.updated_at ?? '')) return items;
+    const next = items.slice();
+    next[index] = incoming;
+    return next;
+  });
+}
+
+/** Remove an item deleted remotely. No tombstone — that would echo the delete back. */
+export async function applyRemoteDelete(id: string): Promise<void> {
+  return mutateArray<Item>(KEYS.ITEMS, (items) => items.filter((it) => it.id !== id));
+}
+
+/* ---------------------------------------------------------------------------
  * Bulk / lifecycle
  * ------------------------------------------------------------------------- */
 
@@ -265,10 +388,18 @@ export async function replaceCollections(items: Item[], stacks: Stack[]): Promis
   await withLock(KEYS.ITEMS, () => writeJson(KEYS.ITEMS, items.map(normalizeItem)));
 }
 
-/** Clear all user data (Settings → "Delete all"). */
+/** Clear all user data (Settings → "Delete all"), including sync bookkeeping. */
 export async function clearAll(): Promise<void> {
   try {
-    await AsyncStorage.multiRemove([KEYS.ITEMS, KEYS.STACKS, KEYS.SETTINGS, KEYS.EVENTS]);
+    await AsyncStorage.multiRemove([
+      KEYS.ITEMS,
+      KEYS.STACKS,
+      KEYS.SETTINGS,
+      KEYS.EVENTS,
+      KEYS.SYNC_STATE,
+      KEYS.SYNC_DIRTY,
+      KEYS.SYNC_TOMBSTONES,
+    ]);
   } catch (error) {
     console.error('Failed to clear storage:', error);
     throw new Error('Failed to clear storage');
