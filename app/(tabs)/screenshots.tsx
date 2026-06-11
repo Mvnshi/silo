@@ -483,6 +483,10 @@ export default function ScreenshotsScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        // flexGrow: 0 is load-bearing: a horizontal ScrollView in a column
+        // flex layout otherwise claims ALL remaining vertical space, shoving
+        // the card deck off the bottom of the screen.
+        style={styles.filterScroller}
         contentContainerStyle={styles.filterStrip}
       >
         {FILTERS.map((f) => {
@@ -573,6 +577,10 @@ const styles = StyleSheet.create({
   header: { backgroundColor: 'transparent', padding: 16, alignItems: 'center' },
   headerTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5, color: INK[900] },
   headerSubtitle: { fontSize: 14, color: INK[500], marginTop: 4 },
+  filterScroller: {
+    flexGrow: 0,
+    flexShrink: 0,
+  },
   filterStrip: {
     paddingHorizontal: 16,
     paddingBottom: 10,
@@ -595,6 +603,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 10,
     paddingTop: 10,
+    // Opaque: the deck's cards are position:absolute, so this flex region is
+    // otherwise empty. Under expo-router's native tabs on iOS 26 an empty,
+    // transparent region lets the adjacent (Stacks) tab composite through.
+    backgroundColor: '#FAF5FF',
   },
   card: {
     width: CARD_WIDTH,

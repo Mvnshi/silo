@@ -541,6 +541,9 @@ export default function CalendarScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          // flexGrow: 0 keeps a horizontal ScrollView from claiming vertical
+          // flex space (it silently expands inside column layouts otherwise).
+          style={{ flexGrow: 0, flexShrink: 0 }}
           contentContainerStyle={styles.segmentedControl}
         >
           {/* Today segment — first + default, the recommendation home. */}
