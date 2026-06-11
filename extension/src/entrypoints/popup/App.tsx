@@ -76,6 +76,11 @@ export function App() {
   const [duplicate, setDuplicate] = useState<Item | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Note-mode fallback title. With only the `activeTab` permission, tab.url is
+  // readable ONLY after a real user invocation (toolbar click / shortcut) —
+  // on chrome:// pages, the Web Store, or a popup opened without a gesture,
+  // it's undefined. "Never lose a save": degrade to a quick note, don't brick.
+  const [manualTitle, setManualTitle] = useState('');
 
   // Avoid stomping a user choice after a slow extractor returns.
   const classificationTouchedRef = useRef(false);
@@ -159,7 +164,15 @@ export function App() {
   const previewDesc = extract?.description ?? extract?.caption ?? '';
   const thumbnail = extract?.thumbnailUrl;
 
-  const canSave = !!tab && !!tab.url && !extractLoading && saveState !== 'saving' && saveState !== 'saved';
+  // Note-mode (no readable URL) needs a typed title; page-mode needs extract
+  // to have settled (success OR failure — both unblock).
+  const noteMode = !!tab && !tab.url;
+  const canSave =
+    !!tab &&
+    !extractLoading &&
+    saveState !== 'saving' &&
+    saveState !== 'saved' &&
+    (noteMode ? manualTitle.trim().length > 0 : true);
 
   const onPickClassification = useCallback((c: Classification) => {
     setClassification(c);
@@ -167,16 +180,19 @@ export function App() {
   }, []);
 
   const onSave = useCallback(async () => {
-    if (!tab || !tab.url) return;
+    if (!tab) return;
+    if (!tab.url && !manualTitle.trim()) return;
     setSaveState('saving');
     setErrorMsg(null);
     try {
-      const type: ItemType = 'link';
+      // Note-mode: no readable URL -> persist a plain note built from the
+      // typed title (+ optional note body). Page-mode: the link item.
+      const type: ItemType = tab.url ? 'link' : 'note';
       const item = createItem({
         type,
         classification,
-        title: previewTitle,
-        url: tab.url,
+        title: tab.url ? previewTitle : manualTitle.trim(),
+        url: tab.url || undefined,
         description: previewDesc || undefined,
         // Note overrides description if both exist — capture the user's
         // intent first; the extracted description is metadata.
@@ -197,7 +213,7 @@ export function App() {
       setSaveState('error');
       setErrorMsg(err instanceof Error ? err.message : 'Save failed');
     }
-  }, [tab, classification, previewTitle, previewDesc, note, tags, thumbnail]);
+  }, [tab, classification, previewTitle, previewDesc, note, tags, thumbnail, manualTitle]);
 
   // Submit on Cmd/Ctrl+Enter from anywhere in the popup — small power-user perk.
   useEffect(() => {
@@ -227,8 +243,26 @@ export function App() {
       </header>
 
       <div className={styles.scroll}>
+        {/* Note-mode: the page URL isn't readable (protected page or no
+            invocation gesture) — offer a quick note instead of a dead end. */}
+        {noteMode ? (
+          <section>
+            <div className={styles.label}>
+              Can&apos;t read this page — save a quick note instead
+            </div>
+            <textarea
+              className={styles.note}
+              value={manualTitle}
+              onChange={(e) => setManualTitle(e.target.value)}
+              placeholder="What do you want to remember?"
+              rows={2}
+              autoFocus
+            />
+          </section>
+        ) : null}
+
         {/* Preview card — always visible, shimmers description while loading. */}
-        <div className={styles.previewCard}>
+        <div className={styles.previewCard} style={noteMode ? { display: 'none' } : undefined}>
           {thumbnail ? (
             <img className={styles.previewThumb} src={thumbnail} alt="" />
           ) : (

@@ -24,6 +24,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "puppeteer-core": "^24.43.1",
     "typescript": "^5.7.0",
     "wxt": "^0.20.0"
   },

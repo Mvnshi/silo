@@ -6,10 +6,15 @@
  * Behaviour (spec §3 "Spotlight-style overlay"):
  *  - Cmd+Shift+K opens at top-center.
  *  - Title input, classification chips, comma-separated tag input, Save pill.
- *  - ESC closes; click-outside closes; submit persists via lib/store.
+ *  - ESC closes; click-outside closes.
+ *
+ * PERSISTENCE GOES THROUGH THE BACKGROUND SERVICE WORKER, NOT lib/store.
+ * IndexedDB is origin-scoped: a Dexie write from a content script lands in
+ * the HOST PAGE's origin (e.g. example.com), invisible to the popup and
+ * scattered across every site the user saves from. chrome.runtime.sendMessage
+ * hops to the extension origin where the single shared DB lives.
  */
 import type { Classification, Item, ItemType } from '@/lib/types';
-import { addItem } from '@/lib/store';
 import { SPOTLIGHT_CSS } from './styles';
 
 /** Classifications shown as inline chips. Subset of the full set so the row
@@ -159,7 +164,13 @@ function mount(): void {
     const title = input.value.trim();
     const tags = parseTags(tagInput.value);
     try {
-      await addItem(buildNoteItem(title, selected, tags));
+      // Hop to the background SW — see the header comment for why we must
+      // not write IndexedDB from a content script.
+      const res = (await chrome.runtime.sendMessage({
+        type: 'silo:save-item',
+        item: buildNoteItem(title, selected, tags),
+      })) as { ok: boolean; error?: string } | undefined;
+      if (!res?.ok) throw new Error(res?.error || 'background save failed');
     } catch (err) {
       // Surface failure to console — the overlay still closes so the user
       // isn't stuck. The popup will show the (lack of) save when reopened.

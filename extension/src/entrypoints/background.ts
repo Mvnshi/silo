@@ -11,6 +11,7 @@ import { defineBackground } from 'wxt/utils/define-background';
 import { registerContextMenus } from '@/lib/background/menus';
 import { registerOmnibox } from '@/lib/background/omnibox';
 import { registerCommands } from '@/lib/background/commands';
+import { registerMessageBridge } from '@/lib/background/messages';
 
 export default defineBackground(() => {
   // Idempotent: chrome will warn but not break if menus already exist.
@@ -19,4 +20,7 @@ export default defineBackground(() => {
   });
   registerOmnibox();
   registerCommands();
+  // Content-script saves (spotlight et al.) persist through this bridge so
+  // IndexedDB rows land on the extension origin, not the host page's.
+  registerMessageBridge();
 });
