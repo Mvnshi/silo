@@ -56,7 +56,7 @@ function targetUrl(item: Item): string {
   if (item.url) return item.url;
   // Notes/screenshots have no web URL — open the popup focused on this id.
   // The popup will read `location.hash` and route accordingly.
-  return chrome.runtime.getURL(`popup.html#item=${encodeURIComponent(item.id)}`);
+  return chrome.runtime.getURL(`library.html#item=${encodeURIComponent(item.id)}`);
 }
 
 export function registerOmnibox(): void {
@@ -101,10 +101,10 @@ function resolveEnteredUrl(text: string): string {
   }
   if (trimmed.startsWith(FALLBACK_PREFIX)) {
     const q = trimmed.slice(FALLBACK_PREFIX.length);
-    return chrome.runtime.getURL(`popup.html#search?q=${encodeURIComponent(q)}`);
+    return chrome.runtime.getURL(`library.html?q=${encodeURIComponent(q)}`);
   }
   // Anything else: treat as a free-text query and open the popup search view.
-  return chrome.runtime.getURL(`popup.html#search?q=${encodeURIComponent(trimmed)}`);
+  return chrome.runtime.getURL(`library.html?q=${encodeURIComponent(trimmed)}`);
 }
 
 function openUrl(url: string, disposition: chrome.omnibox.OnInputEnteredDisposition): void {

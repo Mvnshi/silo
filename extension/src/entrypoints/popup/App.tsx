@@ -232,14 +232,28 @@ export function App() {
     <div className={styles.root}>
       <header className={styles.header}>
         <span className={styles.wordmark}>Silo</span>
-        <button
-          type="button"
-          className={styles.closeBtn}
-          aria-label="Close"
-          onClick={() => window.close()}
-        >
-          <CloseIcon />
-        </button>
+        <span style={{ display: 'flex', gap: 4 }}>
+          <button
+            type="button"
+            className={styles.closeBtn}
+            aria-label="Open your library"
+            title="See everything you've saved"
+            onClick={() => {
+              window.open(chrome.runtime.getURL('library.html'), '_blank');
+              window.close();
+            }}
+          >
+            <GridIcon />
+          </button>
+          <button
+            type="button"
+            className={styles.closeBtn}
+            aria-label="Close"
+            onClick={() => window.close()}
+          >
+            <CloseIcon />
+          </button>
+        </span>
       </header>
 
       <div className={styles.scroll}>
@@ -346,6 +360,18 @@ export function App() {
         ) : null}
       </footer>
     </div>
+  );
+}
+
+function GridIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
   );
 }
 

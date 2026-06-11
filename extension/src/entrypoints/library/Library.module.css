@@ -1,0 +1,260 @@
+/**
+ * Library page styles. Tokens mirror lib/theme.ts (violet brand + slate ink) —
+ * keep in sync by hand; CSS modules can't import TS consts.
+ */
+:root {
+  --brand-50: #f5f3ff;
+  --brand-100: #ede9fe;
+  --brand-200: #ddd6fe;
+  --brand-600: #7c3aed;
+  --brand-700: #6d28d9;
+  --ink-100: #f1f5f9;
+  --ink-300: #cbd5e1;
+  --ink-400: #94a3b8;
+  --ink-500: #64748b;
+  --ink-700: #334155;
+  --ink-900: #0f172a;
+  --hairline: rgba(15, 23, 42, 0.08);
+}
+
+/* Page scaffold — soft brand gradient like the phone's GRADIENTS.page. */
+.page {
+  min-height: 100vh;
+  margin: 0;
+  padding: 32px clamp(16px, 4vw, 48px) 64px;
+  background: linear-gradient(160deg, #eef2ff, #f5f3ff 50%, #faf5ff);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--ink-900);
+  box-sizing: border-box;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.title {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.6px;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--ink-500);
+}
+
+.search {
+  flex: 1;
+  min-width: 240px;
+  max-width: 420px;
+  padding: 12px 18px;
+  font-size: 15px;
+  color: var(--ink-900);
+  background: #fff;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  outline: none;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+.search:focus {
+  border-color: var(--brand-200);
+  box-shadow: 0 0 0 3px var(--brand-100);
+}
+
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.chip {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-700);
+  background: #fff;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.chip:active {
+  transform: scale(0.97);
+}
+.chipActive {
+  color: #fff;
+  background: var(--brand-600);
+  border-color: var(--brand-600);
+}
+
+/* Masonry via CSS columns — cards must avoid column breaks. */
+.grid {
+  columns: 4 260px;
+  column-gap: 16px;
+}
+
+.card {
+  break-inside: avoid;
+  margin-bottom: 16px;
+  background: #fff;
+  border: 1px solid var(--hairline);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.card:hover {
+  box-shadow: 0 10px 28px rgba(124, 58, 237, 0.12);
+  transform: translateY(-2px);
+}
+.cardHighlight {
+  box-shadow: 0 0 0 3px var(--brand-600);
+}
+
+.cardImg {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  background: var(--ink-100);
+}
+
+.cardTile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96px;
+  font-size: 40px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.cardBody {
+  padding: 14px 16px 12px;
+}
+
+.cardClass {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--brand-600);
+}
+
+.cardTitle {
+  margin: 6px 0 0;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.2px;
+}
+
+.cardDesc,
+.cardQuote {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-500);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cardQuote {
+  font-style: italic;
+  border-left: 3px solid var(--brand-200);
+  padding-left: 10px;
+}
+
+.cardTags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brand-700);
+  background: var(--brand-50);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+.cardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.cardDate {
+  font-size: 11px;
+  color: var(--ink-400);
+}
+
+.cardActions {
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.card:hover .cardActions {
+  opacity: 1;
+}
+
+.actionBtn {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: var(--brand-600);
+  background: var(--brand-50);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.actionDanger {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.empty {
+  text-align: center;
+  padding: 96px 24px;
+  color: var(--ink-500);
+}
+.empty h2 {
+  margin: 18px 0 6px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  color: var(--ink-900);
+}
+.empty p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.emptyOrb {
+  width: 88px;
+  height: 88px;
+  margin: 0 auto;
+  display: grid;
+  place-items: center;
+  font-size: 36px;
+  color: #fff;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  box-shadow: 0 16px 32px rgba(139, 92, 246, 0.35);
+}

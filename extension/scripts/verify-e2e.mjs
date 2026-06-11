@@ -170,6 +170,24 @@ try {
     await popupPage.screenshot({ path: '/tmp/silo-e2e-popup-saved.png' });
   }
 
+  // ---- Library page shows everything ----------------------------------------
+  const libPage = await browser.newPage();
+  await libPage.goto(`chrome-extension://${extId}/library.html`, {
+    waitUntil: 'domcontentloaded',
+  });
+  await sleep(1200);
+  const libText = await libPage.evaluate(() => document.body.innerText);
+  check(
+    'library lists the spotlight note',
+    libText.includes(NOTE_TITLE)
+  );
+  check(
+    'library lists the popup save',
+    libText.includes(POPUP_NOTE)
+  );
+  check('library shows the saved count', /\d+ saved/.test(libText));
+  await libPage.screenshot({ path: '/tmp/silo-e2e-library.png' });
+
   console.log('\nItems in extension IndexedDB:');
   for (const i of items) console.log(`  • [${i.type}/${i.classification}] ${i.title}`);
 } finally {
