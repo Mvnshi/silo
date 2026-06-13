@@ -2,7 +2,9 @@
 
 Silo turns the things you save — links, screenshots, notes, and social posts — into an organized, schedulable library. Paste or **Share → Silo** any YouTube / TikTok / X / Instagram / Reddit link and it's auto-classified, titled, thumbnailed, and playable inline; screenshots and notes get the same AI treatment. Everything lives on-device.
 
-> **New here?** Read this, then [`FOUNDER_SETUP.md`](FOUNDER_SETUP.md) for the account-level setup (Cloudflare, EAS, Apple). Day-to-day status + the task backlog live in [`TODO.md`](TODO.md) and [`LAUNCH_REPORT.md`](LAUNCH_REPORT.md).
+> **Just want to run it?** → **[`SETUP.md`](SETUP.md)** — copy-paste setup from a fresh clone, both for **personal use** (your Mac + phone, free) and **public deploy**.
+>
+> **New here?** Read this for the architecture, then [`SETUP.md`](SETUP.md) to run it. [`VISION.md`](VISION.md) is the product north-star; [`SYNC.md`](SYNC.md) the cross-device sync design; [`FOUNDER_SETUP.md`](FOUNDER_SETUP.md) the App-Store launch checklist; [`TODO.md`](TODO.md) / [`LAUNCH_REPORT.md`](LAUNCH_REPORT.md) the status.
 
 ## Stack
 
