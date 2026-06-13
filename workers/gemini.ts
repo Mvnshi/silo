@@ -28,7 +28,11 @@
 import { Env, ClassificationResult, ScheduleSuggestion, ErrorResponse } from './types';
 import { extractLink, ExtractedLink } from './extract';
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+// Current stable flash model. gemini-2.0-flash was sunset (404 "no longer
+// available") in 2026 — when this 404s again, bump to the next stable flash
+// (`curl .../v1beta/models` lists what your key can call). 2.5-flash is fast +
+// cheap, ideal for classify/extract/suggest.
+const GEMINI_MODEL = 'gemini-2.5-flash';
 
 /** Allowed classification values; anything else falls back to 'other'. */
 const CLASSIFICATIONS = [
