@@ -35,6 +35,16 @@ capture (share/screenshot/note)
 
 The **bucket-list trigger engine** (types reserved in `lib/types.ts`) is the L2 centerpiece: every saved item can carry conditions (near a place, free evening, right season, needs another person), and the engine fires recommendations when conditions are actually met — instead of letting saves rot in a list.
 
+### The feedback loop — ✅ shipped (`lib/resurface.ts`)
+
+The "learn" arrow is real now. Three mechanics keep saves from rotting, all surfaced in the **Today** view's check-in zone:
+
+- **After-event report** — when a scheduled thing's time elapses, "How did it go?" → *Did it / Skipped* → *Again sometime? (♥ Yes / done)* or *Reschedule / Retire*. A "Yes" marks it **loved** and flags it for re-recommendation.
+- **Repeatables** — a loved item off its 7-day cooldown jumps to the top of "3 things you could do today" with a *"You loved this last time"* badge. This is the habit loop: good workouts/recipes/places come back.
+- **Staleness nudge** — a card you haven't *opened* in 21+ days surfaces "Still want this? *Keep / Archive*." `last_seen_at` is ambient, local, and never synced (no per-open churn).
+
+This is the line mymind won't cross — they *"stop at the threshold of action."* Silo asks how it went, learns, and brings the good things back.
+
 ## Privacy architecture is the moat
 
 The entire context graph — saves, schedule, locations, habits — **lives on-device**. The Cloudflare Worker is a thin, keyless-to-the-client proxy; only narrow, ephemeral prompts ever leave the phone, and nothing is stored server-side. This is deliberate:

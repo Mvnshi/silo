@@ -55,7 +55,8 @@ import GlassCard from '@/components/ui/GlassCard';
 import TodayView, { TodayEvent } from '@/components/TodayView';
 import { BRAND, ACCENT, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
 import { Item, ScheduledEvent } from '@/lib/types';
-import { getItems, getItemById, updateItem, addItem, getEvents } from '@/lib/storage';
+import { getItems, getItemById, updateItem, addItem, getEvents, touchSeen } from '@/lib/storage';
+import { buildReview, ReviewOutcome } from '@/lib/resurface';
 import { createItem } from '@/lib/items';
 import { requestCalendarPermissions, scheduleItemReview } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
@@ -529,6 +530,40 @@ export default function CalendarScreen() {
     }
   }, []);
 
+  /** After-event report verdict from the Today check-in zone (lib/resurface). */
+  const reviewItem = useCallback(async (item: Item, outcome: ReviewOutcome) => {
+    try {
+      await updateItem(item.id, buildReview(item, outcome));
+      if (outcome === 'loved' || outcome === 'good') celebrationHaptic();
+      else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await loadItems();
+    } catch (err) {
+      console.error('review failed', err);
+    }
+  }, []);
+
+  /** Keep a stale item: reset its seen-clock (local, unsynced) so it stops nudging. */
+  const keepStaleItem = useCallback(async (id: string) => {
+    try {
+      await touchSeen(id);
+      Haptics.selectionAsync();
+      await loadItems();
+    } catch (err) {
+      console.error('keep stale failed', err);
+    }
+  }, []);
+
+  /** Archive a stale item from the nudge. */
+  const archiveStaleItem = useCallback(async (id: string) => {
+    try {
+      await updateItem(id, { archived: true, status: 'archived' });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await loadItems();
+    } catch (err) {
+      console.error('archive stale failed', err);
+    }
+  }, []);
+
   return (
     <View style={styles.container}>
       {/* Gradient Background */}
@@ -658,6 +693,9 @@ export default function CalendarScreen() {
           onScheduleItem={openScheduleForItem}
           onDoneItem={markItemDone}
           onSnoozeItem={snoozeItemToTomorrow}
+          onReview={reviewItem}
+          onKeepStale={keepStaleItem}
+          onArchiveStale={archiveStaleItem}
           onOpenItem={openItem}
         />
       )}

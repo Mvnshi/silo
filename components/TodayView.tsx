@@ -20,6 +20,13 @@ import { BRAND, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
 import { Item, Classification } from '@/lib/types';
 import { classConfig } from '@/lib/classification';
 import { toLocalDateString } from '@/lib/datetime';
+import { EventReviewCard, StaleCard } from '@/components/ReviewCard';
+import {
+  getPendingReviews,
+  getStaleItems,
+  isRepeatableDue,
+  ReviewOutcome,
+} from '@/lib/resurface';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -39,6 +46,20 @@ interface Props {
   onDoneItem: (itemId: string) => void;
   onSnoozeItem: (itemId: string) => void;
   onOpenItem: (itemId: string) => void;
+  /** After-event report verdict (lib/resurface). */
+  onReview: (item: Item, outcome: ReviewOutcome) => void;
+  /** Keep a stale item (resets its seen-clock). */
+  onKeepStale: (id: string) => void;
+  /** Archive a stale item. */
+  onArchiveStale: (id: string) => void;
+}
+
+/** "saved 3mo ago"-style age label from an ISO date. */
+function ageLabel(iso: string): string {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days < 30) return `saved ${days}d ago`;
+  if (days < 365) return `saved ${Math.floor(days / 30)}mo ago`;
+  return `saved ${Math.floor(days / 365)}y ago`;
 }
 
 /** Great-circle distance in miles. Inline to avoid pulling a geo dep. */
@@ -128,9 +149,16 @@ export default function TodayView({
   onDoneItem,
   onSnoozeItem,
   onOpenItem,
+  onReview,
+  onKeepStale,
+  onArchiveStale,
 }: Props) {
   const now = useMemo(() => new Date(), []);
   const todayKey = toLocalDateString(now);
+
+  // Resurfacing lanes (lib/resurface): "how did it go?" + "still want this?".
+  const pendingReviews = useMemo(() => getPendingReviews(allItems, now), [allItems, now]);
+  const staleItems = useMemo(() => getStaleItems(allItems, now), [allItems, now]);
 
   // Filter events down to today, sorted.
   const todayEvents = useMemo(
@@ -152,28 +180,33 @@ export default function TodayView({
   const isNow = minutesUntilNext !== null && minutesUntilNext >= -30 && minutesUntilNext <= 30;
 
   // 3 things you could do today: not done/archived/scheduled, ranked by
-  // bucketlist > time-of-day fit > recency. Take 3.
+  // loved-repeatable > bucketlist > time-of-day fit > recency. A "loved" item
+  // off its cooldown is the strongest pick — that's the habit loop paying off.
   const topThree = useMemo(() => {
     const hour = now.getHours();
     return allItems
       .filter(
         (i) =>
           !i.archived &&
-          !i.viewed &&
+          i.rating !== 'retired' &&
           !i.bucketlist_completed &&
-          i.status !== 'done' &&
+          // A loved repeatable is 'done' but deliberately resurfaced again.
+          (i.status !== 'done' || isRepeatableDue(i, now)) &&
+          (!i.viewed || isRepeatableDue(i, now)) &&
           !i.scheduled_date
       )
       .map((i) => ({
         item: i,
+        repeat: isRepeatableDue(i, now),
         score:
+          (isRepeatableDue(i, now) ? 1000 : 0) +
           (i.bucketlist ? 100 : 0) +
           timeOfDayFit(i.classification, hour) * 10 +
           new Date(i.created_at).getTime() / 1e12,
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 3)
-      .map((x) => x.item);
+      .map((x) => ({ item: x.item, repeat: x.repeat }));
   }, [allItems, now]);
 
   // Near you: items with coordinates within ~25 mi, sorted ascending. Up to 2.
@@ -220,6 +253,37 @@ export default function TodayView({
         <Text style={styles.greetingTitle}>Today</Text>
         <Text style={styles.greetingSub}>{format(now, 'EEEE, MMMM d')}</Text>
       </View>
+
+      {/* Check-in: close the loop on things you scheduled. */}
+      {pendingReviews.length > 0 && (
+        <>
+          <Text style={styles.sectionTitle}>How did it go?</Text>
+          {pendingReviews.map((item) => (
+            <EventReviewCard
+              key={item.id}
+              item={item}
+              onOutcome={onReview}
+              onReschedule={onScheduleItem}
+            />
+          ))}
+        </>
+      )}
+
+      {/* Resurface: things going stale in the pile. */}
+      {staleItems.length > 0 && (
+        <>
+          <Text style={styles.sectionTitle}>Still want these?</Text>
+          {staleItems.map((item) => (
+            <StaleCard
+              key={item.id}
+              item={item}
+              ageLabel={ageLabel(item.created_at)}
+              onKeep={onKeepStale}
+              onArchive={onArchiveStale}
+            />
+          ))}
+        </>
+      )}
 
       {/* Now / Next Up */}
       <GlassCard tint="light" intensity={50} radius={RADIUS.xl} style={styles.heroCard}>
@@ -278,7 +342,7 @@ export default function TodayView({
           </Text>
         </View>
       ) : (
-        topThree.map((item) => {
+        topThree.map(({ item, repeat }) => {
           const cfg = classConfig(item.classification);
           return (
             <View key={item.id} style={styles.row}>
@@ -302,7 +366,12 @@ export default function TodayView({
                     <Text style={styles.rowTitle} numberOfLines={1}>
                       {item.title}
                     </Text>
-                    {item.description ? (
+                    {repeat ? (
+                      <View style={styles.lovedTag}>
+                        <Ionicons name="heart" size={11} color={BRAND[600]} />
+                        <Text style={styles.lovedTagText}>You loved this last time</Text>
+                      </View>
+                    ) : item.description ? (
                       <Text style={styles.rowSub} numberOfLines={1}>
                         {item.description}
                       </Text>
@@ -510,6 +579,8 @@ const styles = StyleSheet.create({
   },
   rowTitle: { fontSize: 15, fontWeight: '600', color: INK[900] },
   rowSub: { fontSize: 12, color: INK[500], marginTop: 2 },
+  lovedTag: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
+  lovedTagText: { fontSize: 11, fontWeight: '700', color: BRAND[600] },
   rowActions: { flexDirection: 'row', gap: 4, marginLeft: 8 },
   actionBtn: {
     width: 34,

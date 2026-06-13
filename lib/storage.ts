@@ -193,6 +193,23 @@ export async function deleteItem(id: string): Promise<void> {
   await clearDirtyIds([id]);
 }
 
+/**
+ * Record that an item was just surfaced on screen (drives the staleness nudge
+ * in lib/resurface). DELIBERATELY does NOT bump `updated_at` or mark the item
+ * dirty: last_seen_at is ambient local telemetry, not user intent, so it never
+ * syncs and never causes per-open sync churn. No-op if the item is gone.
+ */
+export async function touchSeen(id: string): Promise<void> {
+  const seenIso = new Date().toISOString();
+  await mutateArray<Item>(KEYS.ITEMS, (items) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index < 0) return items;
+    const next = items.slice();
+    next[index] = { ...items[index], last_seen_at: seenIso };
+    return next;
+  });
+}
+
 /* ---------------------------------------------------------------------------
  * Stacks
  * ------------------------------------------------------------------------- */

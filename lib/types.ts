@@ -58,6 +58,15 @@ export type SocialPlatform =
   | 'web';
 
 /**
+ * Post-event verdict from the after-event report (lib/resurface.ts).
+ * 'loved'  → re-recommended on a cooldown ("do it again").
+ * 'good'   → done, kept, not pushed back at you.
+ * 'skipped'→ didn't happen; offered a reschedule.
+ * 'retired'→ explicitly off the list (archived, never resurfaced).
+ */
+export type ItemRating = 'loved' | 'good' | 'skipped' | 'retired';
+
+/**
  * Individual content item saved by the user
  */
 export interface Item {
@@ -120,6 +129,28 @@ export interface Item {
   platform?: SocialPlatform;
   /** Author / creator from oEmbed/OG (channel name, display name, or @handle). */
   author?: string;
+
+  // --- Resurfacing & feedback loop (lib/resurface.ts) ---
+  /**
+   * Last time this item was surfaced on a detail/full screen (ISO). Drives the
+   * "you haven't seen this in a while" nudge. Ambient telemetry: written via
+   * storage.touchSeen WITHOUT bumping updated_at, so it stays LOCAL and never
+   * causes sync churn.
+   */
+  last_seen_at?: string;
+  /** Last time the user reported they actually did this (ISO). */
+  last_done_at?: string;
+  /** How many times the user has done this — the repeatable-habit counter. */
+  times_done?: number;
+  /** Post-event verdict; 'retired' takes the item off all resurfacing. */
+  rating?: ItemRating;
+  /** Whether the user asked to be reminded to do this again. */
+  wants_again?: boolean;
+  /**
+   * Last time an after-event report was recorded (ISO). Gates re-prompting:
+   * we only ask again once a NEW scheduled slot has elapsed past this.
+   */
+  last_reviewed_at?: string;
 }
 
 /**

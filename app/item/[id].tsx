@@ -50,7 +50,7 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { Item } from '@/lib/types';
-import { getItemById, updateItem, deleteItem } from '@/lib/storage';
+import { getItemById, updateItem, deleteItem, touchSeen } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { parseLocalDate } from '@/lib/datetime';
 import PressableScale from '@/components/ui/PressableScale';
@@ -105,7 +105,11 @@ export default function ItemDetailScreen() {
     try {
       const loadedItem = await getItemById(id);
       setItem(loadedItem);
-      
+
+      // Record the open so the staleness nudge (lib/resurface) knows this card
+      // was just on screen. Ambient + local — never blocks the load.
+      if (loadedItem) touchSeen(id).catch(() => {});
+
       // Initialize editing state
       if (loadedItem) {
         setEditingTitle(loadedItem.title);
