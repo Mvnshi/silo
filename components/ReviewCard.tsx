@@ -22,7 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated from 'react-native-reanimated';
 import PressableScale from '@/components/ui/PressableScale';
 import { Item } from '@/lib/types';
-import { ReviewOutcome } from '@/lib/resurface';
+import { ReviewOutcome, scheduledEnd } from '@/lib/resurface';
 import { classConfig } from '@/lib/classification';
 import {
   GRADIENTS,
@@ -35,6 +35,31 @@ import {
   TYPE,
 } from '@/lib/theme';
 import { exitFade, LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
+
+/**
+ * "Yesterday, 7:00 PM" — the elapsed slot, phrased the way a person would.
+ * Falls back to the neutral prompt if the item somehow has no schedule.
+ */
+function whenLabel(item: Item): string {
+  const end = scheduledEnd(item);
+  if (!end) return 'How did it go?';
+
+  const time = end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const days = Math.round((startOfToday.getTime() - endOfDay(end)) / (24 * 60 * 60 * 1000));
+
+  if (days <= 0) return `Earlier today, ${time}`;
+  if (days === 1) return `Yesterday, ${time}`;
+  if (days < 7) return `${end.toLocaleDateString(undefined, { weekday: 'long' })}, ${time}`;
+  return `${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
+}
+
+function endOfDay(d: Date): number {
+  const copy = new Date(d);
+  copy.setHours(0, 0, 0, 0);
+  return copy.getTime();
+}
 
 /* ---------- after-event report ---------- */
 
@@ -76,8 +101,12 @@ export function EventReviewCard({ item, onOutcome, onReschedule }: EventReviewPr
             {item.title}
           </Text>
           <Text style={styles.prompt}>
+            {/* The 'ask' step sits directly under a "How did it go?" section
+                header, so repeating it here says nothing. Show WHEN it was on
+                the calendar instead — that is the context the user needs to
+                remember whether they did it. */}
             {step === 'ask'
-              ? 'How did it go?'
+              ? whenLabel(item)
               : step === 'did'
                 ? 'Do it again sometime?'
                 : 'What do you want to do with it?'}

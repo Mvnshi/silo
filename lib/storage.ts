@@ -34,6 +34,7 @@ const KEYS = {
   USER_ID: '@silo:userId',
   SCHEMA_VERSION: '@silo:schemaVersion',
   ONBOARDED: '@silo:onboarded',
+  APPEARANCE: '@silo:appearance',
   // Sync (S1, SYNC.md). Key names are a contract with the e2e harness — don't rename.
   SYNC_STATE: '@silo:syncState',
   SYNC_DIRTY: '@silo:syncDirty',
@@ -61,6 +62,34 @@ export async function setOnboarded(): Promise<void> {
     await AsyncStorage.setItem(KEYS.ONBOARDED, '1');
   } catch (error) {
     console.warn('Failed to persist onboarding flag:', error);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Appearance preference
+ *
+ * Deliberately its own key rather than a field on UserSettings: the theme has
+ * to resolve on the very first frame, and settings are a heavier read that the
+ * provider shouldn't block on.
+ * ------------------------------------------------------------------------- */
+
+/** 'system' | 'light' | 'dark'; null when the user has never chosen. */
+export async function getAppearancePreference(): Promise<'system' | 'light' | 'dark' | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.APPEARANCE);
+    return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setAppearancePreference(
+  value: 'system' | 'light' | 'dark'
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.APPEARANCE, value);
+  } catch (error) {
+    console.warn('Failed to persist appearance preference:', error);
   }
 }
 

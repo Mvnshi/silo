@@ -41,6 +41,8 @@ import { runMigrations, hasOnboarded } from '@/lib/storage';
 import { drainPendingShares } from '@/lib/shareImport';
 import { ToastProvider } from '@/components/ui/Toast';
 import TextPromptHost from '@/components/ui/TextPrompt';
+import ThemeProvider from '@/components/ThemeProvider';
+import { useThemeColors } from '@/lib/useTheme';
 
 // Hold the native splash until we know whether to show onboarding or the tabs,
 // so the user never sees a blank frame between the splash and a mounted screen.
@@ -132,22 +134,44 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        {/* Screen-level <StatusBar> instances override this (last mounted wins) —
-            see reel.tsx, which needs light glyphs over its full-bleed media. */}
-        <StatusBar style="dark" />
-        <ToastProvider>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
-            <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
-          </Stack>
-          {/* Backs promptForText() — replaces the iOS-only Alert.prompt. */}
-          <TextPromptHost />
-        </ToastProvider>
-        {/* First launch only: route into onboarding (it replaces back to tabs). */}
-        {needsOnboarding && <Redirect href="/onboarding" />}
+        <ThemeProvider>
+          <AppShell needsOnboarding={needsOnboarding} />
+        </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
+  );
+}
+
+/**
+ * Split out so it renders INSIDE ThemeProvider and can read the resolved
+ * palette — the status bar and the native stack background both have to follow
+ * appearance or every push flashes white on a dark device.
+ */
+function AppShell({ needsOnboarding }: { needsOnboarding: boolean }) {
+  const colors = useThemeColors();
+
+  return (
+    <>
+      {/* Screen-level <StatusBar> instances override this (last mounted wins) —
+          see reel.tsx, which needs light glyphs over its full-bleed media. */}
+      <StatusBar style={colors.statusBar} />
+      <ToastProvider>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: colors.page },
+          }}
+        >
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
+          <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+        </Stack>
+        {/* Backs promptForText() — replaces the iOS-only Alert.prompt. */}
+        <TextPromptHost />
+      </ToastProvider>
+      {/* First launch only: route into onboarding (it replaces back to tabs). */}
+      {needsOnboarding && <Redirect href="/onboarding" />}
+    </>
   );
 }
 

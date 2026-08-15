@@ -25,9 +25,10 @@ import { NativeTabs, Label, Icon } from 'expo-router/unstable-native-tabs';
 import { useEffect, useRef } from 'react';
 import { useSegments } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { BRAND, INK } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 
 export default function TabsLayout() {
+  const colors = useThemeColors();
   // segments[0] is the "(tabs)" group; segments[1] is the active tab route
   // ("reel" / "index" / "add" / …). usePathname() strips group segments, which
   // is why the old pathname regex could never match.
@@ -46,12 +47,16 @@ export default function TabsLayout() {
 
   return (
     <NativeTabs
-      tintColor={BRAND[600]}
-      iconColor={{ default: INK[400], selected: BRAND[600] }}
+      // Explicit colours (not the window tint, which is stock #007AFF) AND
+      // driven by our resolved palette, so a user who forces light or dark
+      // independently of the OS still gets a tab bar that matches the app.
+      tintColor={colors.brand}
+      iconColor={{ default: colors.decorative, selected: colors.brand }}
       labelStyle={{
-        default: { color: INK[500], fontSize: 10, fontWeight: '500' },
-        selected: { color: BRAND[600], fontSize: 10, fontWeight: '700' },
+        default: { color: colors.textTertiary, fontSize: 10, fontWeight: '500' },
+        selected: { color: colors.brand, fontSize: 10, fontWeight: '700' },
       }}
+      blurEffect={colors.appearance === 'dark' ? 'systemChromeMaterialDark' : 'systemChromeMaterial'}
       minimizeBehavior="onScrollDown"
     >
       <NativeTabs.Trigger name="reel">

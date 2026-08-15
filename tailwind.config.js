@@ -14,6 +14,10 @@ module.exports = {
     "./components/**/*.{js,jsx,ts,tsx}",
   ],
   presets: [require("nativewind/preset")],
+  // 'class' so appearance is driven by components/ThemeProvider (which pushes
+  // the resolved value into NativeWind's colorScheme), not by the OS directly —
+  // the user can force light or dark independently of the system setting.
+  darkMode: "class",
   theme: {
     extend: {
       colors: {

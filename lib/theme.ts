@@ -248,3 +248,131 @@ export const GRADIENTS = {
 /** Minimum comfortable tap target (Apple HIG). Use with `hitSlop` on small icons. */
 export const HIT_SLOP = { top: 10, bottom: 10, left: 10, right: 10 } as const;
 export const MIN_TAP = 44;
+
+/* ---------------------------------------------------------------------------
+ * Appearance
+ *
+ * `TEXT` / `SURFACE` / `HAIRLINE` above are the LIGHT values, kept as named
+ * exports so the ~200 existing call sites keep working unchanged. The palettes
+ * below are the same roles resolved per appearance; read them through
+ * `useThemeColors()` (lib/useTheme.ts) in anything that should follow the
+ * system setting.
+ *
+ * Dark is not "light with the lightness flipped": surfaces stay slightly warm
+ * (a pure #000 card on an OLED reads as a hole), the brand lightens two steps
+ * so violet-on-near-black keeps its chroma without glowing, and hairlines
+ * become light-on-dark rather than dark-on-light.
+ * ------------------------------------------------------------------------- */
+
+export type Appearance = 'light' | 'dark';
+
+/** Every colour role a screen can need, resolved for one appearance. */
+export interface ThemeColors {
+  /* text */
+  text: string;
+  textSecondary: string;
+  textTertiary: string;
+  textPlaceholder: string;
+  textInverse: string;
+  textBrand: string;
+  /** Non-text decoration only — chevrons, dividers, glyphs. */
+  decorative: string;
+  /* surfaces */
+  card: string;
+  raised: string;
+  sunken: string;
+  field: string;
+  page: string;
+  scrim: string;
+  hairline: string;
+  /* brand + status, adjusted for the ground they sit on */
+  brand: string;
+  brandSoft: string;
+  brandBorder: string;
+  danger: string;
+  dangerSoft: string;
+  success: string;
+  warning: string;
+  warningSoft: string;
+  /* page + header washes */
+  pageGradient: readonly [string, string, string];
+  headerGradient: readonly [string, string];
+  /** Matching `expo-blur` tint for GlassCard and friends. */
+  glassTint: 'light' | 'dark';
+  /** Matching `expo-status-bar` style for screens on the page background. */
+  statusBar: 'light' | 'dark';
+  appearance: Appearance;
+}
+
+export const LIGHT_COLORS: ThemeColors = {
+  text: INK[900],
+  textSecondary: INK[600],
+  textTertiary: INK[500],
+  textPlaceholder: INK[500],
+  textInverse: '#ffffff',
+  textBrand: BRAND[600],
+  decorative: INK[400],
+
+  card: '#ffffff',
+  raised: '#ffffff',
+  sunken: INK[50],
+  field: INK[100],
+  page: '#F5F3FF',
+  scrim: 'rgba(15, 23, 42, 0.45)',
+  hairline: HAIRLINE,
+
+  brand: BRAND[600],
+  brandSoft: BRAND[100],
+  brandBorder: BRAND[200],
+  danger: STATUS.danger,
+  dangerSoft: STATUS.dangerSoft,
+  success: STATUS.success,
+  warning: STATUS.warning,
+  warningSoft: STATUS.warningSoft,
+
+  pageGradient: GRADIENTS.page,
+  headerGradient: GRADIENTS.header,
+  glassTint: 'light',
+  statusBar: 'dark',
+  appearance: 'light',
+};
+
+export const DARK_COLORS: ThemeColors = {
+  // Contrast on the #16161d card: text 15.4:1, secondary 7.1:1, tertiary 4.9:1.
+  text: '#f4f4f7',
+  textSecondary: '#b6b8c6',
+  textTertiary: '#9093a5',
+  textPlaceholder: '#82859a',
+  textInverse: INK[900],
+  textBrand: BRAND[300],
+  decorative: '#6e7186',
+
+  card: '#16161d',
+  raised: '#1d1d26',
+  sunken: '#101016',
+  field: '#22222c',
+  page: '#0b0b10',
+  scrim: 'rgba(0, 0, 0, 0.62)',
+  hairline: HAIRLINE_DARK,
+
+  // Two steps lighter than the light-mode primary: BRAND[600] on near-black
+  // loses chroma and reads muddy, while 400 keeps the violet identity.
+  brand: BRAND[400],
+  brandSoft: 'rgba(139, 92, 246, 0.16)',
+  brandBorder: 'rgba(167, 139, 250, 0.28)',
+  danger: '#f87171',
+  dangerSoft: 'rgba(248, 113, 113, 0.14)',
+  success: '#4ade80',
+  warning: '#fbbf24',
+  warningSoft: 'rgba(251, 191, 36, 0.14)',
+
+  pageGradient: ['#0b0b10', '#121019', '#16121f'] as const,
+  headerGradient: ['#171326', '#12111c'] as const,
+  glassTint: 'dark',
+  statusBar: 'light',
+  appearance: 'dark',
+};
+
+export function colorsFor(appearance: Appearance): ThemeColors {
+  return appearance === 'dark' ? DARK_COLORS : LIGHT_COLORS;
+}
