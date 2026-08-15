@@ -34,6 +34,7 @@ import {
   Pressable,
   TextInput,
   Linking,
+  type ViewStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 // Platform-default map provider: Apple Maps on iOS (no SDK pod, no API key,
@@ -71,16 +72,14 @@ import {
   BRAND,
   DURATION,
   GRADIENTS,
-  HAIRLINE,
-  INK,
   RADIUS,
   SHADOW,
   SPACE,
   SPRING,
-  STATUS,
-  TEXT,
   TYPE,
+  type ThemeColors,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { Item, ScheduledEvent } from '@/lib/types';
 import { getItems, getItemById, updateItem, addItem, getEvents, touchSeen } from '@/lib/storage';
 import { buildReview, ReviewOutcome } from '@/lib/resurface';
@@ -140,6 +139,10 @@ export default function CalendarScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const c = useThemeColors();
+  // Rebuilt only when the appearance flips — this screen paints four panes of
+  // small coloured chrome and re-deriving it every render would churn.
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
   const [viewMode, setViewMode] = useState<ViewMode>('today');
   const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>('day');
   const [loading, setLoading] = useState(true);
@@ -612,6 +615,17 @@ export default function CalendarScreen() {
     width: pillWidth.value,
   }));
 
+  /**
+   * Right-edge scroll fade, ending on the control's own surface. Hardcoded to
+   * white it was a glowing bar on dark; the transparent stop is the same card
+   * colour at zero alpha (both palettes give `card` as 6-digit hex, and RN
+   * accepts the #rrggbbaa form) so the ramp never travels through grey.
+   */
+  const segmentFadeColors = useMemo(
+    () => [`${c.card}00`, c.card] as [string, string],
+    [c.card]
+  );
+
   // ---------------------------------------------------------------------------
   // Today-view glue: storage events for today + a few small handlers that wire
   // the Today recommendation rows to the same code paths used elsewhere in this
@@ -777,17 +791,17 @@ export default function CalendarScreen() {
   }, []);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, dyn.container]}>
       {/* Gradient Background */}
       <LinearGradient
-        colors={GRADIENTS.page}
+        colors={[...c.pageGradient]}
         style={StyleSheet.absoluteFill}
       />
 
       {/* Header with Segmented Control */}
       <View style={[styles.header, { paddingTop: insets.top + SPACE.md }]}>
-        <View style={styles.segmentShadow}>
-          <View style={styles.segmentClip}>
+        <View style={[styles.segmentShadow, dyn.segmentShadow]}>
+          <View style={[styles.segmentClip, dyn.segmentClip]}>
             <ScrollView
               ref={segScrollRef}
               horizontal
@@ -826,9 +840,15 @@ export default function CalendarScreen() {
                         <Ionicons
                           name={mode.icon}
                           size={18}
-                          color={active ? '#fff' : INK[500]}
+                          color={active ? '#fff' : c.textSecondary}
                         />
-                        <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                        <Text
+                          style={[
+                            styles.segmentText,
+                            dyn.segmentText,
+                            active && styles.segmentTextActive,
+                          ]}
+                        >
                           {mode.label}
                         </Text>
                       </PressableScale>
@@ -841,7 +861,7 @@ export default function CalendarScreen() {
             {/* Right-edge fade: the honest hint that the control scrolls. */}
             {segContentWidth > segViewWidth + 1 && (
               <LinearGradient
-                colors={['rgba(255,255,255,0)', '#ffffff']}
+                colors={segmentFadeColors}
                 start={{ x: 0, y: 0.5 }}
                 end={{ x: 1, y: 0.5 }}
                 style={styles.segmentFade}
@@ -875,7 +895,7 @@ export default function CalendarScreen() {
       {viewMode === 'calendar' && (
         <Animated.View style={styles.calendarContainer} entering={FadeIn.duration(DURATION.fast)}>
           {/* View Mode Toggle (Day/Week) */}
-          <View style={styles.viewModeToggle}>
+          <View style={[styles.viewModeToggle, dyn.viewModeToggle]}>
             <PressableScale
               haptic="selection"
               selected={calendarViewMode === 'day'}
@@ -892,6 +912,7 @@ export default function CalendarScreen() {
               <Text
                 style={[
                   styles.viewModeText,
+                  dyn.viewModeText,
                   calendarViewMode === 'day' && styles.viewModeTextActive,
                 ]}
               >
@@ -914,6 +935,7 @@ export default function CalendarScreen() {
               <Text
                 style={[
                   styles.viewModeText,
+                  dyn.viewModeText,
                   calendarViewMode === 'week' && styles.viewModeTextActive,
                 ]}
               >
@@ -924,7 +946,7 @@ export default function CalendarScreen() {
 
           {calendarViewMode === 'day' ? (
             /* Day View */
-            <View style={styles.dayViewContainer}>
+            <View style={[styles.dayViewContainer, dyn.dayViewContainer]}>
               {/* Day Navigation */}
               <View style={styles.dayHeader}>
                 <PressableScale
@@ -933,10 +955,10 @@ export default function CalendarScreen() {
                   style={styles.dayNavButton}
                   accessibilityLabel="Previous day"
                 >
-                  <Ionicons name="chevron-back" size={24} color={INK[700]} />
+                  <Ionicons name="chevron-back" size={24} color={c.textSecondary} />
                 </PressableScale>
                 <View style={styles.dayTitleContainer}>
-                  <Text style={styles.dayTitle}>
+                  <Text style={[styles.dayTitle, dyn.dayTitle]}>
                     {format(selectedDate, 'EEEE, MMMM d')}
                   </Text>
                   <PressableScale
@@ -954,15 +976,15 @@ export default function CalendarScreen() {
                   style={styles.dayNavButton}
                   accessibilityLabel="Next day"
                 >
-                  <Ionicons name="chevron-forward" size={24} color={INK[700]} />
+                  <Ionicons name="chevron-forward" size={24} color={c.textSecondary} />
                 </PressableScale>
               </View>
             </View>
           ) : (
             /* Week View */
-            <View style={styles.weekViewContainer}>
+            <View style={[styles.weekViewContainer, dyn.weekViewContainer]}>
               {/* Week Navigation */}
-              <View style={styles.weekViewHeader}>
+              <View style={[styles.weekViewHeader, dyn.weekViewHeader]}>
                 <PressableScale
                   haptic="light"
                   onPress={() => {
@@ -973,10 +995,10 @@ export default function CalendarScreen() {
                   style={styles.weekNavButton}
                   accessibilityLabel="Previous week"
                 >
-                  <Ionicons name="chevron-back" size={24} color={INK[700]} />
+                  <Ionicons name="chevron-back" size={24} color={c.textSecondary} />
                 </PressableScale>
                 <View style={styles.weekTitleContainer}>
-                  <Text style={styles.weekTitle}>
+                  <Text style={[styles.weekTitle, dyn.weekTitle]}>
                     {format(currentWeekStart, 'MMM d')} - {format(addDays(currentWeekStart, 6), 'MMM d, yyyy')}
                   </Text>
                   <PressableScale
@@ -1002,7 +1024,7 @@ export default function CalendarScreen() {
                   style={styles.weekNavButton}
                   accessibilityLabel="Next week"
                 >
-                  <Ionicons name="chevron-forward" size={24} color={INK[700]} />
+                  <Ionicons name="chevron-forward" size={24} color={c.textSecondary} />
                 </PressableScale>
               </View>
 
@@ -1021,19 +1043,23 @@ export default function CalendarScreen() {
                         selected={isSelected}
                         style={[
                           styles.weekDayCell,
-                          isToday && styles.weekDayCellToday,
+                          dyn.weekDayCell,
+                          isToday && dyn.weekDayCellToday,
+                          // Brand fill last: the selected cell outranks both the
+                          // resting card surface and today's soft tint.
                           isSelected && styles.weekDayCellSelected,
                         ]}
                         onPress={() => setSelectedDate(date)}
                         accessibilityLabel={format(date, 'EEEE, MMMM d')}
                       >
-                        <Text style={styles.weekDayName}>
+                        <Text style={[styles.weekDayName, dyn.weekDayName]}>
                           {format(date, 'EEE')}
                         </Text>
                         <Text
                           style={[
                             styles.weekDayNumber,
-                            isToday && styles.weekDayNumberToday,
+                            dyn.weekDayNumber,
+                            isToday && dyn.weekDayNumberToday,
                             isSelected && styles.weekDayNumberSelected,
                           ]}
                         >
@@ -1043,6 +1069,7 @@ export default function CalendarScreen() {
                           <View
                             style={[
                               styles.weekEventIndicator,
+                              dyn.weekEventIndicator,
                               isSelected && styles.weekEventIndicatorSelected,
                             ]}
                           />
@@ -1057,8 +1084,8 @@ export default function CalendarScreen() {
 
           {/* Selected Date Events List */}
           <View style={styles.eventsContainer}>
-            <View style={styles.timelineHeader}>
-              <Text style={styles.timelineTitle}>
+            <View style={[styles.timelineHeader, dyn.timelineHeader]}>
+              <Text style={[styles.timelineTitle, dyn.timelineTitle]}>
                 {format(selectedDate, 'EEEE, MMMM d')}
               </Text>
               <PressableScale
@@ -1124,7 +1151,7 @@ export default function CalendarScreen() {
                       const event = item as CalendarEvent;
                       return (
                         <PressableScale
-                          style={styles.eventCard}
+                          style={[styles.eventCard, dyn.eventCard]}
                           scaleTo={0.985}
                           onPress={() => {
                             // Silo events link back to their item where we can
@@ -1183,23 +1210,26 @@ export default function CalendarScreen() {
                             );
                           }}
                         >
-                          <View style={styles.eventCardIcon}>
+                          <View style={[styles.eventCardIcon, dyn.eventCardIcon]}>
                             <Ionicons
                               name={event.isSiloEvent ? 'checkmark-circle' : 'calendar-outline'}
                               size={20}
-                              color={event.isSiloEvent ? STATUS.success : BRAND[600]}
+                              color={event.isSiloEvent ? c.success : c.brand}
                             />
                           </View>
                           <View style={styles.eventCardContent}>
-                            <Text style={styles.eventCardTitle} numberOfLines={1}>
+                            <Text
+                              style={[styles.eventCardTitle, dyn.eventCardTitle]}
+                              numberOfLines={1}
+                            >
                               {event.title}
                             </Text>
-                            <Text style={styles.eventCardTime}>
+                            <Text style={[styles.eventCardTime, dyn.eventCardTime]}>
                               {format(event.startDate, 'h:mm a')} - {format(event.endDate, 'h:mm a')}
                               {event.isSiloEvent && ' • Silo'}
                             </Text>
                           </View>
-                          <Ionicons name="chevron-forward" size={20} color={INK[400]} />
+                          <Ionicons name="chevron-forward" size={20} color={c.decorative} />
                         </PressableScale>
                       );
                     }
@@ -1207,18 +1237,18 @@ export default function CalendarScreen() {
                     const row = item as Item;
                     return (
                       <PressableScale
-                        style={styles.eventCard}
+                        style={[styles.eventCard, dyn.eventCard]}
                         scaleTo={0.985}
                         onPress={() => handleItemPress(row.id)}
                       >
-                        <View style={styles.eventCardIcon}>
-                          <Ionicons name="time" size={20} color={BRAND[600]} />
+                        <View style={[styles.eventCardIcon, dyn.eventCardIcon]}>
+                          <Ionicons name="time" size={20} color={c.brand} />
                         </View>
                         <View style={styles.eventCardContent}>
-                          <Text style={styles.eventCardTitle} numberOfLines={1}>
+                          <Text style={[styles.eventCardTitle, dyn.eventCardTitle]} numberOfLines={1}>
                             {row.title}
                           </Text>
-                          <Text style={styles.eventCardTime}>
+                          <Text style={[styles.eventCardTime, dyn.eventCardTime]}>
                             {format(
                               parseLocalDate(row.scheduled_date!, row.scheduled_time ?? '09:00'),
                               'h:mm a'
@@ -1226,7 +1256,7 @@ export default function CalendarScreen() {
                             {` · ${row.duration || 15} min`}
                           </Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={20} color={INK[400]} />
+                        <Ionicons name="chevron-forward" size={20} color={c.decorative} />
                       </PressableScale>
                     );
                   }}
@@ -1288,14 +1318,18 @@ export default function CalendarScreen() {
             ))}
           </MapView>
 
-          {/* Location refused: say so, and offer the only route back. */}
+          {/* Location refused: say so, and offer the only route back. No `tint`
+              on the glass: this notice sits on the page chrome, not on media,
+              so it follows the app appearance. */}
           {locationStatus === 'denied' && (
-            <GlassCard tint="light" intensity={60} radius={RADIUS.lg} style={styles.locationNotice}>
+            <GlassCard intensity={60} radius={RADIUS.lg} style={styles.locationNotice}>
               <View style={styles.locationNoticeInner}>
-                <Ionicons name="navigate-circle-outline" size={22} color={BRAND[600]} />
+                <Ionicons name="navigate-circle-outline" size={22} color={c.brand} />
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.locationNoticeTitle}>Location is off</Text>
-                  <Text style={styles.locationNoticeSub}>
+                  <Text style={[styles.locationNoticeTitle, dyn.locationNoticeTitle]}>
+                    Location is off
+                  </Text>
+                  <Text style={[styles.locationNoticeSub, dyn.locationNoticeSub]}>
                     Silo can still map your saved places — it just can&apos;t centre on you.
                   </Text>
                 </View>
@@ -1313,28 +1347,28 @@ export default function CalendarScreen() {
 
           {/* Map Items List */}
           {itemsWithLocations.length > 0 ? (
-            <View style={styles.mapItemsList}>
-              <Text style={styles.mapSectionTitle}>
+            <View style={[styles.mapItemsList, dyn.mapItemsList]}>
+              <Text style={[styles.mapSectionTitle, dyn.mapSectionTitle]}>
                 Saved Places ({itemsWithLocations.length})
               </Text>
               <FlatList
                 data={itemsWithLocations}
                 renderItem={({ item }) => (
                   <PressableScale
-                    style={styles.mapItemCard}
+                    style={[styles.mapItemCard, dyn.mapItemCard]}
                     scaleTo={0.985}
                     onPress={() => handleItemPress(item.id)}
                   >
-                    <Ionicons name="location" size={20} color={BRAND[600]} />
+                    <Ionicons name="location" size={20} color={c.brand} />
                     <View style={styles.mapItemContent}>
-                      <Text style={styles.mapItemTitle} numberOfLines={1}>
+                      <Text style={[styles.mapItemTitle, dyn.mapItemTitle]} numberOfLines={1}>
                         {item.title}
                       </Text>
-                      <Text style={styles.mapItemLocation} numberOfLines={1}>
+                      <Text style={[styles.mapItemLocation, dyn.mapItemLocation]} numberOfLines={1}>
                         {item.place_name || item.place_address || 'Location'}
                       </Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={20} color={INK[400]} />
+                    <Ionicons name="chevron-forward" size={20} color={c.decorative} />
                   </PressableScale>
                 )}
                 keyExtractor={item => item.id}
@@ -1345,7 +1379,7 @@ export default function CalendarScreen() {
               />
             </View>
           ) : (
-            <View style={[styles.mapItemsList, styles.mapEmptyPanel]}>
+            <View style={[styles.mapItemsList, dyn.mapItemsList, styles.mapEmptyPanel]}>
               <EmptyState
                 icon="location-outline"
                 title="No places pinned yet"
@@ -1358,18 +1392,18 @@ export default function CalendarScreen() {
 
       {viewMode === 'bucketlist' && (
         <Animated.View style={styles.bucketlistContainer} entering={FadeIn.duration(DURATION.fast)}>
-          <View style={styles.bucketlistHeader}>
-            <Text style={styles.bucketlistTitle}>
+          <View style={[styles.bucketlistHeader, dyn.bucketlistHeader]}>
+            <Text style={[styles.bucketlistTitle, dyn.bucketlistTitle]}>
               {bucketlistItems.length > 0
                 ? `${bucketDone} of ${bucketlistItems.length} done`
                 : 'Bucket List'}
             </Text>
-            <Text style={styles.bucketlistSubtitle}>
+            <Text style={[styles.bucketlistSubtitle, dyn.bucketlistSubtitle]}>
               Things you want to do when the circumstances are right
             </Text>
             {bucketlistItems.length > 0 && (
-              <View style={styles.progressTrack}>
-                <Animated.View style={[styles.progressFill, bucketFillStyle]} />
+              <View style={[styles.progressTrack, dyn.progressTrack]}>
+                <Animated.View style={[styles.progressFill, dyn.progressFill, bucketFillStyle]} />
               </View>
             )}
           </View>
@@ -1400,7 +1434,9 @@ export default function CalendarScreen() {
                     <Ionicons
                       name={item.bucketlist_completed ? 'checkbox' : 'checkbox-outline'}
                       size={24}
-                      color={item.bucketlist_completed ? STATUS.success : INK[500]}
+                      // The empty box is the row's tap target, so it takes the
+                      // secondary text role rather than the dimmer decorative one.
+                      color={item.bucketlist_completed ? c.success : c.textSecondary}
                     />
                   </PressableScale>
                   <View style={styles.bucketlistItemContent}>
@@ -1430,7 +1466,7 @@ export default function CalendarScreen() {
         transparent={true}
         onRequestClose={closeAddEventModal}
       >
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, dyn.modalOverlay]}>
           {/* Tap-outside-to-dismiss. A plain Pressable, not PressableScale —
               scaling the scrim on touch would look like a glitch. */}
           <Pressable
@@ -1439,16 +1475,16 @@ export default function CalendarScreen() {
             accessibilityRole="button"
             accessibilityLabel="Dismiss"
           />
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>New Event</Text>
+          <View style={[styles.modalContent, dyn.modalContent]}>
+            <View style={[styles.modalHeader, dyn.modalHeader]}>
+              <Text style={[styles.modalTitle, dyn.modalTitle]}>New Event</Text>
               <PressableScale
                 haptic="light"
                 onPress={closeAddEventModal}
                 style={styles.modalCloseButton}
                 accessibilityLabel="Close"
               >
-                <Ionicons name="close" size={24} color={INK[700]} />
+                <Ionicons name="close" size={24} color={c.textSecondary} />
               </PressableScale>
             </View>
 
@@ -1461,16 +1497,16 @@ export default function CalendarScreen() {
               showsVerticalScrollIndicator={false}
             >
               <TextInput
-                style={styles.input}
+                style={[styles.input, dyn.input]}
                 placeholder="Event title"
                 value={newEventTitle}
                 onChangeText={setNewEventTitle}
-                placeholderTextColor={INK[400]}
+                placeholderTextColor={c.textPlaceholder}
               />
 
               <PressableScale
                 haptic="light"
-                style={styles.pickerButton}
+                style={[styles.pickerButton, dyn.pickerButton]}
                 // Mutually exclusive with the time picker — two open spinners
                 // don't fit the sheet.
                 onPress={() => {
@@ -1479,27 +1515,29 @@ export default function CalendarScreen() {
                 }}
                 accessibilityLabel="Choose date"
               >
-                <Ionicons name="calendar-outline" size={24} color={BRAND[600]} />
+                <Ionicons name="calendar-outline" size={24} color={c.brand} />
                 <View style={styles.pickerContent}>
-                  <Text style={styles.pickerLabel}>Date</Text>
-                  <Text style={styles.pickerValue}>
+                  <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Date</Text>
+                  <Text style={[styles.pickerValue, dyn.pickerValue]}>
                     {format(newEventDate, 'MMMM d, yyyy')}
                   </Text>
                 </View>
                 <Ionicons
                   name={showDatePicker ? 'chevron-up' : 'chevron-down'}
                   size={18}
-                  color={INK[400]}
+                  color={c.decorative}
                 />
               </PressableScale>
 
               {showDatePicker && (
-                <View style={styles.pickerContainer}>
+                <View style={[styles.pickerContainer, dyn.pickerContainer]}>
                   <DateTimePicker
                     value={newEventDate}
                     mode="date"
                     display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    themeVariant="light"
+                    // The spinner is a native view: it can't inherit our palette,
+                    // so it's told which appearance it is being drawn into.
+                    themeVariant={c.appearance}
                     onChange={(event, selectedDate) => {
                       if (Platform.OS === 'android') {
                         setShowDatePicker(false);
@@ -1510,7 +1548,7 @@ export default function CalendarScreen() {
                     }}
                     minimumDate={new Date()}
                     style={Platform.OS === 'ios' ? styles.iosPicker : undefined}
-                    textColor={Platform.OS === 'ios' ? INK[900] : undefined}
+                    textColor={Platform.OS === 'ios' ? c.text : undefined}
                   />
                   {Platform.OS === 'ios' && (
                     <PressableScale
@@ -1526,34 +1564,34 @@ export default function CalendarScreen() {
 
               <PressableScale
                 haptic="light"
-                style={styles.pickerButton}
+                style={[styles.pickerButton, dyn.pickerButton]}
                 onPress={() => {
                   setShowDatePicker(false);
                   setShowTimePicker(v => !v);
                 }}
                 accessibilityLabel="Choose time"
               >
-                <Ionicons name="time-outline" size={24} color={BRAND[600]} />
+                <Ionicons name="time-outline" size={24} color={c.brand} />
                 <View style={styles.pickerContent}>
-                  <Text style={styles.pickerLabel}>Time</Text>
-                  <Text style={styles.pickerValue}>
+                  <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Time</Text>
+                  <Text style={[styles.pickerValue, dyn.pickerValue]}>
                     {format(newEventTime, 'h:mm a')}
                   </Text>
                 </View>
                 <Ionicons
                   name={showTimePicker ? 'chevron-up' : 'chevron-down'}
                   size={18}
-                  color={INK[400]}
+                  color={c.decorative}
                 />
               </PressableScale>
 
               {showTimePicker && (
-                <View style={styles.pickerContainer}>
+                <View style={[styles.pickerContainer, dyn.pickerContainer]}>
                   <DateTimePicker
                     value={newEventTime}
                     mode="time"
                     display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    themeVariant="light"
+                    themeVariant={c.appearance}
                     onChange={(event, selectedTime) => {
                       if (Platform.OS === 'android') {
                         setShowTimePicker(false);
@@ -1563,7 +1601,7 @@ export default function CalendarScreen() {
                       }
                     }}
                     style={Platform.OS === 'ios' ? styles.iosPicker : undefined}
-                    textColor={Platform.OS === 'ios' ? INK[900] : undefined}
+                    textColor={Platform.OS === 'ios' ? c.text : undefined}
                   />
                   {Platform.OS === 'ios' && (
                     <PressableScale
@@ -1600,10 +1638,95 @@ export default function CalendarScreen() {
   );
 }
 
+/**
+ * Colour-only companions to `styles`. A plain object, NOT StyleSheet.create —
+ * this is rebuilt whenever the appearance flips, and registering fresh
+ * stylesheet ids on every flip would just leak them.
+ */
+function makeDynamicStyles(c: ThemeColors) {
+  // On dark the card and the page are both near-black, so a drop shadow
+  // separates nothing: surfaces that got their edge from SHADOW.* take a
+  // hairline instead. (Surfaces that already carry a 1px border in both
+  // appearances aren't listed here — they'd end up double-edged.)
+  const darkEdge: ViewStyle =
+    c.appearance === 'dark'
+      ? { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline }
+      : {};
+  return {
+    container: { backgroundColor: c.page },
+    segmentShadow: { backgroundColor: c.card },
+    segmentClip: { borderColor: c.hairline },
+    segmentText: { color: c.textSecondary },
+    viewModeToggle: { backgroundColor: c.card, borderColor: c.hairline },
+    viewModeText: { color: c.textSecondary },
+    dayViewContainer: { backgroundColor: c.card, borderColor: c.hairline },
+    dayTitle: { color: c.text },
+    weekViewContainer: { backgroundColor: c.card, borderColor: c.hairline },
+    weekViewHeader: { borderBottomColor: c.hairline },
+    weekTitle: { color: c.text },
+    // The cell sits on the week panel, which is the same card surface — on dark
+    // the hairline is what makes each day read as its own tap target.
+    weekDayCell: { backgroundColor: c.card, ...darkEdge },
+    // Today's tint: BRAND[100] verbatim on light, and the palette's soft violet
+    // on dark, where an opaque BRAND[100] block would glow.
+    weekDayCellToday: {
+      backgroundColor: c.appearance === 'dark' ? c.brandSoft : BRAND[100],
+    },
+    weekDayName: { color: c.textTertiary },
+    weekDayNumber: { color: c.text },
+    // Keeps the deeper BRAND[700] on light; dark lifts to the palette's
+    // text-on-dark brand step so violet-on-near-black keeps its chroma.
+    weekDayNumberToday: { color: c.appearance === 'dark' ? c.textBrand : BRAND[700] },
+    weekEventIndicator: { backgroundColor: c.brand },
+    timelineHeader: { borderBottomColor: c.hairline },
+    timelineTitle: { color: c.text },
+    eventCard: { backgroundColor: c.card, borderColor: c.hairline },
+    // BRAND[50] verbatim on light; on dark that near-white lavender would read
+    // as a lit chip, so it takes the palette's translucent violet instead.
+    eventCardIcon: { backgroundColor: c.appearance === 'dark' ? c.brandSoft : BRAND[50] },
+    eventCardTitle: { color: c.text },
+    eventCardTime: { color: c.textTertiary },
+    locationNoticeTitle: { color: c.text },
+    locationNoticeSub: { color: c.textSecondary },
+    // Floats over live map tiles, so light keeps its translucency. On dark the
+    // same 92% wash over dark tiles reads as grey mud — the sheet goes opaque,
+    // and the top hairline replaces the shadow that near-black swallows.
+    mapItemsList:
+      c.appearance === 'dark'
+        ? {
+            backgroundColor: c.card,
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: c.hairline,
+          }
+        : { backgroundColor: 'rgba(255, 255, 255, 0.92)' },
+    mapSectionTitle: { color: c.text },
+    mapItemCard: { borderBottomColor: c.hairline },
+    mapItemTitle: { color: c.text },
+    mapItemLocation: { color: c.textTertiary },
+    modalOverlay: { backgroundColor: c.scrim },
+    modalContent: { backgroundColor: c.card },
+    modalHeader: { borderBottomColor: c.hairline },
+    modalTitle: { color: c.text },
+    input: { backgroundColor: c.field, color: c.text },
+    pickerButton: { backgroundColor: c.field },
+    pickerLabel: { color: c.textTertiary },
+    pickerValue: { color: c.text },
+    // Card-on-card inside the sheet: on dark only the hairline says where the
+    // spinner's panel starts.
+    pickerContainer: { backgroundColor: c.card, ...darkEdge },
+    bucketlistHeader: { backgroundColor: c.card, borderBottomColor: c.hairline },
+    bucketlistTitle: { color: c.text },
+    bucketlistSubtitle: { color: c.textSecondary },
+    progressTrack: { backgroundColor: c.field },
+    progressFill: { backgroundColor: c.brand },
+  };
+}
+
 const styles = StyleSheet.create({
+  // Every rule below is appearance-independent; the colour half of each one
+  // lives in `makeDynamicStyles`, except the brand surfaces called out inline.
   container: {
     flex: 1,
-    backgroundColor: INK[50],
   },
   pane: { flex: 1 },
   header: {
@@ -1615,14 +1738,12 @@ const styles = StyleSheet.create({
   // for the scroll fade + pill) clips an iOS shadow off the same node.
   segmentShadow: {
     borderRadius: RADIUS.pill,
-    backgroundColor: '#ffffff',
     ...SHADOW.card,
   },
   segmentClip: {
     borderRadius: RADIUS.pill,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: HAIRLINE,
   },
   segmentedControl: {
     padding: SPACE.xs,
@@ -1631,6 +1752,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     position: 'relative',
   },
+  // Brand surfaces below stay BRAND[600] in both appearances: the lighter
+  // dark-mode brand would drop white-on-violet under 3:1.
   segmentPill: {
     position: 'absolute',
     left: 0,
@@ -1657,23 +1780,21 @@ const styles = StyleSheet.create({
   },
   segmentText: {
     ...TYPE.subhead,
-    color: INK[500],
   },
+  // White, not `textInverse`: it sits on the violet pill, which never flips.
   segmentTextActive: {
-    color: TEXT.inverse,
+    color: '#fff',
   },
   calendarContainer: {
     flex: 1,
   },
   viewModeToggle: {
     flexDirection: 'row',
-    backgroundColor: '#ffffff',
     borderRadius: RADIUS.pill,
     padding: SPACE.xs,
     margin: SPACE.md,
     marginBottom: SPACE.sm,
     borderWidth: 1,
-    borderColor: HAIRLINE,
   },
   viewModeButton: {
     paddingVertical: SPACE.sm,
@@ -1687,18 +1808,15 @@ const styles = StyleSheet.create({
   },
   viewModeText: {
     ...TYPE.subhead,
-    color: INK[500],
   },
   viewModeTextActive: {
-    color: TEXT.inverse,
+    color: '#fff',
   },
   dayViewContainer: {
-    backgroundColor: '#ffffff',
     borderRadius: RADIUS.lg,
     margin: SPACE.md,
     marginTop: SPACE.sm,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   dayHeader: {
@@ -1716,7 +1834,6 @@ const styles = StyleSheet.create({
   },
   dayTitle: {
     ...TYPE.title3,
-    color: TEXT.primary,
     marginBottom: SPACE.xs,
   },
   todayButton: {
@@ -1727,15 +1844,13 @@ const styles = StyleSheet.create({
   },
   todayButtonText: {
     ...TYPE.caption,
-    color: TEXT.inverse,
+    color: '#fff',
   },
   weekViewContainer: {
-    backgroundColor: '#ffffff',
     borderRadius: RADIUS.lg,
     margin: SPACE.md,
     marginTop: SPACE.sm,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   weekViewHeader: {
@@ -1744,7 +1859,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: SPACE.base,
     borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
   },
   weekNavButton: {
     padding: SPACE.sm,
@@ -1755,7 +1869,6 @@ const styles = StyleSheet.create({
   },
   weekTitle: {
     ...TYPE.headline,
-    color: TEXT.primary,
     marginBottom: SPACE.xs,
   },
   weekDaysContainer: {
@@ -1771,27 +1884,19 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.sm,
     marginHorizontal: SPACE.xxs,
   },
-  weekDayCellToday: {
-    backgroundColor: BRAND[100],
-  },
   weekDayCellSelected: {
     backgroundColor: BRAND[600],
   },
   weekDayName: {
     ...TYPE.overline,
     letterSpacing: 0.2,
-    color: TEXT.tertiary,
     marginBottom: SPACE.xs,
   },
   weekDayNumber: {
     ...TYPE.title3,
-    color: TEXT.primary,
-  },
-  weekDayNumberToday: {
-    color: BRAND[700],
   },
   weekDayNumberSelected: {
-    color: TEXT.inverse,
+    color: '#fff',
   },
   weekEventIndicator: {
     position: 'absolute',
@@ -1799,10 +1904,10 @@ const styles = StyleSheet.create({
     width: 4,
     height: 4,
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[600],
   },
+  // On the violet selected cell, so it stays white in both appearances.
   weekEventIndicatorSelected: {
-    backgroundColor: TEXT.inverse,
+    backgroundColor: '#fff',
   },
   eventsContainer: {
     flex: 1,
@@ -1814,11 +1919,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: SPACE.base,
     borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
   },
   timelineTitle: {
     ...TYPE.title3,
-    color: TEXT.primary,
   },
   addButton: {
     borderRadius: RADIUS.pill,
@@ -1837,19 +1940,16 @@ const styles = StyleSheet.create({
   eventCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
     padding: SPACE.md,
     borderRadius: RADIUS.lg,
     marginBottom: SPACE.md,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   eventCardIcon: {
     width: 40,
     height: 40,
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[50],
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: SPACE.md,
@@ -1859,12 +1959,10 @@ const styles = StyleSheet.create({
   },
   eventCardTitle: {
     ...TYPE.bodyStrong,
-    color: TEXT.primary,
     marginBottom: SPACE.xs,
   },
   eventCardTime: {
     ...TYPE.footnote,
-    color: TEXT.tertiary,
   },
   mapContainer: {
     flex: 1,
@@ -1894,12 +1992,10 @@ const styles = StyleSheet.create({
   locationNoticeTitle: {
     ...TYPE.subhead,
     fontWeight: '700',
-    color: TEXT.primary,
   },
   locationNoticeSub: {
     ...TYPE.caption,
     fontWeight: '500',
-    color: TEXT.secondary,
     marginTop: SPACE.xxs,
   },
   locationNoticeBtn: {
@@ -1910,7 +2006,7 @@ const styles = StyleSheet.create({
   },
   locationNoticeBtnText: {
     ...TYPE.caption,
-    color: TEXT.inverse,
+    color: '#fff',
   },
   mapItemsList: {
     position: 'absolute',
@@ -1918,7 +2014,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     maxHeight: SCREEN_HEIGHT * 0.4,
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
     borderTopLeftRadius: RADIUS.lg,
     borderTopRightRadius: RADIUS.lg,
     paddingTop: SPACE.base,
@@ -1932,7 +2027,6 @@ const styles = StyleSheet.create({
   },
   mapSectionTitle: {
     ...TYPE.title3,
-    color: TEXT.primary,
     marginBottom: SPACE.md,
     paddingHorizontal: SPACE.base,
   },
@@ -1942,7 +2036,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.md,
     borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
   },
   mapItemContent: {
     flex: 1,
@@ -1950,20 +2043,16 @@ const styles = StyleSheet.create({
   },
   mapItemTitle: {
     ...TYPE.bodyStrong,
-    color: TEXT.primary,
     marginBottom: SPACE.xs,
   },
   mapItemLocation: {
     ...TYPE.footnote,
-    color: TEXT.tertiary,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#fff',
     borderTopLeftRadius: RADIUS.lg,
     borderTopRightRadius: RADIUS.lg,
     paddingBottom: SPACE.xxl,
@@ -1975,11 +2064,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: SPACE.base,
     borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
   },
   modalTitle: {
     ...TYPE.title2,
-    color: TEXT.primary,
   },
   modalCloseButton: {
     padding: SPACE.xs,
@@ -1993,17 +2080,14 @@ const styles = StyleSheet.create({
     padding: SPACE.base,
   },
   input: {
-    backgroundColor: INK[100],
     borderRadius: RADIUS.md,
     padding: SPACE.base,
     ...TYPE.body,
-    color: TEXT.primary,
     marginBottom: SPACE.md,
   },
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: INK[100],
     padding: SPACE.base,
     borderRadius: RADIUS.md,
     marginBottom: SPACE.md,
@@ -2015,16 +2099,13 @@ const styles = StyleSheet.create({
   pickerLabel: {
     ...TYPE.overline,
     textTransform: 'uppercase',
-    color: TEXT.tertiary,
     marginBottom: SPACE.xs,
   },
   pickerValue: {
     ...TYPE.body,
-    color: TEXT.primary,
   },
   pickerContainer: {
     marginBottom: SPACE.base,
-    backgroundColor: '#ffffff',
     borderRadius: RADIUS.md,
     padding: SPACE.sm,
     ...SHADOW.card,
@@ -2042,7 +2123,7 @@ const styles = StyleSheet.create({
   },
   pickerDoneText: {
     ...TYPE.bodyStrong,
-    color: TEXT.inverse,
+    color: '#fff',
   },
   saveButton: {
     borderRadius: RADIUS.pill,
@@ -2055,39 +2136,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     overflow: 'hidden',
   },
+  // On the brand gradient, which is identical in both appearances.
   saveButtonText: {
     ...TYPE.bodyStrong,
-    color: TEXT.inverse,
+    color: '#fff',
   },
   bucketlistContainer: {
     flex: 1,
   },
   bucketlistHeader: {
     padding: SPACE.base,
-    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
   },
   bucketlistTitle: {
     ...TYPE.title1,
-    color: TEXT.primary,
     marginBottom: SPACE.xs,
   },
   bucketlistSubtitle: {
     ...TYPE.footnote,
-    color: TEXT.secondary,
   },
   progressTrack: {
     height: 6,
     borderRadius: RADIUS.pill,
-    backgroundColor: INK[100],
     marginTop: SPACE.md,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[600],
   },
   bucketlistContent: {
     padding: SPACE.base,

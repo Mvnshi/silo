@@ -6,7 +6,69 @@
 
 ---
 
-## ⏯️ RESUME HERE (state as of 2026-06-03)
+## ⏯️ RESUME HERE (state as of 2026-08-15)
+
+**A full UI/UX audit + polish pass landed today.** Read this section first; the
+2026-06 notes below are still accurate history but are no longer the front line.
+
+### What the audit found
+
+A fan-out audit read every screen, component and the extension and produced
+**191 grounded findings (40 P0 / 108 P1 / 43 P2)** — not style opinions, but
+things that were provably wrong: the Streams feed held up to **10 live
+WKWebViews** (all playing, including after you left the tab), the first
+committed frame of Stacks said *"Nothing here yet"* to users with a full
+library, the tab-switch haptic had **never fired once** (the pathname regex
+required `/tabs/reel`, but expo-router strips group segments), `Alert.prompt` is
+iOS-only so create/rename-stack silently did nothing on Android, and the browser
+extension's right-click save **stopped working forever** once the MV3 service
+worker slept.
+
+### What shipped
+
+| Area | State |
+|---|---|
+| Design system (`lib/theme.ts` + `lib/motion.ts`) | ✅ Type / spacing / radius / elevation / motion scales, semantic colour roles, all mirrored into `tailwind.config.js` |
+| Shared primitives (`components/ui/`) | ✅ PressableScale, Toast (+Undo), ScreenHeader, TextPrompt, EmptyState, Skeleton, GlassCard, OptionCard |
+| Streams | ✅ Poster-first player, one WebView max, viewability-driven playback, scrims, light status bar |
+| Stacks | ✅ Loading/empty/error states, undoable delete, action sheet, grid select, pull-to-refresh, windowing |
+| Silo (Today / calendar / map / bucket) | ✅ Hero treatment, double-render + sort + snooze + past-window bugs fixed, location primed |
+| Capture | ✅ No cold paste/photo prompts, one-tap capture, stack picker, inline errors, abortable analysis |
+| Screenshots | ✅ Real screenshot filter, deck physics, accessible Skip/Save, honest permission state |
+| Assistant | ✅ Query-driven retrieval + citations, error recovery, Reanimated v4 |
+| Item / stack detail | ✅ One header, real skeleton, hero parallax, back actually goes back |
+| **Your Silo** (`app/stats.tsx`) | ✅ NEW — resurfacing scoreboard + anti-hoarding cleanup |
+| Local notifications | ✅ NEW — daily digest, after-event check-in, weekly tidy-up |
+| Dark mode | 🟡 Palette + provider shipped; 15/18 surfaces converted |
+| Browser extension | ✅ 4 silent data-loss bugs fixed, shared token layer, dark mode |
+
+### ⏭️ Next actions (in order)
+
+1. **Finish dark mode.** `app/(tabs)/calendar.tsx` and `app/item/[id].tsx` still
+   read the static light tokens. `components/ThemeProvider.tsx` pins the app to
+   light while `UNCONVERTED_SCREENS` is non-empty — when those two land, set it
+   to `[]` and flip `app.json`'s `userInterfaceStyle` back to `"automatic"`.
+   Nothing else needs to change. Follow `app/(tabs)/index.tsx` as the reference
+   conversion (static StyleSheet for layout + `makeDynamicStyles(c)` for colour).
+2. **Verify the extension in a real browser.** It typechecks and `wxt build`
+   passes, but the MV3 service-worker, dupe-detection and spotlight fixes have
+   only been verified by inspection — load `extension/dist-chrome` unpacked and
+   exercise right-click save, `Cmd+Shift+K`, the omnibox and the library.
+3. **Notifications need a device test.** The scheduling logic is idempotent and
+   permission-gated, but simulators don't deliver local notifications reliably —
+   confirm the digest, check-in and tidy-up actually fire on hardware.
+4. Then: Phase 5 (monetization) and Phase 6 (App Store readiness) below, which
+   are untouched.
+
+### ⚠️ Still true from before
+
+- Run pod-installing commands with `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8`.
+- The Share Extension needs `expo prebuild -p ios --clean`, not `run:ios`'s merge.
+- `.env` must point at a reachable Worker; `cd workers && npm run dev` for local.
+
+---
+
+## Historical: RESUME HERE (state as of 2026-06-03)
 
 - **Phase 0 (stack discovery): ✅ DONE** — see AUDIT.md "Phase 0".
 - **Phase 1 (full audit): ✅ DONE** — every meaningful source file read; severity-ranked issues + feature classification in AUDIT.md.

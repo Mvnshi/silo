@@ -24,16 +24,13 @@ import {
 import { getAppearancePreference, setAppearancePreference } from '@/lib/storage';
 
 /**
- * Screens still reading the static light tokens rather than the palette. While
- * this list is non-empty the app pins itself to light, because a half-converted
- * dark mode (dark shell, white screen) is worse than none — see app.json's
- * matching `userInterfaceStyle`.
- *
- * When it empties: change this to `[]`, flip app.json back to "automatic", and
- * dark mode goes live with no other code change.
+ * Kill switch for appearance. Every screen now reads the palette through
+ * `useThemeColors()`, so this is live — but if a future screen lands using the
+ * static light tokens, set this to `false` (and `app.json`'s
+ * `userInterfaceStyle` to `"light"`) rather than shipping a half-converted dark
+ * mode, which is worse than none.
  */
-const UNCONVERTED_SCREENS: string[] = ['app/(tabs)/calendar.tsx', 'app/item/[id].tsx'];
-const DARK_READY = UNCONVERTED_SCREENS.length === 0;
+const DARK_READY = true;
 
 export default function ThemeProvider({ children }: { children: React.ReactNode }) {
   const system = useSystemColorScheme();

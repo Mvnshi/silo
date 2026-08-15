@@ -11,7 +11,7 @@
  *
  * Nothing here is destructive — "let go" archives, so everything is recoverable.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,19 +25,15 @@ import { celebrationHaptic } from '@/lib/haptics';
 import { touchSeen, updateItem } from '@/lib/storage';
 import { Item } from '@/lib/types';
 import {
-  BRAND,
   DURATION,
   GRADIENTS,
-  HAIRLINE,
-  INK,
   RADIUS,
   SHADOW,
   SPACE,
-  STATUS,
-  SURFACE,
-  TEXT,
   TYPE,
+  type ThemeColors,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { enterFromBottom, exitToBottom, usePrefersReducedMotion } from '@/lib/motion';
 
 interface Props {
@@ -54,6 +50,8 @@ const RUN_LENGTH = 10;
 export default function CleanupSheet({ visible, candidates, onClose, onChanged }: Props) {
   const insets = useSafeAreaInsets();
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
   const toast = useToast();
   const [index, setIndex] = useState(0);
   const [kept, setKept] = useState(0);
@@ -113,7 +111,7 @@ export default function CleanupSheet({ visible, candidates, onClose, onChanged }
       <Animated.View
         entering={FadeIn.duration(DURATION.fast)}
         exiting={FadeOut.duration(DURATION.instant)}
-        style={styles.scrim}
+        style={[styles.scrim, dyn.scrim]}
       >
         <PressableScale
           haptic="none"
@@ -128,9 +126,9 @@ export default function CleanupSheet({ visible, candidates, onClose, onChanged }
         <Animated.View
           entering={enterFromBottom(0, reduced)}
           exiting={exitToBottom(reduced)}
-          style={[styles.sheet, { paddingBottom: insets.bottom + SPACE.lg }]}
+          style={[styles.sheet, dyn.sheet, { paddingBottom: insets.bottom + SPACE.lg }]}
         >
-          <View style={styles.grabber} />
+          <View style={[styles.grabber, dyn.grabber]} />
 
           {done ? (
             <View style={styles.summary}>
@@ -142,10 +140,10 @@ export default function CleanupSheet({ visible, candidates, onClose, onChanged }
               >
                 <Ionicons name="checkmark" size={38} color="#fff" />
               </LinearGradient>
-              <Text style={styles.summaryTitle}>
+              <Text style={[styles.summaryTitle, dyn.summaryTitle]}>
                 {kept + released === 0 ? 'Nothing to tidy' : 'Nice — that’s tidier'}
               </Text>
-              <Text style={styles.summarySub}>
+              <Text style={[styles.summarySub, dyn.summarySub]}>
                 {kept + released === 0
                   ? 'Your saves are all still fresh.'
                   : `You kept ${kept} and let go of ${released}.` +
@@ -156,7 +154,7 @@ export default function CleanupSheet({ visible, candidates, onClose, onChanged }
               <PressableScale
                 haptic="medium"
                 onPress={finish}
-                style={styles.doneBtn}
+                style={[styles.doneBtn, dyn.doneBtn]}
                 accessibilityLabel="Done"
               >
                 <Text style={styles.doneBtnText}>Done</Text>
@@ -165,14 +163,14 @@ export default function CleanupSheet({ visible, candidates, onClose, onChanged }
           ) : (
             <>
               <View style={styles.header}>
-                <Text style={styles.headerTitle}>Still want this?</Text>
-                <Text style={styles.headerCount}>
+                <Text style={[styles.headerTitle, dyn.headerTitle]}>Still want this?</Text>
+                <Text style={[styles.headerCount, dyn.headerCount]}>
                   {index + 1} of {run.length}
                 </Text>
               </View>
-              <View style={styles.progressTrack}>
+              <View style={[styles.progressTrack, dyn.progressTrack]}>
                 <View
-                  style={[styles.progressFill, { width: `${(index / run.length) * 100}%` }]}
+                  style={[styles.progressFill, dyn.progressFill, { width: `${(index / run.length) * 100}%` }]}
                 />
               </View>
 
@@ -182,17 +180,17 @@ export default function CleanupSheet({ visible, candidates, onClose, onChanged }
                 <PressableScale
                   haptic="light"
                   containerStyle={styles.actionSlot}
-                  style={[styles.actionBtn, styles.letGoBtn]}
+                  style={[styles.actionBtn, styles.letGoBtn, dyn.letGoBtn]}
                   onPress={() => decide(false)}
                   accessibilityLabel="Let this go"
                 >
-                  <Ionicons name="archive-outline" size={19} color={STATUS.danger} />
-                  <Text style={[styles.actionText, { color: STATUS.danger }]}>Let go</Text>
+                  <Ionicons name="archive-outline" size={19} color={c.danger} />
+                  <Text style={[styles.actionText, { color: c.danger }]}>Let go</Text>
                 </PressableScale>
                 <PressableScale
                   haptic="medium"
                   containerStyle={styles.actionSlot}
-                  style={[styles.actionBtn, styles.keepBtn]}
+                  style={[styles.actionBtn, styles.keepBtn, dyn.keepBtn]}
                   onPress={() => decide(true)}
                   accessibilityLabel="Keep this"
                 >
@@ -209,6 +207,8 @@ export default function CleanupSheet({ visible, candidates, onClose, onChanged }
 }
 
 function ItemPreview({ item }: { item: Item }) {
+  const c = useThemeColors();
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
   const cfg = classConfig(item.classification);
   const saved = new Date(item.created_at);
   const monthsAgo = Math.max(
@@ -217,8 +217,8 @@ function ItemPreview({ item }: { item: Item }) {
   );
 
   return (
-    <View style={styles.preview}>
-      <View style={styles.previewThumb}>
+    <View style={[styles.preview, dyn.preview]}>
+      <View style={[styles.previewThumb, dyn.previewThumb]}>
         {item.imageUri ? (
           <Image
             source={{ uri: item.imageUri }}
@@ -241,10 +241,10 @@ function ItemPreview({ item }: { item: Item }) {
       </View>
       <View style={styles.previewBody}>
         <Text style={[styles.previewEyebrow, { color: cfg.deep }]}>{cfg.label.toUpperCase()}</Text>
-        <Text style={styles.previewTitle} numberOfLines={2}>
+        <Text style={[styles.previewTitle, dyn.previewTitle]} numberOfLines={2}>
           {item.title}
         </Text>
-        <Text style={styles.previewMeta}>
+        <Text style={[styles.previewMeta, dyn.previewMeta]}>
           Saved {monthsAgo === 0 ? 'recently' : `${monthsAgo}mo ago`} · never opened since
         </Text>
       </View>
@@ -252,14 +252,43 @@ function ItemPreview({ item }: { item: Item }) {
   );
 }
 
+/**
+ * Colour-only companions to `styles`. Plain object, not StyleSheet.create — it
+ * is rebuilt whenever the appearance flips and would otherwise leak sheet ids.
+ */
+function makeDynamicStyles(c: ThemeColors) {
+  // SHADOW.floating is what lifts the sheet off the page on light; over a dark
+  // scrim there is nothing left for it to darken, so the sheet gets a lit edge.
+  const sheetEdge =
+    c.appearance === 'dark'
+      ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline }
+      : {};
+  return {
+    scrim: { backgroundColor: c.scrim },
+    sheet: { backgroundColor: c.card, ...sheetEdge },
+    grabber: { backgroundColor: c.field },
+    headerTitle: { color: c.text },
+    headerCount: { color: c.textTertiary },
+    progressTrack: { backgroundColor: c.field },
+    progressFill: { backgroundColor: c.brand },
+    preview: { backgroundColor: c.sunken, borderColor: c.hairline },
+    previewThumb: { backgroundColor: c.field },
+    previewTitle: { color: c.text },
+    previewMeta: { color: c.textTertiary },
+    letGoBtn: { backgroundColor: c.dangerSoft, borderColor: c.dangerSoft },
+    keepBtn: { backgroundColor: c.brand },
+    summaryTitle: { color: c.text },
+    summarySub: { color: c.textSecondary },
+    doneBtn: { backgroundColor: c.brand },
+  };
+}
+
 const styles = StyleSheet.create({
   scrim: {
     flex: 1,
-    backgroundColor: SURFACE.scrim,
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: SURFACE.card,
     borderTopLeftRadius: RADIUS.xxl,
     borderTopRightRadius: RADIUS.xxl,
     paddingHorizontal: SPACE.lg,
@@ -271,7 +300,6 @@ const styles = StyleSheet.create({
     width: 38,
     height: 5,
     borderRadius: RADIUS.pill,
-    backgroundColor: INK[200],
     marginBottom: SPACE.base,
   },
   header: {
@@ -281,23 +309,19 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     ...TYPE.title2,
-    color: TEXT.primary,
   },
   headerCount: {
     ...TYPE.footnote,
-    color: TEXT.tertiary,
   },
   progressTrack: {
     height: 4,
     borderRadius: RADIUS.pill,
-    backgroundColor: INK[100],
     marginTop: SPACE.md,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[600],
   },
 
   preview: {
@@ -306,16 +330,13 @@ const styles = StyleSheet.create({
     marginTop: SPACE.lg,
     padding: SPACE.md,
     borderRadius: RADIUS.xl,
-    backgroundColor: SURFACE.sunken,
     borderWidth: 1,
-    borderColor: HAIRLINE,
   },
   previewThumb: {
     width: 76,
     height: 76,
     borderRadius: RADIUS.lg,
     overflow: 'hidden',
-    backgroundColor: INK[100],
   },
   previewGlyph: {
     flex: 1,
@@ -331,12 +352,10 @@ const styles = StyleSheet.create({
   },
   previewTitle: {
     ...TYPE.bodyStrong,
-    color: TEXT.primary,
     marginTop: 2,
   },
   previewMeta: {
     ...TYPE.footnote,
-    color: TEXT.tertiary,
     marginTop: SPACE.xs,
   },
 
@@ -355,13 +374,9 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
   },
   letGoBtn: {
-    backgroundColor: STATUS.dangerSoft,
     borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.22)',
   },
-  keepBtn: {
-    backgroundColor: BRAND[600],
-  },
+  keepBtn: {},
   actionText: {
     ...TYPE.bodyStrong,
   },
@@ -380,13 +395,11 @@ const styles = StyleSheet.create({
   },
   summaryTitle: {
     ...TYPE.title2,
-    color: TEXT.primary,
     marginTop: SPACE.base,
   },
   summarySub: {
     ...TYPE.subhead,
     fontWeight: '400',
-    color: TEXT.secondary,
     textAlign: 'center',
     marginTop: SPACE.sm,
     paddingHorizontal: SPACE.base,
@@ -396,7 +409,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.xxl,
     paddingVertical: 14,
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[600],
   },
   doneBtnText: {
     ...TYPE.bodyStrong,

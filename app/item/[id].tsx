@@ -20,7 +20,7 @@
  * - expo-router: Navigation
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -32,6 +32,7 @@ import {
   Platform,
   TextInput,
   KeyboardAvoidingView,
+  type ViewStyle,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -69,17 +70,16 @@ import { useToast } from '@/components/ui/Toast';
 import {
   BRAND,
   GRADIENTS,
-  HAIRLINE,
   HIT_SLOP,
   INK,
   RADIUS,
   SHADOW,
   SPACE,
   STATUS,
-  SURFACE,
-  TEXT,
   TYPE,
+  type ThemeColors,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 
 const HERO_HEIGHT = 300;
 
@@ -87,12 +87,17 @@ const HERO_HEIGHT = 300;
 const AnimatedImage = Animated.createAnimatedComponent(Image);
 
 /**
- * The header sits on top of the hero, so its ink glyphs need guaranteed
- * contrast over an arbitrary photo. A soft white wash does that without the
- * "always solid bar" look; the real bar background fades in over it on scroll.
+ * The header sits on top of the hero, so its glyphs need guaranteed contrast
+ * over an arbitrary photo. A soft wash does that without the "always solid bar"
+ * look; the real bar background fades in over it on scroll.
  * (Not in GRADIENTS — every shared scrim there is dark, for white glyphs.)
+ *
+ * The wash has to run the same direction as the glyphs it protects: dark ink on
+ * white in light, near-white ink on the page ground in dark. A white wash under
+ * dark-mode glyphs would erase them.
  */
-const HEADER_SCRIM = ['rgba(255,255,255,0.92)', 'rgba(255,255,255,0)'] as const;
+const HEADER_SCRIM_LIGHT = ['rgba(255,255,255,0.92)', 'rgba(255,255,255,0)'] as const;
+const HEADER_SCRIM_DARK = ['rgba(11,11,16,0.92)', 'rgba(11,11,16,0)'] as const;
 
 /** What the user saved, in their words — the header title. */
 const TYPE_LABEL: Record<ItemType, string> = {
@@ -107,6 +112,10 @@ export default function ItemDetailScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
+  // Built once per appearance — this screen paints a lot of small coloured
+  // chrome (cards, chips, picker rows) and rebuilding it per render would churn.
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
   const [item, setItem] = useState<Item | null>(null);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -472,7 +481,7 @@ export default function ItemDetailScreen() {
     // Content-shaped placeholder in the real layout, so nothing jumps when the
     // item lands: hero, title, two description lines, the 3-up action row.
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, dyn.container]}>
         <ScreenHeader />
         <View accessibilityLabel="Loading item" accessible>
           <Skeleton width="100%" height={HERO_HEIGHT} radius={0} />
@@ -495,7 +504,7 @@ export default function ItemDetailScreen() {
 
   if (!item) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, dyn.container]}>
         <ScreenHeader />
         <EmptyState
           icon="alert-circle-outline"
@@ -526,7 +535,7 @@ export default function ItemDetailScreen() {
               onPress={handleCancelEdit}
               accessibilityLabel="Discard changes"
             >
-              <Text style={styles.editActionText}>Cancel</Text>
+              <Text style={[styles.editActionText, dyn.editActionText]}>Cancel</Text>
             </PressableScale>
             <PressableScale
               haptic="light"
@@ -536,7 +545,9 @@ export default function ItemDetailScreen() {
               accessibilityLabel="Save changes"
             >
               {saving ? (
-                <ActivityIndicator size="small" color={TEXT.inverse} />
+                // On the BRAND[600] pill, which is identical in both
+                // appearances — so the spinner stays white, not textInverse.
+                <ActivityIndicator size="small" color="#fff" />
               ) : (
                 <Text style={styles.saveButtonTextHeader}>Save</Text>
               )}
@@ -549,7 +560,7 @@ export default function ItemDetailScreen() {
             hitSlop={HIT_SLOP}
             accessibilityLabel="Edit this save"
           >
-            <Ionicons name="create-outline" size={24} color={BRAND[600]} />
+            <Ionicons name="create-outline" size={24} color={c.brand} />
           </PressableScale>
         )
       }
@@ -557,7 +568,7 @@ export default function ItemDetailScreen() {
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, dyn.container]}>
       {!hasHero && header}
 
       <KeyboardAvoidingView
@@ -578,18 +589,20 @@ export default function ItemDetailScreen() {
           {item.imageUri && (
             <AnimatedImage
               source={{ uri: item.imageUri }}
-              style={[styles.image, heroStyle]}
+              style={[styles.image, dyn.image, heroStyle]}
               contentFit="cover"
             />
           )}
 
           {/* Item Header */}
           <View style={styles.itemHeader}>
+            {/* The pill is a 10% wash of the classification's own hue in both
+                appearances, and `deep` is contrast-tuned for exactly that wash. */}
             <View style={[styles.badge, { backgroundColor: cfg.from + '1A' }]}>
               <Ionicons name={cfg.icon} size={12} color={cfg.deep} />
               <Text style={[styles.badgeText, { color: cfg.deep }]}>{cfg.label}</Text>
             </View>
-            <Text style={styles.timestamp}>
+            <Text style={[styles.timestamp, dyn.timestamp]}>
               {format(new Date(item.created_at), 'MMM d, yyyy · h:mm a')}
             </Text>
           </View>
@@ -597,64 +610,66 @@ export default function ItemDetailScreen() {
           {/* Title */}
           {isEditing ? (
             <View style={styles.editingSection}>
-              <Text style={styles.editingLabel}>Title</Text>
+              <Text style={[styles.editingLabel, dyn.editingLabel]}>Title</Text>
               <TextInput
-                style={styles.editingInput}
+                style={[styles.editingInput, dyn.editingInput]}
                 value={editingTitle}
                 onChangeText={setEditingTitle}
                 placeholder="Item title"
-                placeholderTextColor={TEXT.placeholder}
+                placeholderTextColor={c.textPlaceholder}
                 multiline={false}
               />
             </View>
           ) : (
-            <Text style={styles.title}>{item.title}</Text>
+            <Text style={[styles.title, dyn.title]}>{item.title}</Text>
           )}
 
           {/* Description */}
           {isEditing ? (
             <View style={styles.editingSection}>
-              <Text style={styles.editingLabel}>Description</Text>
+              <Text style={[styles.editingLabel, dyn.editingLabel]}>Description</Text>
               <TextInput
-                style={[styles.editingInput, styles.editingTextArea]}
+                style={[styles.editingInput, dyn.editingInput, styles.editingTextArea]}
                 value={editingDescription}
                 onChangeText={setEditingDescription}
                 placeholder="Add a description..."
-                placeholderTextColor={TEXT.placeholder}
+                placeholderTextColor={c.textPlaceholder}
                 multiline
                 numberOfLines={4}
                 textAlignVertical="top"
               />
             </View>
           ) : (
-            item.description && <Text style={styles.description}>{item.description}</Text>
+            item.description && (
+              <Text style={[styles.description, dyn.description]}>{item.description}</Text>
+            )
           )}
 
           {/* Audio Player */}
           {item.audio_url && (
             <PressableScale
               haptic="light"
-              style={styles.audioPlayer}
+              style={[styles.audioPlayer, dyn.card]}
               onPress={toggleAudio}
               accessibilityLabel={isPlaying ? 'Pause narration' : 'Play narration'}
             >
               <Ionicons
                 name={isPlaying ? 'pause-circle' : 'play-circle'}
                 size={48}
-                color={BRAND[600]}
+                color={c.brand}
               />
-              <Text style={styles.audioText}>
+              <Text style={[styles.audioText, dyn.audioText]}>
                 {isPlaying ? 'Pause narration' : 'Play narration'}
               </Text>
             </PressableScale>
           )}
 
           {/* Metadata */}
-          <View style={styles.metadata}>
+          <View style={[styles.metadata, dyn.card]}>
             {item.duration && (
               <View style={styles.metadataItem}>
-                <Ionicons name="time-outline" size={20} color={TEXT.decorative} />
-                <Text style={styles.metadataText}>{item.duration} min</Text>
+                <Ionicons name="time-outline" size={20} color={c.decorative} />
+                <Text style={[styles.metadataText, dyn.metadataText]}>{item.duration} min</Text>
               </View>
             )}
 
@@ -665,15 +680,15 @@ export default function ItemDetailScreen() {
                 onPress={openUrl}
                 accessibilityLabel="Open link in browser"
               >
-                <Ionicons name="link-outline" size={20} color={BRAND[600]} />
-                <Text style={[styles.metadataText, styles.link]}>Open link</Text>
+                <Ionicons name="link-outline" size={20} color={c.brand} />
+                <Text style={[styles.metadataText, styles.link, dyn.link]}>Open link</Text>
               </PressableScale>
             )}
 
             {item.place_name && (
               <View style={styles.metadataItem}>
-                <Ionicons name="location-outline" size={20} color={TEXT.decorative} />
-                <Text style={styles.metadataText}>{item.place_name}</Text>
+                <Ionicons name="location-outline" size={20} color={c.decorative} />
+                <Text style={[styles.metadataText, dyn.metadataText]}>{item.place_name}</Text>
               </View>
             )}
           </View>
@@ -681,7 +696,7 @@ export default function ItemDetailScreen() {
           {/* Tags */}
           {item.tags && item.tags.length > 0 && (
             <View style={styles.tagsSection}>
-              <Text style={styles.sectionTitle}>Tags</Text>
+              <Text style={[styles.sectionTitle, dyn.sectionTitle]}>Tags</Text>
               <View style={styles.tags}>
                 {item.tags.map((tag) => (
                   <View key={tag} style={styles.tag}>
@@ -694,7 +709,7 @@ export default function ItemDetailScreen() {
 
           {/* Checklist Section */}
           {item.checklist && item.checklist.length > 0 && (
-            <View style={styles.checklistSection}>
+            <View style={[styles.checklistSection, dyn.card]}>
               <View style={styles.checklistHeader}>
                 <Ionicons
                   name={
@@ -709,9 +724,9 @@ export default function ItemDetailScreen() {
                             : 'checkmark-circle-outline'
                   }
                   size={20}
-                  color={TEXT.decorative}
+                  color={c.decorative}
                 />
-                <Text style={styles.sectionTitle}>
+                <Text style={[styles.sectionTitle, dyn.sectionTitle]}>
                   {item.classification === 'fitness'
                     ? 'Workout Steps'
                     : item.classification === 'food'
@@ -722,9 +737,12 @@ export default function ItemDetailScreen() {
                           ? 'Preparation Checklist'
                           : 'Checklist'}
                 </Text>
-                {item.checklist.filter(c => c.completed).length > 0 && (
-                  <Text style={styles.checklistProgress}>
-                    {item.checklist.filter(c => c.completed).length} / {item.checklist.length}
+                {/* `entry`, not `c` — `c` is the palette in this scope now, and a
+                    ChecklistItem also has a `.text`, so the shadow would hide a
+                    real mistake rather than error. */}
+                {item.checklist.filter(entry => entry.completed).length > 0 && (
+                  <Text style={[styles.checklistProgress, dyn.checklistProgress]}>
+                    {item.checklist.filter(entry => entry.completed).length} / {item.checklist.length}
                   </Text>
                 )}
               </View>
@@ -739,8 +757,10 @@ export default function ItemDetailScreen() {
                     accessibilityLabel={checklistItem.text}
                     onPress={async () => {
                       if (!item) return;
-                      const updatedChecklist = item.checklist!.map(c =>
-                        c.id === checklistItem.id ? { ...c, completed: !c.completed } : c
+                      const updatedChecklist = item.checklist!.map(entry =>
+                        entry.id === checklistItem.id
+                          ? { ...entry, completed: !entry.completed }
+                          : entry
                       );
                       await updateItem(id, { checklist: updatedChecklist });
                       await loadItem();
@@ -750,17 +770,24 @@ export default function ItemDetailScreen() {
                     <View
                       style={[
                         styles.checklistCheckbox,
+                        dyn.checklistCheckbox,
                         checklistItem.completed && styles.checklistCheckboxCompleted,
                       ]}
                     >
                       {checklistItem.completed && (
-                        <Ionicons name="checkmark" size={16} color={TEXT.inverse} />
+                        // Sits on the BRAND[500] fill, which is identical in
+                        // both appearances — so white, not textInverse.
+                        <Ionicons name="checkmark" size={16} color="#fff" />
                       )}
                     </View>
                     <Text
                       style={[
                         styles.checklistText,
-                        checklistItem.completed && styles.checklistTextCompleted,
+                        dyn.checklistText,
+                        checklistItem.completed && [
+                          styles.checklistTextCompleted,
+                          dyn.checklistTextCompleted,
+                        ],
                       ]}
                     >
                       {checklistItem.text}
@@ -772,18 +799,18 @@ export default function ItemDetailScreen() {
           )}
 
           {/* Notes Section */}
-          <View style={styles.notesSection}>
+          <View style={[styles.notesSection, dyn.card]}>
             <View style={styles.notesHeader}>
-              <Ionicons name="document-text-outline" size={20} color={TEXT.decorative} />
-              <Text style={styles.sectionTitle}>Personal Notes</Text>
+              <Ionicons name="document-text-outline" size={20} color={c.decorative} />
+              <Text style={[styles.sectionTitle, dyn.sectionTitle]}>Personal Notes</Text>
             </View>
             {isEditing ? (
               <TextInput
-                style={[styles.notesInput, styles.editingTextArea]}
+                style={[styles.notesInput, dyn.notesInput, styles.editingTextArea]}
                 value={editingNotes}
                 onChangeText={setEditingNotes}
                 placeholder="Add your personal notes, thoughts, or comments here..."
-                placeholderTextColor={TEXT.placeholder}
+                placeholderTextColor={c.textPlaceholder}
                 multiline
                 numberOfLines={6}
                 textAlignVertical="top"
@@ -791,9 +818,9 @@ export default function ItemDetailScreen() {
             ) : (
               <View style={styles.notesContent}>
                 {item.notes ? (
-                  <Text style={styles.notesText}>{item.notes}</Text>
+                  <Text style={[styles.notesText, dyn.notesText]}>{item.notes}</Text>
                 ) : (
-                  <Text style={styles.notesPlaceholder}>
+                  <Text style={[styles.notesPlaceholder, dyn.notesPlaceholder]}>
                     Tap the edit button to add personal notes
                   </Text>
                 )}
@@ -803,11 +830,11 @@ export default function ItemDetailScreen() {
 
           {/* Scheduled Info */}
           {item.scheduled_date && (
-            <View style={styles.scheduledSection}>
-              <Ionicons name="calendar" size={24} color={BRAND[600]} />
+            <View style={[styles.scheduledSection, dyn.card]}>
+              <Ionicons name="calendar" size={24} color={c.brand} />
               <View style={styles.scheduledInfo}>
-                <Text style={styles.scheduledLabel}>Scheduled</Text>
-                <Text style={styles.scheduledDate}>
+                <Text style={[styles.scheduledLabel, dyn.scheduledLabel]}>Scheduled</Text>
+                <Text style={[styles.scheduledDate, dyn.scheduledDate]}>
                   {format(parseLocalDate(item.scheduled_date), 'MMMM d, yyyy')}
                   {item.scheduled_time && ` at ${item.scheduled_time}`}
                 </Text>
@@ -820,12 +847,12 @@ export default function ItemDetailScreen() {
             <PressableScale
               haptic="light"
               containerStyle={styles.actionWrap}
-              style={styles.actionButton}
+              style={[styles.actionButton, dyn.card]}
               onPress={handleSchedulePress}
               accessibilityLabel={item.scheduled_date ? 'Reschedule this save' : 'Schedule this save'}
             >
-              <Ionicons name="calendar-outline" size={24} color={BRAND[600]} />
-              <Text style={[styles.actionText, styles.scheduleText]}>
+              <Ionicons name="calendar-outline" size={24} color={c.brand} />
+              <Text style={[styles.actionText, dyn.scheduleText]}>
                 {item.scheduled_date ? 'Reschedule' : 'Schedule'}
               </Text>
             </PressableScale>
@@ -833,23 +860,23 @@ export default function ItemDetailScreen() {
             <PressableScale
               haptic="light"
               containerStyle={styles.actionWrap}
-              style={styles.actionButton}
+              style={[styles.actionButton, dyn.card]}
               onPress={handleArchive}
               accessibilityLabel="Archive this save"
             >
-              <Ionicons name="archive-outline" size={24} color={TEXT.secondary} />
-              <Text style={styles.actionText}>Archive</Text>
+              <Ionicons name="archive-outline" size={24} color={c.textSecondary} />
+              <Text style={[styles.actionText, dyn.actionText]}>Archive</Text>
             </PressableScale>
 
             <PressableScale
               haptic="light"
               containerStyle={styles.actionWrap}
-              style={styles.actionButton}
+              style={[styles.actionButton, dyn.card]}
               onPress={handleDelete}
               accessibilityLabel="Delete this save"
             >
-              <Ionicons name="trash-outline" size={24} color={STATUS.danger} />
-              <Text style={[styles.actionText, styles.deleteText]}>Delete</Text>
+              <Ionicons name="trash-outline" size={24} color={c.danger} />
+              <Text style={[styles.actionText, dyn.deleteText]}>Delete</Text>
             </PressableScale>
           </View>
         </Animated.ScrollView>
@@ -861,17 +888,23 @@ export default function ItemDetailScreen() {
           transparent={true}
           onRequestClose={() => setShowScheduleModal(false)}
         >
-          <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, { paddingBottom: insets.bottom + SPACE.xxl }]}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Schedule Item</Text>
+          <View style={[styles.modalOverlay, dyn.modalOverlay]}>
+            <View
+              style={[
+                styles.modalContent,
+                dyn.modalContent,
+                { paddingBottom: insets.bottom + SPACE.xxl },
+              ]}
+            >
+              <View style={[styles.modalHeader, dyn.modalHeader]}>
+                <Text style={[styles.modalTitle, dyn.modalTitle]}>Schedule Item</Text>
                 <PressableScale
                   haptic="light"
                   onPress={() => setShowScheduleModal(false)}
                   style={styles.modalCloseButton}
                   accessibilityLabel="Close scheduler"
                 >
-                  <Ionicons name="close" size={24} color={INK[700]} />
+                  <Ionicons name="close" size={24} color={c.textSecondary} />
                 </PressableScale>
               </View>
 
@@ -879,34 +912,38 @@ export default function ItemDetailScreen() {
                 {/* Date Picker */}
                 <PressableScale
                   haptic="light"
-                  style={styles.pickerButton}
+                  style={[styles.pickerButton, dyn.pickerButton]}
                   onPress={() => setShowDatePicker(true)}
                   accessibilityLabel={`Date, ${format(scheduleDate, 'MMMM d, yyyy')}`}
                 >
-                  <Ionicons name="calendar-outline" size={24} color={BRAND[600]} />
+                  <Ionicons name="calendar-outline" size={24} color={c.brand} />
                   <View style={styles.pickerContent}>
-                    <Text style={styles.pickerLabel}>Date</Text>
-                    <Text style={styles.pickerValue}>{format(scheduleDate, 'MMMM d, yyyy')}</Text>
+                    <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Date</Text>
+                    <Text style={[styles.pickerValue, dyn.pickerValue]}>
+                      {format(scheduleDate, 'MMMM d, yyyy')}
+                    </Text>
                   </View>
                 </PressableScale>
 
                 {/* Time Picker */}
                 <PressableScale
                   haptic="light"
-                  style={styles.pickerButton}
+                  style={[styles.pickerButton, dyn.pickerButton]}
                   onPress={() => setShowTimePicker(true)}
                   accessibilityLabel={`Time, ${format(scheduleTime, 'h:mm a')}`}
                 >
-                  <Ionicons name="time-outline" size={24} color={BRAND[600]} />
+                  <Ionicons name="time-outline" size={24} color={c.brand} />
                   <View style={styles.pickerContent}>
-                    <Text style={styles.pickerLabel}>Time</Text>
-                    <Text style={styles.pickerValue}>{format(scheduleTime, 'h:mm a')}</Text>
+                    <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Time</Text>
+                    <Text style={[styles.pickerValue, dyn.pickerValue]}>
+                      {format(scheduleTime, 'h:mm a')}
+                    </Text>
                   </View>
                 </PressableScale>
 
                 {/* Duration Picker */}
                 <View style={styles.durationSection}>
-                  <Text style={styles.pickerLabel}>Duration</Text>
+                  <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Duration</Text>
                   <View style={styles.durationOptions}>
                     {durationOptions.map((duration) => (
                       <PressableScale
@@ -915,8 +952,11 @@ export default function ItemDetailScreen() {
                         containerStyle={styles.durationWrap}
                         selected={scheduleDuration === duration}
                         accessibilityLabel={`${duration} minutes`}
+                        // `durationOptionActive` last: the brand fill must win
+                        // over the dynamic field/hairline pair beneath it.
                         style={[
                           styles.durationOption,
+                          dyn.durationOption,
                           scheduleDuration === duration && styles.durationOptionActive,
                         ]}
                         onPress={() => setScheduleDuration(duration)}
@@ -924,6 +964,7 @@ export default function ItemDetailScreen() {
                         <Text
                           style={[
                             styles.durationOptionText,
+                            dyn.durationOptionText,
                             scheduleDuration === duration && styles.durationOptionTextActive,
                           ]}
                         >
@@ -936,12 +977,14 @@ export default function ItemDetailScreen() {
 
                 {/* Date Picker Component */}
                 {showDatePicker && (
-                  <View style={styles.pickerContainer}>
+                  <View style={[styles.pickerContainer, dyn.pickerContainer]}>
+                    {/* Both picker props follow the appearance: pinned to light,
+                        the spinner paints black digits on the dark sheet. */}
                     <DateTimePicker
                       value={scheduleDate}
                       mode="date"
                       display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                      themeVariant="light"
+                      themeVariant={c.appearance}
                       onChange={(event, selectedDate) => {
                         setShowDatePicker(Platform.OS === 'android');
                         if (selectedDate) {
@@ -949,26 +992,26 @@ export default function ItemDetailScreen() {
                         }
                       }}
                       minimumDate={new Date()}
-                      textColor={Platform.OS === 'ios' ? INK[900] : undefined}
+                      textColor={Platform.OS === 'ios' ? c.text : undefined}
                     />
                   </View>
                 )}
 
                 {/* Time Picker Component */}
                 {showTimePicker && (
-                  <View style={styles.pickerContainer}>
+                  <View style={[styles.pickerContainer, dyn.pickerContainer]}>
                     <DateTimePicker
                       value={scheduleTime}
                       mode="time"
                       display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                      themeVariant="light"
+                      themeVariant={c.appearance}
                       onChange={(event, selectedTime) => {
                         setShowTimePicker(Platform.OS === 'android');
                         if (selectedTime) {
                           setScheduleTime(selectedTime);
                         }
                       }}
-                      textColor={Platform.OS === 'ios' ? INK[900] : undefined}
+                      textColor={Platform.OS === 'ios' ? c.text : undefined}
                     />
                   </View>
                 )}
@@ -1011,12 +1054,12 @@ export default function ItemDetailScreen() {
       {hasHero && (
         <View style={styles.headerFloat} pointerEvents="box-none">
           <LinearGradient
-            colors={HEADER_SCRIM}
+            colors={c.appearance === 'dark' ? HEADER_SCRIM_DARK : HEADER_SCRIM_LIGHT}
             style={StyleSheet.absoluteFill}
             pointerEvents="none"
           />
           <Animated.View
-            style={[StyleSheet.absoluteFill, styles.headerFloatBg, headerBgStyle]}
+            style={[StyleSheet.absoluteFill, styles.headerFloatBg, dyn.headerFloatBg, headerBgStyle]}
             pointerEvents="none"
           />
           {header}
@@ -1026,13 +1069,80 @@ export default function ItemDetailScreen() {
   );
 }
 
+/**
+ * Colour-only companions to `styles`. A plain object, NOT StyleSheet.create —
+ * this is rebuilt whenever the appearance flips, and registering fresh
+ * stylesheet ids on every flip would just leak them.
+ */
+function makeDynamicStyles(c: ThemeColors) {
+  // The sheet's only separation from the page is the scrim it sits on; over a
+  // dark scrim there is nothing left to darken, so it gets a lit top edge.
+  const sheetEdge: ViewStyle =
+    c.appearance === 'dark'
+      ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline }
+      : {};
+  return {
+    container: { backgroundColor: c.page },
+    headerFloatBg: { backgroundColor: c.card, borderBottomColor: c.hairline },
+    editActionText: { color: c.textSecondary },
+    // The ground the hero paints onto while the image decodes. Left near-white
+    // it flashes a lit panel over the dark page on every open.
+    image: { backgroundColor: c.field },
+    timestamp: { color: c.textTertiary },
+    title: { color: c.text },
+    description: { color: c.textSecondary },
+    /**
+     * Shared dress for every raised card on this screen (audio, metadata,
+     * checklist, notes, scheduled, the three action buttons). Each already
+     * carries a 1px border in the static sheet, so recolouring it to `hairline`
+     * is what gives them a visible edge on dark, where SHADOW.card separates
+     * nothing — card and page are both near-black.
+     */
+    card: { backgroundColor: c.card, borderColor: c.hairline },
+    audioText: { color: c.brand },
+    metadataText: { color: c.textSecondary },
+    link: { color: c.textBrand },
+    sectionTitle: { color: c.text },
+    scheduledLabel: { color: c.textTertiary },
+    scheduledDate: { color: c.text },
+    actionText: { color: c.textSecondary },
+    deleteText: { color: c.danger },
+    scheduleText: { color: c.textBrand },
+    modalOverlay: { backgroundColor: c.scrim },
+    modalContent: { backgroundColor: c.card, ...sheetEdge },
+    modalHeader: { borderBottomColor: c.hairline },
+    modalTitle: { color: c.text },
+    pickerContainer: { backgroundColor: c.card, borderColor: c.hairline },
+    pickerButton: { backgroundColor: c.field, borderColor: c.hairline },
+    pickerLabel: { color: c.textTertiary },
+    pickerValue: { color: c.text },
+    durationOption: { backgroundColor: c.field, borderColor: c.hairline },
+    durationOptionText: { color: c.textSecondary },
+    editingLabel: { color: c.textTertiary },
+    editingInput: { backgroundColor: c.card, borderColor: c.hairline, color: c.text },
+    notesInput: { backgroundColor: c.sunken, borderColor: c.hairline, color: c.text },
+    notesText: { color: c.text },
+    notesPlaceholder: { color: c.textTertiary },
+    checklistProgress: { color: c.textBrand },
+    checklistCheckbox: {
+      backgroundColor: c.card,
+      // The resting ring is decoration, not text. INK[300] is tuned against
+      // white; on the dark card it reads as a lit halo, so dark takes the
+      // palette's decorative step instead.
+      borderColor: c.appearance === 'dark' ? c.decorative : INK[300],
+    },
+    checklistText: { color: c.text },
+    checklistTextCompleted: { color: c.textTertiary },
+  };
+}
+
+// Colour for every rule below that needs one lives in `makeDynamicStyles`.
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
   container: {
     flex: 1,
-    backgroundColor: BRAND[50],
   },
   headerFloat: {
     position: 'absolute',
@@ -1041,17 +1151,13 @@ const styles = StyleSheet.create({
     right: 0,
   },
   headerFloatBg: {
-    backgroundColor: SURFACE.card,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: HAIRLINE,
   },
   pickerContainer: {
     marginVertical: SPACE.base,
-    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.lg,
     padding: SPACE.sm,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.hairline,
   },
   // Overhangs the header's 44pt right slot on purpose — the title is hidden
@@ -1068,17 +1174,18 @@ const styles = StyleSheet.create({
     paddingVertical: SPACE.xs + 2,
     borderRadius: RADIUS.pill,
   },
+  // A brand surface: identical in both appearances, so its label stays white
+  // rather than following textInverse (which is near-black on dark).
   saveButtonHeader: {
     backgroundColor: BRAND[600],
     paddingHorizontal: SPACE.base,
   },
   editActionText: {
     ...TYPE.bodyStrong,
-    color: TEXT.secondary,
   },
   saveButtonTextHeader: {
     ...TYPE.bodyStrong,
-    color: TEXT.inverse,
+    color: '#fff',
   },
   skeletonBody: {
     padding: SPACE.base,
@@ -1095,7 +1202,6 @@ const styles = StyleSheet.create({
   image: {
     width: '100%',
     height: HERO_HEIGHT,
-    backgroundColor: INK[100],
   },
   itemHeader: {
     flexDirection: 'row',
@@ -1118,45 +1224,37 @@ const styles = StyleSheet.create({
   timestamp: {
     ...TYPE.caption,
     fontWeight: '500',
-    color: TEXT.tertiary,
   },
   title: {
     ...TYPE.title1,
-    color: TEXT.primary,
     paddingHorizontal: SPACE.base,
     marginBottom: SPACE.md,
   },
   description: {
     ...TYPE.body,
-    color: TEXT.secondary,
     paddingHorizontal: SPACE.base,
     marginBottom: SPACE.base,
   },
   audioPlayer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: SURFACE.card,
     marginHorizontal: SPACE.base,
     marginBottom: SPACE.base,
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   audioText: {
     ...TYPE.bodyStrong,
-    color: BRAND[600],
     marginLeft: SPACE.md,
   },
   metadata: {
-    backgroundColor: SURFACE.card,
     marginHorizontal: SPACE.base,
     marginBottom: SPACE.base,
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
     gap: SPACE.md,
   },
@@ -1166,11 +1264,9 @@ const styles = StyleSheet.create({
   },
   metadataText: {
     ...TYPE.body,
-    color: TEXT.secondary,
     marginLeft: SPACE.md,
   },
   link: {
-    color: TEXT.brand,
     fontWeight: '600',
   },
   tagsSection: {
@@ -1179,13 +1275,13 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     ...TYPE.headline,
-    color: TEXT.primary,
     marginBottom: SPACE.md,
   },
   tags: {
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
+  // Brand chip — same violet in both appearances, so its label stays white.
   tag: {
     backgroundColor: BRAND[600],
     paddingHorizontal: SPACE.md,
@@ -1196,18 +1292,16 @@ const styles = StyleSheet.create({
   },
   tagText: {
     ...TYPE.subhead,
-    color: TEXT.inverse,
+    color: '#fff',
   },
   scheduledSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: SURFACE.card,
     marginHorizontal: SPACE.base,
     marginBottom: SPACE.base,
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   scheduledInfo: {
@@ -1216,11 +1310,9 @@ const styles = StyleSheet.create({
   },
   scheduledLabel: {
     ...TYPE.overline,
-    color: TEXT.tertiary,
   },
   scheduledDate: {
     ...TYPE.body,
-    color: TEXT.primary,
     marginTop: SPACE.xxs,
   },
   actions: {
@@ -1236,31 +1328,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: SURFACE.card,
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   actionText: {
     ...TYPE.subhead,
-    color: TEXT.secondary,
     marginLeft: SPACE.sm,
-  },
-  deleteText: {
-    color: STATUS.danger,
-  },
-  scheduleText: {
-    color: TEXT.brand,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: SURFACE.scrim,
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: SURFACE.card,
     borderTopLeftRadius: RADIUS.xl,
     borderTopRightRadius: RADIUS.xl,
     maxHeight: '80%',
@@ -1271,11 +1352,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: SPACE.base,
     borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
   },
   modalTitle: {
     ...TYPE.title3,
-    color: TEXT.primary,
   },
   modalCloseButton: {
     padding: SPACE.xs,
@@ -1286,11 +1365,9 @@ const styles = StyleSheet.create({
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: BRAND[50],
     padding: SPACE.base,
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     marginBottom: SPACE.md,
   },
   pickerContent: {
@@ -1299,12 +1376,10 @@ const styles = StyleSheet.create({
   },
   pickerLabel: {
     ...TYPE.overline,
-    color: TEXT.tertiary,
     marginBottom: SPACE.xs,
   },
   pickerValue: {
     ...TYPE.bodyStrong,
-    color: TEXT.primary,
   },
   modalActions: {
     flexDirection: 'row',
@@ -1322,17 +1397,21 @@ const styles = StyleSheet.create({
   saveButton: {
     overflow: 'hidden',
   },
+  // On GRADIENTS.brand, which is identical in both appearances.
   saveButtonText: {
     ...TYPE.bodyStrong,
     fontWeight: '700',
-    color: TEXT.inverse,
+    color: '#fff',
   },
+  // A solid destructive fill, not destructive text: it keeps the deep red in
+  // both appearances so its white label stays above 4.5:1. `c.danger` on dark
+  // is the *lightened* red meant for text on a card, and would fail here.
   removeButton: {
     backgroundColor: STATUS.danger,
   },
   removeButtonText: {
     ...TYPE.bodyStrong,
-    color: TEXT.inverse,
+    color: '#fff',
   },
   durationSection: {
     marginTop: SPACE.sm,
@@ -1350,21 +1429,19 @@ const styles = StyleSheet.create({
     paddingVertical: SPACE.md,
     paddingHorizontal: SPACE.base,
     borderRadius: RADIUS.md,
-    backgroundColor: BRAND[50],
     borderWidth: 1,
-    borderColor: HAIRLINE,
     alignItems: 'center',
   },
+  // Brand fill in both appearances, so the selected label stays white.
   durationOptionActive: {
     backgroundColor: BRAND[600],
     borderColor: BRAND[600],
   },
   durationOptionText: {
     ...TYPE.subhead,
-    color: TEXT.secondary,
   },
   durationOptionTextActive: {
-    color: TEXT.inverse,
+    color: '#fff',
   },
   editingSection: {
     paddingHorizontal: SPACE.base,
@@ -1372,30 +1449,24 @@ const styles = StyleSheet.create({
   },
   editingLabel: {
     ...TYPE.overline,
-    color: TEXT.tertiary,
     marginBottom: SPACE.sm,
   },
   editingInput: {
-    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.md,
     padding: SPACE.base,
     ...TYPE.body,
-    color: TEXT.primary,
     borderWidth: 1,
-    borderColor: HAIRLINE,
   },
   editingTextArea: {
     minHeight: 100,
     maxHeight: 200,
   },
   notesSection: {
-    backgroundColor: SURFACE.card,
     marginHorizontal: SPACE.base,
     marginBottom: SPACE.base,
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   notesHeader: {
@@ -1405,13 +1476,10 @@ const styles = StyleSheet.create({
     gap: SPACE.sm,
   },
   notesInput: {
-    backgroundColor: SURFACE.sunken,
     borderRadius: RADIUS.sm,
     padding: SPACE.md,
     ...TYPE.body,
-    color: TEXT.primary,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     minHeight: 120,
   },
   notesContent: {
@@ -1419,21 +1487,17 @@ const styles = StyleSheet.create({
   },
   notesText: {
     ...TYPE.body,
-    color: TEXT.primary,
   },
   notesPlaceholder: {
     ...TYPE.footnote,
-    color: TEXT.tertiary,
     fontStyle: 'italic',
   },
   checklistSection: {
-    backgroundColor: SURFACE.card,
     marginHorizontal: SPACE.base,
     marginBottom: SPACE.base,
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   checklistHeader: {
@@ -1444,7 +1508,6 @@ const styles = StyleSheet.create({
   },
   checklistProgress: {
     ...TYPE.subhead,
-    color: TEXT.brand,
     marginLeft: 'auto',
   },
   checklistItems: {
@@ -1461,11 +1524,10 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: RADIUS.xs,
     borderWidth: 2,
-    borderColor: INK[300],
-    backgroundColor: SURFACE.card,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  // Brand fill in both appearances, so its checkmark stays white.
   checklistCheckboxCompleted: {
     backgroundColor: BRAND[500],
     borderColor: BRAND[500],
@@ -1473,10 +1535,8 @@ const styles = StyleSheet.create({
   checklistText: {
     flex: 1,
     ...TYPE.body,
-    color: TEXT.primary,
   },
   checklistTextCompleted: {
     textDecorationLine: 'line-through',
-    color: TEXT.tertiary,
   },
 });
