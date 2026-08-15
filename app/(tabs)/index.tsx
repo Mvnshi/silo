@@ -77,6 +77,7 @@ import {
 } from '@/lib/storage';
 import { aiSearch } from '@/lib/api';
 import { promptForText } from '@/lib/prompt';
+import { buildReview } from '@/lib/resurface';
 
 type ViewMode = 'list' | 'grid';
 
@@ -265,7 +266,13 @@ export default function StacksScreen() {
     setBulkBusy(true);
     try {
       await Promise.all(
-        ids.map((id) => updateItem(id, { viewed: true }).catch((e) => console.warn('mark done failed', e)))
+        ids.map((id) => {
+          const item = itemsRef.current.find((i) => i.id === id);
+          if (!item) return Promise.resolve();
+          return updateItem(id, buildReview(item, 'good')).catch((e) =>
+            console.warn('mark done failed', e)
+          );
+        })
       );
     } finally {
       setBulkBusy(false);
@@ -288,13 +295,18 @@ export default function StacksScreen() {
     [selectMode, toggleSelect, router]
   );
 
-  /** Swipe left — mark as done. */
+  /**
+   * Swipe left — mark as done. Routed through `buildReview` rather than a bare
+   * `viewed: true` so it counts as a real completion: it bumps times_done and
+   * last_done_at, which is what the resurfacing metric and the repeatables lane
+   * are built on. A "done" that doesn't move the north-star number is a lie.
+   */
   const handleSwipeLeft = useCallback(
     async (itemId: string) => {
       const item = itemsRef.current.find((i) => i.id === itemId);
       if (!item || item.viewed) return;
       try {
-        await updateItem(itemId, { viewed: true });
+        await updateItem(itemId, buildReview(item, 'good'));
         await loadData();
         toast.show({
           message: 'Marked done',
@@ -597,8 +609,8 @@ export default function StacksScreen() {
             <PressableScale
               haptic="light"
               scaleTo={0.92}
-              onPress={() => router.push('/settings')}
-              accessibilityLabel="Profile and settings"
+              onPress={() => router.push('/stats')}
+              accessibilityLabel="Your Silo — stats and settings"
             >
               <LinearGradient
                 colors={[...GRADIENTS.brand]}

@@ -20,6 +20,7 @@ import PressableScale from '@/components/ui/PressableScale';
 import { celebrationHaptic } from '@/lib/haptics';
 import { classConfig } from '@/lib/classification';
 import { updateItem } from '@/lib/storage';
+import { buildReview } from '@/lib/resurface';
 import { Item } from '@/lib/types';
 import {
   DURATION,
@@ -99,8 +100,17 @@ export default function ItemActionSheet({ item, onClose, onChanged, onDelete }: 
 
           <Row
             icon={isDone ? 'arrow-undo' : 'checkmark-circle'}
-            label={isDone ? 'Mark as not done' : 'Mark as done'}
-            onPress={() => mutate({ viewed: !isDone }, !isDone)}
+            label={isDone ? 'Mark as not done' : 'I did this'}
+            onPress={() =>
+              // Through buildReview so a completion actually registers as a use
+              // (times_done / last_done_at) — that is the north-star metric.
+              mutate(
+                isDone
+                  ? { viewed: false, status: 'inbox', completed_at: undefined }
+                  : buildReview(item, 'good'),
+                !isDone
+              )
+            }
           />
           <Row
             icon={item.bucketlist ? 'bookmark' : 'bookmark-outline'}
