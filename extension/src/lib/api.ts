@@ -8,9 +8,9 @@
  * bundle, so an unprefixed name silently yields `API_BASE = ''`. See
  * `.env.example`.
  *
- * EVERY call is time-boxed: a cold Cloudflare start must never hold a capture
- * hostage. Callers save what they already have and enrich when (if) the
- * response lands.
+ * EVERY call is time-boxed (see TASK_TIMEOUT_MS): a cold Cloudflare start must
+ * never hold a capture hostage. Callers save what they already have and enrich
+ * when (if) the response lands.
  */
 
 /** Extract-task request shape. Index signature lets callWorker's
@@ -42,11 +42,20 @@ const API_BASE = env.WXT_SILO_API_BASE_URL ?? '';
 const CLIENT_TOKEN = env.WXT_SILO_CLIENT_TOKEN ?? '';
 
 /**
- * Hard ceiling on any Worker round-trip. A Cloudflare cold start is ~1-2s; past
- * ~3.5s the user has already decided to save and is staring at a spinner, so we
- * abort and let the capture path proceed with what it has.
+ * Per-task ceilings. These differ because who is waiting differs:
+ *
+ * - `extract` blocks a HUMAN staring at the popup. A Cloudflare cold start is
+ *   ~1-2s; past ~3.5s they have already decided to save, so we abort and let
+ *   the popup persist what it has and enrich later.
+ * - `classify_image` runs in the background service worker after a right-click,
+ *   with a base64 upload and a vision model on the far end. Nothing is blocked
+ *   on it, and 3.5s would abort perfectly healthy saves.
  */
-const WORKER_TIMEOUT_MS = 3500;
+const TASK_TIMEOUT_MS: Record<string, number> = {
+  extract: 3500,
+  classify_image: 12_000,
+};
+const DEFAULT_TIMEOUT_MS = 8000;
 
 async function callWorker<T>(task: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${API_BASE}/api/gemini`, {
@@ -56,7 +65,9 @@ async function callWorker<T>(task: string, body: Record<string, unknown>): Promi
       ...(CLIENT_TOKEN ? { 'X-Silo-Client': CLIENT_TOKEN } : {}),
     },
     body: JSON.stringify({ task, ...body }),
-    signal: AbortSignal.timeout(WORKER_TIMEOUT_MS),
+    // Unbounded is not an option anywhere: a hung fetch keeps an MV3 worker
+    // alive and a popup disabled forever.
+    signal: AbortSignal.timeout(TASK_TIMEOUT_MS[task] ?? DEFAULT_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Worker ${task} failed: ${res.status}`);
   return (await res.json()) as T;

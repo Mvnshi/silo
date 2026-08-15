@@ -22,7 +22,7 @@
  * - lib/api: backend AI analysis (cancellable, 20s budget)
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -95,15 +95,14 @@ import {
   ACCENT,
   BRAND,
   GRADIENTS,
-  HAIRLINE,
   RADIUS,
   SHADOW,
   SPACE,
-  STATUS,
-  SURFACE,
   TEXT,
   TYPE,
+  type ThemeColors,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { enterList, LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
 import { celebrationHaptic } from '@/lib/haptics';
 import { addItem, addStack, updateItem, getItems, getStacks } from '@/lib/storage';
@@ -140,12 +139,15 @@ interface Notice {
 }
 
 function InlineNotice({ message, tone = 'info', actionLabel, onAction }: Notice) {
+  const c = useThemeColors();
   const danger = tone === 'danger';
   const body = (
-    <View style={[styles.notice, danger && styles.noticeDanger]}>
-      <Ionicons name="alert-circle" size={16} color={danger ? STATUS.danger : ACCENT[500]} />
-      <Text style={styles.noticeText}>{message}</Text>
-      {actionLabel ? <Text style={styles.noticeAction}>{actionLabel}</Text> : null}
+    <View style={[styles.notice, { backgroundColor: danger ? c.dangerSoft : c.brandSoft }]}>
+      <Ionicons name="alert-circle" size={16} color={danger ? c.danger : ACCENT[500]} />
+      <Text style={[styles.noticeText, { color: c.textSecondary }]}>{message}</Text>
+      {actionLabel ? (
+        <Text style={[styles.noticeAction, { color: c.textBrand }]}>{actionLabel}</Text>
+      ) : null}
     </View>
   );
   if (!onAction) return body;
@@ -167,10 +169,66 @@ function InlineNotice({ message, tone = 'info', actionLabel, onAction }: Notice)
  */
 const OPTION_ENTER_OFFSET = 160 / 70;
 
+/**
+ * The appearance-dependent half of `styles`. A plain object rather than
+ * StyleSheet.create so it can be memoised per palette — StyleSheet.create here
+ * would register a fresh sheet on every render.
+ *
+ * Every surface that carries a border already gets the palette hairline, which
+ * is what separates cards from the page on dark (where SHADOW.card is invisible).
+ */
+function makeDynamicStyles(c: ThemeColors) {
+  return {
+    pageTitle: { color: c.text },
+    pageSubtitle: { color: c.textSecondary },
+    quickField: { backgroundColor: c.card, borderColor: c.hairline },
+    quickInput: { color: c.text },
+    clipEyebrow: { color: c.textTertiary },
+    clipUrl: { color: c.text },
+    peekTitle: { color: c.textTertiary },
+    peekTile: { backgroundColor: c.field, borderColor: c.hairline },
+    permTile: { backgroundColor: c.card, borderColor: c.hairline },
+    permIcon: { backgroundColor: c.brandSoft },
+    permTitle: { color: c.text },
+    permSub: { color: c.textTertiary },
+    recentRow: { backgroundColor: c.card, borderColor: c.hairline },
+    recentTitle: { color: c.text },
+    orTitle: { color: c.textTertiary },
+    form: { backgroundColor: c.card, borderColor: c.hairline },
+    label: { color: c.textSecondary },
+    // `sunken` keeps the field a step recessed from the card in both
+    // appearances; the hairline is what actually draws the edge.
+    input: { backgroundColor: c.sunken, borderColor: c.hairline, color: c.text },
+    fieldHelp: { color: c.danger },
+    capturedImage: { backgroundColor: c.field },
+    /**
+     * Unselected chip. Light keeps its 90%-white wash on the white form card —
+     * carried over to dark that would be an invisible smear, so dark falls back
+     * to the field role.
+     */
+    chip: {
+      backgroundColor: c.appearance === 'dark' ? c.field : 'rgba(255, 255, 255, 0.9)',
+      borderColor: c.hairline,
+    },
+    chipText: { color: c.textTertiary },
+    stackChipNew: { backgroundColor: c.brandSoft, borderColor: c.brandBorder },
+    stackChipNewText: { color: c.textBrand },
+    cancelButtonText: { color: c.textBrand },
+    loadingText: { color: c.textTertiary },
+    previewCard: { backgroundColor: c.raised, borderColor: c.hairline },
+    previewThumb: { backgroundColor: c.field },
+    previewPlatform: { color: c.textBrand },
+    previewAuthor: { color: c.text },
+    previewTitle: { color: c.textSecondary },
+  };
+}
+
 export default function AddScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
+  const c = useThemeColors();
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
   const reduced = usePrefersReducedMotion();
   const [inputType, setInputType] = useState<'url' | 'note' | 'image' | null>(null);
   const [url, setUrl] = useState('');
@@ -708,8 +766,9 @@ export default function AddScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Gradient Background */}
-      <LinearGradient colors={[...GRADIENTS.page]} style={StyleSheet.absoluteFill} />
+      {/* Gradient Background — the page wash is the one gradient that follows
+          the appearance; brand gradients below stay brand in both. */}
+      <LinearGradient colors={[...c.pageGradient]} style={StyleSheet.absoluteFill} />
       <ChatBot onClose={() => {}} />
       <ScrollView
         contentContainerStyle={[
@@ -732,17 +791,19 @@ export default function AddScreen() {
         {/* Input Type Selection — anticipatory capture */}
         {!inputType && (
           <View style={styles.typeSelection}>
-            <Text style={styles.pageTitle}>Capture</Text>
-            <Text style={styles.pageSubtitle}>Paste, jot, or snap — Silo files it.</Text>
+            <Text style={[styles.pageTitle, dyn.pageTitle]}>Capture</Text>
+            <Text style={[styles.pageSubtitle, dyn.pageSubtitle]}>
+              Paste, jot, or snap — Silo files it.
+            </Text>
 
             {/* Always-visible quick-paste field. Acts as Save Link on URLs,
                 New Note on free text. */}
-            <View style={styles.quickField}>
-              <Ionicons name="sparkles" size={18} color={TEXT.decorative} />
+            <View style={[styles.quickField, dyn.quickField]}>
+              <Ionicons name="sparkles" size={18} color={c.decorative} />
               <TextInput
-                style={styles.quickInput}
+                style={[styles.quickInput, dyn.quickInput]}
                 placeholder="Paste a link or type a thought"
-                placeholderTextColor={TEXT.placeholder}
+                placeholderTextColor={c.textPlaceholder}
                 value={quickText}
                 onChangeText={setQuickText}
                 onSubmitEditing={commitQuickText}
@@ -775,11 +836,16 @@ export default function AddScreen() {
                 one "pasted from" banner iOS allows. */}
             {clipboardOffer && (
               <Animated.View entering={enterList(0, reduced)}>
-                <GlassCard tint="light" intensity={45} radius={RADIUS.lg} style={styles.clipCard}>
+                <GlassCard
+                  tint={c.glassTint}
+                  intensity={45}
+                  radius={RADIUS.lg}
+                  style={styles.clipCard}
+                >
                   <View style={styles.clipInner}>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.clipEyebrow}>FROM YOUR CLIPBOARD</Text>
-                      <Text style={styles.clipUrl} numberOfLines={1}>
+                      <Text style={[styles.clipEyebrow, dyn.clipEyebrow]}>FROM YOUR CLIPBOARD</Text>
+                      <Text style={[styles.clipUrl, dyn.clipUrl]} numberOfLines={1}>
                         There’s a link ready to save
                       </Text>
                     </View>
@@ -789,7 +855,7 @@ export default function AddScreen() {
                       style={styles.clipDismiss}
                       accessibilityLabel="Dismiss"
                     >
-                      <Ionicons name="close" size={18} color={TEXT.tertiary} />
+                      <Ionicons name="close" size={18} color={c.textTertiary} />
                     </PressableScale>
                     <PressableScale
                       haptic="light"
@@ -819,7 +885,7 @@ export default function AddScreen() {
               <Animated.View entering={enterList(1, reduced)}>
                 {photoAccess === 'granted' && recentShots.length > 0 && (
                   <View style={styles.peekSection}>
-                    <Text style={styles.peekTitle}>From your photos</Text>
+                    <Text style={[styles.peekTitle, dyn.peekTitle]}>From your photos</Text>
                     <ScrollView
                       horizontal
                       showsHorizontalScrollIndicator={false}
@@ -831,7 +897,7 @@ export default function AddScreen() {
                           key={s.id}
                           haptic="light"
                           onPress={() => importRecentShot(s)}
-                          style={styles.peekTile}
+                          style={[styles.peekTile, dyn.peekTile]}
                           accessibilityLabel="Import this screenshot"
                         >
                           <Image
@@ -848,21 +914,23 @@ export default function AddScreen() {
                 {/* Opt-in tile. The permission sheet only ever fires from this tap. */}
                 {photoAccess === 'undetermined' && (
                   <View style={styles.peekSection}>
-                    <Text style={styles.peekTitle}>From your photos</Text>
+                    <Text style={[styles.peekTitle, dyn.peekTitle]}>From your photos</Text>
                     <PressableScale
                       haptic="light"
                       onPress={enablePhotoPeek}
-                      style={styles.permTile}
+                      style={[styles.permTile, dyn.permTile]}
                       scaleTo={0.985}
                     >
-                      <View style={styles.permIcon}>
-                        <Ionicons name="images" size={18} color={TEXT.brand} />
+                      <View style={[styles.permIcon, dyn.permIcon]}>
+                        <Ionicons name="images" size={18} color={c.textBrand} />
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.permTitle}>Show my recent screenshots</Text>
-                        <Text style={styles.permSub}>Save one in a single tap.</Text>
+                        <Text style={[styles.permTitle, dyn.permTitle]}>
+                          Show my recent screenshots
+                        </Text>
+                        <Text style={[styles.permSub, dyn.permSub]}>Save one in a single tap.</Text>
                       </View>
-                      <Ionicons name="chevron-forward" size={16} color={TEXT.decorative} />
+                      <Ionicons name="chevron-forward" size={16} color={c.decorative} />
                     </PressableScale>
                   </View>
                 )}
@@ -870,21 +938,23 @@ export default function AddScreen() {
                 {/* Denial leaves a way back rather than a dead strip. */}
                 {photoAccess === 'denied' && (
                   <View style={styles.peekSection}>
-                    <Text style={styles.peekTitle}>From your photos</Text>
+                    <Text style={[styles.peekTitle, dyn.peekTitle]}>From your photos</Text>
                     <PressableScale
                       haptic="light"
                       onPress={() => Linking.openSettings()}
-                      style={styles.permTile}
+                      style={[styles.permTile, dyn.permTile]}
                       scaleTo={0.985}
                     >
-                      <View style={styles.permIcon}>
-                        <Ionicons name="lock-closed" size={18} color={TEXT.brand} />
+                      <View style={[styles.permIcon, dyn.permIcon]}>
+                        <Ionicons name="lock-closed" size={18} color={c.textBrand} />
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.permTitle}>Photo access is off</Text>
-                        <Text style={styles.permSub}>Turn it on in Settings to peek here.</Text>
+                        <Text style={[styles.permTitle, dyn.permTitle]}>Photo access is off</Text>
+                        <Text style={[styles.permSub, dyn.permSub]}>
+                          Turn it on in Settings to peek here.
+                        </Text>
                       </View>
-                      <Ionicons name="chevron-forward" size={16} color={TEXT.decorative} />
+                      <Ionicons name="chevron-forward" size={16} color={c.decorative} />
                     </PressableScale>
                   </View>
                 )}
@@ -894,7 +964,7 @@ export default function AddScreen() {
             {/* Last 3 saves — re-enter recent items without rummaging. */}
             {recentItems.length > 0 && (
               <Animated.View entering={enterList(2, reduced)} style={styles.peekSection}>
-                <Text style={styles.peekTitle}>You just saved</Text>
+                <Text style={[styles.peekTitle, dyn.peekTitle]}>You just saved</Text>
                 {recentItems.map((item, index) => {
                   const cfg = classConfig(item.classification);
                   return (
@@ -906,7 +976,7 @@ export default function AddScreen() {
                       <PressableScale
                         haptic="light"
                         onPress={() => router.push(`/item/${item.id}`)}
-                        style={styles.recentRow}
+                        style={[styles.recentRow, dyn.recentRow]}
                         scaleTo={0.985}
                       >
                         <LinearGradient
@@ -915,17 +985,28 @@ export default function AddScreen() {
                           end={{ x: 1, y: 1 }}
                           style={styles.recentIcon}
                         >
+                          {/* On a brand/classification gradient the glyph is white
+                              in both appearances. */}
                           <Ionicons name={cfg.icon} size={16} color={TEXT.inverse} />
                         </LinearGradient>
                         <View style={{ flex: 1, marginLeft: SPACE.sm, minWidth: 0 }}>
-                          <Text style={styles.recentTitle} numberOfLines={1}>
+                          <Text style={[styles.recentTitle, dyn.recentTitle]} numberOfLines={1}>
                             {item.title}
                           </Text>
-                          <Text style={[styles.recentSub, { color: cfg.deep }]} numberOfLines={1}>
+                          {/* `deep` is darkened for light grounds and drops to ~2.3:1
+                              on the dark card — the lighter gradient stop keeps the
+                              hue and roughly doubles the contrast. */}
+                          <Text
+                            style={[
+                              styles.recentSub,
+                              { color: c.appearance === 'dark' ? cfg.to : cfg.deep },
+                            ]}
+                            numberOfLines={1}
+                          >
                             {cfg.label.toUpperCase()}
                           </Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={16} color={TEXT.decorative} />
+                        <Ionicons name="chevron-forward" size={16} color={c.decorative} />
                       </PressableScale>
                     </Animated.View>
                   );
@@ -936,7 +1017,7 @@ export default function AddScreen() {
             {/* The four explicit capture routes. Full-width rows, not a 2-up
                 grid: OptionCard is a row (52pt tile + title + subtitle), and at
                 48% width every subtitle wrapped onto a second line. */}
-            <Text style={styles.orTitle}>OR CAPTURE SOMETHING NEW</Text>
+            <Text style={[styles.orTitle, dyn.orTitle]}>OR CAPTURE SOMETHING NEW</Text>
             <View style={styles.optionList}>
               <OptionCard
                 index={OPTION_ENTER_OFFSET}
@@ -976,7 +1057,7 @@ export default function AddScreen() {
 
         {/* URL Input */}
         {inputType === 'url' && (
-          <View style={styles.form}>
+          <View style={[styles.form, dyn.form]}>
             <View style={styles.inputGroup}>
               <View style={styles.urlHeader}>
                 <PressableScale
@@ -985,14 +1066,14 @@ export default function AddScreen() {
                   onPress={() => resetForm()}
                   accessibilityLabel="Back to capture"
                 >
-                  <Ionicons name="arrow-back" size={24} color={TEXT.secondary} />
+                  <Ionicons name="arrow-back" size={24} color={c.textSecondary} />
                 </PressableScale>
-                <Text style={styles.label}>URL</Text>
+                <Text style={[styles.label, dyn.label]}>URL</Text>
               </View>
               <TextInput
-                style={styles.input}
+                style={[styles.input, dyn.input]}
                 placeholder="https://example.com"
-                placeholderTextColor={TEXT.placeholder}
+                placeholderTextColor={c.textPlaceholder}
                 value={url}
                 onChangeText={(text) => {
                   setUrl(text);
@@ -1029,7 +1110,7 @@ export default function AddScreen() {
         {/* Image capture — the photo itself is the header, so a failed analysis
             still lands on something recognisable with a way back. */}
         {inputType === 'image' && (
-          <View style={styles.form}>
+          <View style={[styles.form, dyn.form]}>
             <View style={styles.inputGroup}>
               <View style={styles.urlHeader}>
                 <PressableScale
@@ -1038,14 +1119,14 @@ export default function AddScreen() {
                   onPress={() => resetForm()}
                   accessibilityLabel="Back to capture"
                 >
-                  <Ionicons name="arrow-back" size={24} color={TEXT.secondary} />
+                  <Ionicons name="arrow-back" size={24} color={c.textSecondary} />
                 </PressableScale>
-                <Text style={styles.label}>Photo</Text>
+                <Text style={[styles.label, dyn.label]}>Photo</Text>
               </View>
               {imageUri ? (
                 <Image
                   source={{ uri: imageUri }}
-                  style={styles.capturedImage}
+                  style={[styles.capturedImage, dyn.capturedImage]}
                   contentFit="cover"
                   transition={220}
                   accessibilityLabel="Captured photo"
@@ -1058,7 +1139,7 @@ export default function AddScreen() {
 
         {/* Note Input */}
         {inputType === 'note' && (
-          <View style={styles.form}>
+          <View style={[styles.form, dyn.form]}>
             <View style={styles.inputGroup}>
               <View style={styles.urlHeader}>
                 <PressableScale
@@ -1067,14 +1148,14 @@ export default function AddScreen() {
                   onPress={() => resetForm()}
                   accessibilityLabel="Back to capture"
                 >
-                  <Ionicons name="arrow-back" size={24} color={TEXT.secondary} />
+                  <Ionicons name="arrow-back" size={24} color={c.textSecondary} />
                 </PressableScale>
-                <Text style={styles.label}>Note</Text>
+                <Text style={[styles.label, dyn.label]}>Note</Text>
               </View>
               <TextInput
-                style={[styles.input, styles.textArea]}
+                style={[styles.input, styles.textArea, dyn.input]}
                 placeholder="Write your note..."
-                placeholderTextColor={TEXT.placeholder}
+                placeholderTextColor={c.textPlaceholder}
                 value={noteText}
                 onChangeText={(text) => {
                   setNoteText(text);
@@ -1089,33 +1170,35 @@ export default function AddScreen() {
 
         {/* Common Fields (shown after analysis or for manual entry) */}
         {(title || inputType === 'note') && (
-          <View style={styles.form}>
+          <View style={[styles.form, dyn.form]}>
             {inputType === 'url' && (thumbnailUri || author || platform) ? (
-              <View style={styles.previewCard}>
+              <View style={[styles.previewCard, dyn.previewCard]}>
                 <View style={styles.previewRow}>
                   {thumbnailUri ? (
                     <Image
                       source={{ uri: thumbnailUri }}
-                      style={styles.previewThumb}
+                      style={[styles.previewThumb, dyn.previewThumb]}
                       contentFit="cover"
                       transition={220}
                     />
                   ) : (
-                    <View style={[styles.previewThumb, styles.previewThumbFallback]}>
-                      <Ionicons name="link" size={22} color={BRAND[500]} />
+                    <View style={[styles.previewThumb, dyn.previewThumb, styles.previewThumbFallback]}>
+                      <Ionicons name="link" size={22} color={c.textBrand} />
                     </View>
                   )}
                   <View style={styles.previewMeta}>
                     {platform ? (
-                      <Text style={styles.previewPlatform}>{platform.toUpperCase()}</Text>
+                      <Text style={[styles.previewPlatform, dyn.previewPlatform]}>
+                        {platform.toUpperCase()}
+                      </Text>
                     ) : null}
                     {author ? (
-                      <Text style={styles.previewAuthor} numberOfLines={1}>
+                      <Text style={[styles.previewAuthor, dyn.previewAuthor]} numberOfLines={1}>
                         {author}
                       </Text>
                     ) : null}
                     {title ? (
-                      <Text style={styles.previewTitle} numberOfLines={2}>
+                      <Text style={[styles.previewTitle, dyn.previewTitle]} numberOfLines={2}>
                         {title}
                       </Text>
                     ) : null}
@@ -1127,11 +1210,11 @@ export default function AddScreen() {
               degradedNotice
             ) : null}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Title</Text>
+              <Text style={[styles.label, dyn.label]}>Title</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, dyn.input]}
                 placeholder="Item title"
-                placeholderTextColor={TEXT.placeholder}
+                placeholderTextColor={c.textPlaceholder}
                 value={title}
                 onChangeText={(text) => {
                   setTitle(text);
@@ -1139,16 +1222,18 @@ export default function AddScreen() {
                 }}
               />
               {titleMissing ? (
-                <Text style={styles.fieldHelp}>Give it a title so you can find it later</Text>
+                <Text style={[styles.fieldHelp, dyn.fieldHelp]}>
+                  Give it a title so you can find it later
+                </Text>
               ) : null}
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Description</Text>
+              <Text style={[styles.label, dyn.label]}>Description</Text>
               <TextInput
-                style={[styles.input, styles.textArea]}
+                style={[styles.input, styles.textArea, dyn.input]}
                 placeholder="Add a description..."
-                placeholderTextColor={TEXT.placeholder}
+                placeholderTextColor={c.textPlaceholder}
                 value={description}
                 onChangeText={setDescription}
                 multiline
@@ -1157,7 +1242,7 @@ export default function AddScreen() {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Classification</Text>
+              <Text style={[styles.label, dyn.label]}>Classification</Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -1170,6 +1255,9 @@ export default function AddScreen() {
                     selected={classification === type}
                     style={[
                       styles.classificationChip,
+                      dyn.chip,
+                      // The selected chip is a brand fill — it stays BRAND[600]
+                      // with white text in both appearances.
                       classification === type && styles.classificationChipActive,
                     ]}
                     onPress={() => setClassification(type as Classification)}
@@ -1177,6 +1265,7 @@ export default function AddScreen() {
                     <Text
                       style={[
                         styles.classificationChipText,
+                        dyn.chipText,
                         classification === type && styles.classificationChipTextActive,
                       ]}
                     >
@@ -1189,7 +1278,7 @@ export default function AddScreen() {
 
             {/* Filing happens here or never — the Stacks tab reads `stack_id`. */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Stack</Text>
+              <Text style={[styles.label, dyn.label]}>Stack</Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -1203,12 +1292,18 @@ export default function AddScreen() {
                       key={stack.id}
                       haptic="selection"
                       selected={active}
-                      style={[styles.stackChip, active && styles.stackChipActive]}
+                      style={[styles.stackChip, dyn.chip, active && styles.stackChipActive]}
                       // Tapping the selected stack unfiles — filing must be undoable
                       // without leaving the form.
                       onPress={() => setStackId(active ? undefined : stack.id)}
                     >
-                      <Text style={[styles.stackChipText, active && styles.stackChipTextActive]}>
+                      <Text
+                        style={[
+                          styles.stackChipText,
+                          dyn.chipText,
+                          active && styles.stackChipTextActive,
+                        ]}
+                      >
                         {stack.name}
                       </Text>
                     </PressableScale>
@@ -1217,17 +1312,17 @@ export default function AddScreen() {
                 <PressableScale
                   haptic="light"
                   onPress={handleNewStack}
-                  style={styles.stackChipNew}
+                  style={[styles.stackChipNew, dyn.stackChipNew]}
                   accessibilityLabel="New stack"
                 >
-                  <Ionicons name="add" size={14} color={TEXT.brand} />
-                  <Text style={styles.stackChipNewText}>New stack</Text>
+                  <Ionicons name="add" size={14} color={c.textBrand} />
+                  <Text style={[styles.stackChipNewText, dyn.stackChipNewText]}>New stack</Text>
                 </PressableScale>
               </ScrollView>
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Tags</Text>
+              <Text style={[styles.label, dyn.label]}>Tags</Text>
               <TagPicker selectedTags={tags} onTagsChange={setTags} />
             </View>
 
@@ -1264,7 +1359,7 @@ export default function AddScreen() {
                 Cancel only hid the input type, leaving a populated form stacked
                 under the capture home that saved as an untyped note. */}
             <PressableScale haptic="light" style={styles.cancelButton} onPress={() => resetForm()}>
-              <Text style={styles.cancelButtonText}>Discard</Text>
+              <Text style={[styles.cancelButtonText, dyn.cancelButtonText]}>Discard</Text>
             </PressableScale>
           </View>
         )}
@@ -1275,9 +1370,9 @@ export default function AddScreen() {
             <Skeleton height={180} radius={RADIUS.lg} />
             <Skeleton width="72%" height={18} style={styles.loadingLine} />
             <Skeleton width="48%" height={14} style={styles.loadingLine} />
-            <Text style={styles.loadingText}>Analyzing with AI...</Text>
+            <Text style={[styles.loadingText, dyn.loadingText]}>Analyzing with AI...</Text>
             <PressableScale haptic="light" style={styles.cancelButton} onPress={() => resetForm()}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={[styles.cancelButtonText, dyn.cancelButtonText]}>Cancel</Text>
             </PressableScale>
           </View>
         )}
@@ -1297,22 +1392,20 @@ const styles = StyleSheet.create({
   typeSelection: {
     gap: SPACE.md,
   },
-  pageTitle: { ...TYPE.display, color: TEXT.primary },
-  pageSubtitle: { ...TYPE.callout, color: TEXT.secondary, marginTop: SPACE.xs },
+  pageTitle: { ...TYPE.display },
+  pageSubtitle: { ...TYPE.callout, marginTop: SPACE.xs },
   /* Anticipatory-capture zone styles */
   quickField: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.sm,
-    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.pill,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     paddingHorizontal: 14,
     paddingVertical: 6,
     ...SHADOW.card,
   },
-  quickInput: { flex: 1, ...TYPE.callout, color: TEXT.primary, paddingVertical: SPACE.sm },
+  quickInput: { flex: 1, ...TYPE.callout, paddingVertical: SPACE.sm },
   quickSendBtn: {
     width: 34,
     height: 34,
@@ -1329,8 +1422,8 @@ const styles = StyleSheet.create({
     gap: SPACE.sm,
     padding: 14,
   },
-  clipEyebrow: { ...TYPE.overline, color: TEXT.tertiary },
-  clipUrl: { ...TYPE.footnote, color: TEXT.primary, marginTop: SPACE.xs },
+  clipEyebrow: { ...TYPE.overline },
+  clipUrl: { ...TYPE.footnote, marginTop: SPACE.xs },
   clipDismiss: {
     width: 30,
     height: 30,
@@ -1343,11 +1436,11 @@ const styles = StyleSheet.create({
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
   },
+  /* On the brand gradient this stays white in both appearances. */
   clipSaveText: { ...TYPE.subhead, fontWeight: '700', color: TEXT.inverse },
   peekSection: { gap: SPACE.sm, marginTop: 6 },
   peekTitle: {
     ...TYPE.overline,
-    color: TEXT.tertiary,
     marginLeft: SPACE.xxs,
   },
   peekStrip: { gap: SPACE.sm, paddingRight: SPACE.base },
@@ -1356,9 +1449,7 @@ const styles = StyleSheet.create({
     height: 110,
     borderRadius: RADIUS.md,
     overflow: 'hidden',
-    backgroundColor: SURFACE.field,
     borderWidth: 1,
-    borderColor: HAIRLINE,
   },
   peekImg: { width: '100%', height: '100%' },
   /* Photo-access opt-in / recovery tile (same shape as a recent row). */
@@ -1366,10 +1457,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.md,
-    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     padding: SPACE.md,
     ...SHADOW.hairline,
   },
@@ -1379,17 +1468,14 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: BRAND[50],
   },
-  permTitle: { ...TYPE.subhead, color: TEXT.primary },
-  permSub: { ...TYPE.caption, fontWeight: '500', color: TEXT.tertiary, marginTop: SPACE.xxs },
+  permTitle: { ...TYPE.subhead },
+  permSub: { ...TYPE.caption, fontWeight: '500', marginTop: SPACE.xxs },
   recentRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     padding: SPACE.sm + 2,
   },
   recentIcon: {
@@ -1399,21 +1485,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  recentTitle: { ...TYPE.subhead, color: TEXT.primary },
+  recentTitle: { ...TYPE.subhead },
   recentSub: { ...TYPE.overline, marginTop: SPACE.xxs },
   orTitle: {
     ...TYPE.overline,
-    color: TEXT.tertiary,
     marginTop: 14,
     marginLeft: SPACE.xxs,
   },
   optionList: { marginTop: SPACE.xs },
   form: {
     gap: SPACE.lg,
-    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.xl,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     padding: SPACE.base,
     ...SHADOW.card,
   },
@@ -1432,16 +1515,12 @@ const styles = StyleSheet.create({
   },
   label: {
     ...TYPE.bodyStrong,
-    color: TEXT.secondary,
   },
   input: {
-    backgroundColor: SURFACE.sunken,
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     padding: SPACE.base,
     ...TYPE.body,
-    color: TEXT.primary,
   },
   textArea: {
     minHeight: 100,
@@ -1449,30 +1528,24 @@ const styles = StyleSheet.create({
   },
   fieldHelp: {
     ...TYPE.footnote,
-    color: STATUS.danger,
     marginLeft: SPACE.xxs,
   },
   capturedImage: {
     width: '100%',
     height: 220,
     borderRadius: RADIUS.lg,
-    backgroundColor: SURFACE.field,
   },
   /* Inline notice — replaces the Alert.alert('Error', …) family. */
   notice: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.sm,
-    backgroundColor: BRAND[50],
     borderRadius: RADIUS.md,
     paddingHorizontal: SPACE.md,
     paddingVertical: SPACE.sm + 2,
   },
-  noticeDanger: {
-    backgroundColor: STATUS.dangerSoft,
-  },
-  noticeText: { ...TYPE.footnote, color: TEXT.secondary, flex: 1 },
-  noticeAction: { ...TYPE.footnote, fontWeight: '800', color: TEXT.brand },
+  noticeText: { ...TYPE.footnote, flex: 1 },
+  noticeAction: { ...TYPE.footnote, fontWeight: '800' },
   analyzeButton: {
     borderRadius: RADIUS.pill,
     padding: SPACE.base,
@@ -1486,22 +1559,20 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   classificationChip: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
     marginRight: SPACE.sm,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.hairline,
   },
+  /* Selected chips are brand FILLS — violet with white text in both appearances. */
   classificationChipActive: {
     backgroundColor: BRAND[600],
     borderColor: BRAND[600],
   },
   classificationChipText: {
     ...TYPE.subhead,
-    color: TEXT.tertiary,
     textTransform: 'capitalize',
   },
   classificationChipTextActive: {
@@ -1509,19 +1580,17 @@ const styles = StyleSheet.create({
   },
   stackRow: { gap: SPACE.sm, paddingRight: SPACE.base },
   stackChip: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.hairline,
   },
   stackChipActive: {
     backgroundColor: BRAND[600],
     borderColor: BRAND[600],
   },
-  stackChipText: { ...TYPE.subhead, color: TEXT.tertiary },
+  stackChipText: { ...TYPE.subhead },
   stackChipTextActive: { color: TEXT.inverse },
   stackChipNew: {
     flexDirection: 'row',
@@ -1532,10 +1601,8 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: BRAND[300],
-    backgroundColor: BRAND[50],
   },
-  stackChipNewText: { ...TYPE.subhead, color: TEXT.brand },
+  stackChipNewText: { ...TYPE.subhead },
   // Layout wrapper around the gradient save pill (margin lives here so the
   // press-scale transform doesn't shift it). The form is a column, so unlike
   // reel.tsx's row variant this wrapper must NOT take flex: 1 — in an
@@ -1558,7 +1625,6 @@ const styles = StyleSheet.create({
   },
   cancelButtonText: {
     ...TYPE.bodyStrong,
-    color: TEXT.brand,
   },
   loadingContainer: {
     alignItems: 'center',
@@ -1570,15 +1636,12 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...TYPE.body,
-    color: TEXT.tertiary,
     marginTop: SPACE.base,
   },
   previewCard: {
     gap: SPACE.md,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     padding: SPACE.md,
   },
   previewRow: {
@@ -1590,7 +1653,6 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: RADIUS.sm,
-    backgroundColor: SURFACE.field,
   },
   previewThumbFallback: {
     alignItems: 'center',
@@ -1602,15 +1664,12 @@ const styles = StyleSheet.create({
   },
   previewPlatform: {
     ...TYPE.overline,
-    color: TEXT.brand,
   },
   previewAuthor: {
     ...TYPE.subhead,
     fontWeight: '700',
-    color: TEXT.primary,
   },
   previewTitle: {
     ...TYPE.footnote,
-    color: TEXT.secondary,
   },
 });

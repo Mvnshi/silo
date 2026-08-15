@@ -10,8 +10,8 @@
  * Delete is handled by the caller (`onDelete`) so it can be optimistic and
  * undoable — this sheet just dismisses.
  */
-import React from 'react';
-import { Modal, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { Modal, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,18 +22,8 @@ import { classConfig } from '@/lib/classification';
 import { updateItem } from '@/lib/storage';
 import { buildReview } from '@/lib/resurface';
 import { Item } from '@/lib/types';
-import {
-  DURATION,
-  HAIRLINE,
-  INK,
-  RADIUS,
-  SHADOW,
-  SPACE,
-  STATUS,
-  SURFACE,
-  TEXT,
-  TYPE,
-} from '@/lib/theme';
+import { DURATION, RADIUS, SHADOW, SPACE, TYPE, type ThemeColors } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { enterFromBottom, exitToBottom, usePrefersReducedMotion } from '@/lib/motion';
 
 interface Props {
@@ -50,10 +40,16 @@ export default function ItemActionSheet({ item, onClose, onChanged, onDelete }: 
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
 
   if (!item) return null;
   const cfg = classConfig(item.classification);
   const isDone = item.viewed === true || item.status === 'done';
+  // The eyebrow sits on the bare sheet, not on the 10% tint the pills use, and
+  // `deep` is tuned for that tint — on a near-black sheet it lands near 2:1.
+  // The gradient's light end keeps the classification's identity and reads.
+  const eyebrowColor = c.appearance === 'dark' ? cfg.to : cfg.deep;
 
   async function mutate(patch: Partial<Item>, celebrate = false) {
     if (!item) return;
@@ -72,7 +68,7 @@ export default function ItemActionSheet({ item, onClose, onChanged, onDelete }: 
       <Animated.View
         entering={FadeIn.duration(DURATION.fast)}
         exiting={FadeOut.duration(DURATION.instant)}
-        style={styles.scrim}
+        style={[styles.scrim, dyn.scrim]}
       >
         <PressableScale
           haptic="none"
@@ -87,13 +83,13 @@ export default function ItemActionSheet({ item, onClose, onChanged, onDelete }: 
         <Animated.View
           entering={enterFromBottom(0, reduced)}
           exiting={exitToBottom(reduced)}
-          style={[styles.sheet, { paddingBottom: insets.bottom + SPACE.base }]}
+          style={[styles.sheet, dyn.sheet, { paddingBottom: insets.bottom + SPACE.base }]}
         >
-          <View style={styles.grabber} />
+          <View style={[styles.grabber, dyn.grabber]} />
 
           <View style={styles.header}>
-            <Text style={[styles.eyebrow, { color: cfg.deep }]}>{cfg.label.toUpperCase()}</Text>
-            <Text style={styles.title} numberOfLines={2}>
+            <Text style={[styles.eyebrow, { color: eyebrowColor }]}>{cfg.label.toUpperCase()}</Text>
+            <Text style={[styles.title, dyn.title]} numberOfLines={2}>
               {item.title}
             </Text>
           </View>
@@ -131,7 +127,7 @@ export default function ItemActionSheet({ item, onClose, onChanged, onDelete }: 
             onPress={() => mutate({ archived: !item.archived })}
           />
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, dyn.divider]} />
 
           <Row
             icon="trash-outline"
@@ -159,7 +155,8 @@ function Row({
   onPress: () => void;
   tone?: 'default' | 'danger';
 }) {
-  const color = tone === 'danger' ? STATUS.danger : TEXT.primary;
+  const c = useThemeColors();
+  const color = tone === 'danger' ? c.danger : c.text;
   return (
     <PressableScale
       haptic="light"
@@ -168,20 +165,39 @@ function Row({
       onPress={onPress}
       accessibilityLabel={label}
     >
-      <Ionicons name={icon} size={21} color={tone === 'danger' ? STATUS.danger : INK[600]} />
+      <Ionicons name={icon} size={21} color={tone === 'danger' ? c.danger : c.textSecondary} />
       <Text style={[styles.rowLabel, { color }]}>{label}</Text>
     </PressableScale>
   );
 }
 
+/**
+ * Colour-only companions to `styles`. Plain object, not StyleSheet.create — it
+ * is rebuilt when the appearance flips and would otherwise leak stylesheet ids.
+ */
+function makeDynamicStyles(c: ThemeColors) {
+  // SHADOW.floating is what separates the sheet from the scrim; over a dark
+  // scrim there is nothing left for it to darken, so the sheet gets a lit edge.
+  const sheetEdge: ViewStyle =
+    c.appearance === 'dark'
+      ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline }
+      : {};
+  return {
+    scrim: { backgroundColor: c.scrim },
+    sheet: { backgroundColor: c.card, ...sheetEdge },
+    grabber: { backgroundColor: c.field },
+    title: { color: c.text },
+    divider: { backgroundColor: c.hairline },
+  };
+}
+
+// Colour for every rule below that needs one lives in `makeDynamicStyles`.
 const styles = StyleSheet.create({
   scrim: {
     flex: 1,
-    backgroundColor: SURFACE.scrim,
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: SURFACE.card,
     borderTopLeftRadius: RADIUS.xxl,
     borderTopRightRadius: RADIUS.xxl,
     paddingHorizontal: SPACE.sm,
@@ -193,7 +209,6 @@ const styles = StyleSheet.create({
     width: 38,
     height: 5,
     borderRadius: RADIUS.pill,
-    backgroundColor: INK[200],
     marginBottom: SPACE.md,
   },
   header: {
@@ -205,7 +220,6 @@ const styles = StyleSheet.create({
   },
   title: {
     ...TYPE.title3,
-    color: TEXT.primary,
     marginTop: 2,
   },
   row: {
@@ -222,7 +236,6 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: HAIRLINE,
     marginVertical: SPACE.sm,
     marginHorizontal: SPACE.md,
   },

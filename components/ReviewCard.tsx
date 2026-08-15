@@ -26,14 +26,12 @@ import { ReviewOutcome, scheduledEnd } from '@/lib/resurface';
 import { classConfig } from '@/lib/classification';
 import {
   GRADIENTS,
-  HAIRLINE,
   RADIUS,
   SHADOW,
   SPACE,
-  STATUS,
-  TEXT,
   TYPE,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { exitFade, LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
 
 /**
@@ -72,10 +70,15 @@ interface EventReviewProps {
 export function EventReviewCard({ item, onOutcome, onReschedule }: EventReviewProps) {
   const [step, setStep] = useState<'ask' | 'did' | 'skip'>('ask');
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
   const cfg = classConfig(item.classification);
 
   return (
-    <Animated.View style={styles.card} layout={LAYOUT} exiting={exitFade(reduced)}>
+    <Animated.View
+      style={[styles.card, { backgroundColor: c.card, borderColor: c.hairline }]}
+      layout={LAYOUT}
+      exiting={exitFade(reduced)}
+    >
       <View style={styles.headRow}>
         {step === 'ask' ? (
           <LinearGradient
@@ -90,17 +93,17 @@ export function EventReviewCard({ item, onOutcome, onReschedule }: EventReviewPr
           <PressableScale
             haptic="selection"
             onPress={() => setStep('ask')}
-            style={styles.backBtn}
+            style={[styles.backBtn, { backgroundColor: c.hairline }]}
             accessibilityLabel="Back"
           >
-            <Ionicons name="chevron-back" size={18} color={TEXT.secondary} />
+            <Ionicons name="chevron-back" size={18} color={c.textSecondary} />
           </PressableScale>
         )}
         <View style={{ flex: 1, marginLeft: 10, minWidth: 0 }}>
-          <Text style={styles.title} numberOfLines={1}>
+          <Text style={[styles.title, { color: c.text }]} numberOfLines={1}>
             {item.title}
           </Text>
-          <Text style={styles.prompt}>
+          <Text style={[styles.prompt, { color: c.textSecondary }]}>
             {/* The 'ask' step sits directly under a "How did it go?" section
                 header, so repeating it here says nothing. Show WHEN it was on
                 the calendar instead — that is the context the user needs to
@@ -157,8 +160,13 @@ interface StaleProps {
 export function StaleCard({ item, ageLabel, onKeep, onArchive }: StaleProps) {
   const cfg = classConfig(item.classification);
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
   return (
-    <Animated.View style={styles.card} layout={LAYOUT} exiting={exitFade(reduced)}>
+    <Animated.View
+      style={[styles.card, { backgroundColor: c.card, borderColor: c.hairline }]}
+      layout={LAYOUT}
+      exiting={exitFade(reduced)}
+    >
       <View style={styles.headRow}>
         <LinearGradient
           colors={[cfg.from, cfg.to]}
@@ -169,10 +177,12 @@ export function StaleCard({ item, ageLabel, onKeep, onArchive }: StaleProps) {
           <Ionicons name={cfg.icon} size={16} color="#fff" />
         </LinearGradient>
         <View style={{ flex: 1, marginLeft: 10, minWidth: 0 }}>
-          <Text style={styles.title} numberOfLines={1}>
+          <Text style={[styles.title, { color: c.text }]} numberOfLines={1}>
             {item.title}
           </Text>
-          <Text style={styles.prompt}>{ageLabel} · still want it?</Text>
+          <Text style={[styles.prompt, { color: c.textSecondary }]}>
+            {ageLabel} · still want it?
+          </Text>
         </View>
       </View>
       <View style={styles.actions}>
@@ -201,7 +211,11 @@ function Pill({
   compact?: boolean;
   onPress: () => void;
 }) {
+  const c = useThemeColors();
+
   if (filled) {
+    // Brand surface: the violet gradient and its white label are the same in
+    // both appearances (they are the brand, not the page).
     return (
       <PressableScale haptic="light" onPress={onPress} containerStyle={styles.pillWrap}>
         <LinearGradient
@@ -223,11 +237,20 @@ function Pill({
       haptic="light"
       onPress={onPress}
       containerStyle={styles.pillWrap}
-      style={[styles.pill, danger && styles.pillDanger]}
+      style={[
+        styles.pill,
+        // `raised` rather than `card`: on dark the pill sits ON the card, and
+        // an identical fill would leave only the hairline to read it by.
+        { backgroundColor: danger ? c.dangerSoft : c.raised, borderColor: c.hairline },
+      ]}
     >
-      <Ionicons name={icon} size={15} color={danger ? STATUS.danger : TEXT.secondary} />
+      <Ionicons name={icon} size={15} color={danger ? c.danger : c.text} />
       <Text
-        style={[styles.pillText, danger && styles.pillDangerText, compact && styles.pillTextCompact]}
+        style={[
+          styles.pillText,
+          { color: danger ? c.danger : c.text },
+          compact && styles.pillTextCompact,
+        ]}
         numberOfLines={1}
       >
         {label}
@@ -236,12 +259,16 @@ function Pill({
   );
 }
 
+/**
+ * Appearance-independent only — every colour is applied at the call site from
+ * `useThemeColors()`. The card keeps its 1pt border in both appearances: on
+ * dark it is the ONLY thing separating the card from the page, since
+ * `SHADOW.card` is invisible there.
+ */
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#fff',
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     padding: 14,
     marginBottom: 10,
     ...SHADOW.card,
@@ -260,10 +287,9 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: HAIRLINE,
   },
-  title: { ...TYPE.callout, fontWeight: '700', color: TEXT.primary },
-  prompt: { ...TYPE.footnote, color: TEXT.tertiary, marginTop: SPACE.xxs },
+  title: { ...TYPE.callout, fontWeight: '700' },
+  prompt: { ...TYPE.footnote, marginTop: SPACE.xxs },
   actions: { flexDirection: 'row', gap: SPACE.sm, marginTop: SPACE.md },
   pillWrap: { flex: 1 },
   pillFilled: {
@@ -282,12 +308,8 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 11,
     borderRadius: RADIUS.pill,
-    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: HAIRLINE,
   },
-  pillText: { ...TYPE.subhead, color: TEXT.secondary },
+  pillText: { ...TYPE.subhead },
   pillTextCompact: { ...TYPE.footnote, fontWeight: '700' },
-  pillDanger: { backgroundColor: STATUS.dangerSoft },
-  pillDangerText: { color: STATUS.danger },
 });

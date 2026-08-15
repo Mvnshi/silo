@@ -13,7 +13,7 @@ Silo turns the things you save — links, screenshots, notes, and social posts �
 | App | Expo SDK 54, React Native 0.81, React 19, TypeScript (strict), expo-router (file-based) |
 | State / storage | On-device only — `@react-native-async-storage/async-storage` (`lib/storage.ts`) |
 | Backend | One Cloudflare Worker (`workers/`) — an authenticated **Gemini proxy**, nothing else |
-| AI | Google Gemini (`gemini-2.0-flash`) for classify / extract / suggest / assistant |
+| AI | Google Gemini (`gemini-2.5-flash`) for classify / extract / suggest / assistant |
 | Native add-on | iOS **Share Extension** (`targets/share`, via `@bacons/apple-targets`) |
 | Maps / calendar / media | `react-native-maps`, `expo-calendar`, `expo-media-library`, `expo-location` |
 
@@ -23,19 +23,58 @@ There is **no** account system, no remote database, and no third-party media/TTS
 
 ```
 app/ (expo-router screens)
-  ├─ (tabs)/  Streams · Stacks · Add · Silo (calendar/map/bucket) · Screenshots
-  ├─ item/[id], silo/[id], settings, share (deep-link target)
+  ├─ (tabs)/  Streams · Stacks · Add · Silo (today/calendar/map/bucket) · Screenshots
+  ├─ item/[id], silo/[id], stats, settings, onboarding, share (deep-link target)
 lib/ (pure logic, no UI)
   ├─ storage.ts     AsyncStorage: per-key write mutex + clobber guards
   ├─ items.ts       Item factory, normalization, status derivation
   ├─ api.ts         thin client → POST /api/gemini
   ├─ extract path   embed.ts (inline players) + shareImport.ts (share queue)
   ├─ scheduler.ts   idempotent calendar scheduling
-  └─ classification.ts, datetime.ts, haptics.ts, screenshots.ts, seed.ts, config.ts
-components/         StreamCard, ItemCardPro, CompactCard, ItemCard, ChatBot, …
+  ├─ resurface.ts   after-event report · staleness nudge · repeatables
+  ├─ stats.ts       resurfacing metrics, levels, cleanup candidates (pure)
+  ├─ notifications.ts  local-only digest / check-in / tidy-up reminders
+  ├─ theme.ts       design tokens + the light/dark palettes
+  ├─ useTheme.ts    useThemeColors() — the appearance hook
+  ├─ motion.ts      shared entrance/exit presets + reduced-motion
+  └─ classification.ts, datetime.ts, haptics.ts, prompt.ts, screenshots.ts, seed.ts, config.ts
+components/         StreamCard, ItemCardPro, CompactCard, TodayView, ReviewCard,
+                    ItemActionSheet, CleanupSheet, ChatBot, ThemeProvider, ui/*
+extension/          browser extension (MV3 · WXT · React 19 · Dexie) — the desktop half
 workers/            Cloudflare Worker: index → middleware (auth + rate limit) → gemini
 targets/share/      native iOS Share Extension (Swift) → App Group → app drains it
 ```
+
+### Design system
+
+`lib/theme.ts` is the single source of style truth, mirrored into
+`tailwind.config.js` for NativeWind. Nothing in a screen should be a literal:
+
+| Token | Use |
+|---|---|
+| `TYPE` | 11 steps, each carrying line-height + optical tracking. Never a bare `fontSize`. |
+| `SPACE` / `RADIUS` | 4pt grid; `RADIUS.pill` for chips. Never a numeric radius. |
+| `SHADOW` | `hairline · card · raised · floating · brandCard · brandFloating`. Never a hand-rolled shadow object. |
+| `SPRING` / `DURATION` | Every press and transition uses the same curves. |
+| `TEXT` / `SURFACE` / `STATUS` | Semantic roles. `INK[400]` is ~2.4:1 on white — **decoration only, never text**. |
+
+Appearance is reactive: `useThemeColors()` (backed by `components/ThemeProvider`)
+returns the palette for the resolved appearance, and the provider also pushes it
+into NativeWind so `dark:` classNames and StyleSheet colours can't disagree.
+Users can force light or dark independently of the system setting.
+
+Motion lives in `lib/motion.ts` (`enterList`, `enterFromBottom`, `LAYOUT`, …) and
+degrades to a cross-fade under **Reduce Motion**.
+
+### The resurfacing loop
+
+Silo's north-star metric is *actions taken per week from saved items*, not saves
+or opens ([`VISION.md`](VISION.md)). Three mechanics keep saves from rotting —
+after-event report, staleness nudge, and repeatables (`lib/resurface.ts`) — and
+**Your Silo** (`app/stats.tsx`) makes the metric visible: levels earned only by
+*using* things, a save→do rate, a streak, and a one-card-at-a-time cleanup flow
+for the stale pile. Reminders (`lib/notifications.ts`) are local-only: no push
+token, no device registration, nothing server-side that knows what you saved.
 
 **Why a Worker at all?** Only to keep `GEMINI_API_KEY` off the client (an in-bundle key is extractable). Everything else — search, retrieval, storage — runs on-device and free.
 

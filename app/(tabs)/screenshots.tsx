@@ -65,18 +65,16 @@ import {
   BRAND,
   DURATION,
   GRADIENTS,
-  HAIRLINE,
   HAIRLINE_DARK,
-  INK,
   RADIUS,
   SHADOW,
   SPACE,
   SPRING,
-  STATUS,
-  SURFACE,
   TEXT,
   TYPE,
+  type ThemeColors,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import {
   enterFromBottom,
   enterList,
@@ -142,6 +140,14 @@ function snackbarIcon(a: LastAction): keyof typeof Ionicons.glyphMap {
 export default function ScreenshotsScreen() {
   const insets = useSafeAreaInsets();
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
+  // Skeleton's default block is near-white, which flares on the dark page.
+  // Undefined props fall back to the component's own (light) defaults.
+  const skeletonTone =
+    c.appearance === 'dark'
+      ? { color: c.field, sweepColor: 'rgba(255, 255, 255, 0.06)' }
+      : {};
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
   const [permission, setPermission] = useState<MediaPermissionStatus | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -572,10 +578,10 @@ export default function ScreenshotsScreen() {
         >
           <Ionicons name="checkmark" size={72} color={TEXT.inverse} />
         </LinearGradient>
-        <Text accessibilityRole="header" style={styles.caughtUpTitle}>
+        <Text accessibilityRole="header" style={[styles.caughtUpTitle, dyn.caughtUpTitle]}>
           All caught up
         </Text>
-        <Text style={styles.caughtUpSub}>
+        <Text style={[styles.caughtUpSub, dyn.caughtUpSub]}>
           {importsToday > 0 ? `${importsToday} imported today` : 'No imports today yet'}
         </Text>
         <PressableScale
@@ -608,9 +614,9 @@ export default function ScreenshotsScreen() {
         pointerEvents="none"
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
-        style={[styles.card, styles.peekCard, depth === 1 ? peek1Style : peek2Style]}
+        style={[styles.card, dyn.card, styles.peekCard, depth === 1 ? peek1Style : peek2Style]}
       >
-        <Image source={{ uri: shot.uri }} style={styles.cardImage} />
+        <Image source={{ uri: shot.uri }} style={[styles.cardImage, dyn.cardImage]} />
       </Animated.View>
     );
   }
@@ -624,9 +630,9 @@ export default function ScreenshotsScreen() {
         accessible
         accessibilityRole="image"
         accessibilityLabel={`Screenshot ${currentIndex + 1} of ${visibleScreenshots.length}`}
-        style={[styles.card, cardStyle]}
+        style={[styles.card, dyn.card, cardStyle]}
       >
-        <Image source={{ uri: shot.uri }} style={styles.cardImage} />
+        <Image source={{ uri: shot.uri }} style={[styles.cardImage, dyn.cardImage]} />
         <Animated.View pointerEvents="none" style={[styles.swipeOverlay, overlayStyle]}>
           <Animated.View
             style={[styles.swipeIndicator, importIndicatorStyle, styles.importIndicator]}
@@ -661,9 +667,14 @@ export default function ScreenshotsScreen() {
           accessibilityRole="button"
           accessibilityLabel="Skip this screenshot"
           accessibilityHint="Moves to the next screenshot without importing"
-          style={[styles.actionCircle, styles.skipCircle, analyzing && styles.actionDisabled]}
+          style={[
+            styles.actionCircle,
+            styles.skipCircle,
+            dyn.skipCircle,
+            analyzing && styles.actionDisabled,
+          ]}
         >
-          <Ionicons name="close" size={28} color={STATUS.danger} />
+          <Ionicons name="close" size={28} color={c.danger} />
         </PressableScale>
         <PressableScale
           haptic="medium"
@@ -692,18 +703,21 @@ export default function ScreenshotsScreen() {
     return (
       <View pointerEvents="none" style={styles.skeletonStack}>
         <Skeleton
+          {...skeletonTone}
           width={CARD_WIDTH * 0.9}
           height={deckHeight}
           radius={RADIUS.xl}
           style={[styles.skeletonCard, { transform: [{ translateY: 28 }], opacity: 0.7 }]}
         />
         <Skeleton
+          {...skeletonTone}
           width={CARD_WIDTH * 0.95}
           height={deckHeight}
           radius={RADIUS.xl}
           style={[styles.skeletonCard, { transform: [{ translateY: 14 }], opacity: 0.85 }]}
         />
         <Skeleton
+          {...skeletonTone}
           width={CARD_WIDTH}
           height={deckHeight}
           radius={RADIUS.xl}
@@ -774,11 +788,11 @@ export default function ScreenshotsScreen() {
           <Animated.View
             entering={enterFromBottom(0, reduced)}
             exiting={exitToBottom(reduced)}
-            style={styles.analyzingPill}
+            style={[styles.analyzingPill, dyn.analyzingPill]}
             accessibilityLiveRegion="polite"
           >
-            <ActivityIndicator size="small" color={BRAND[600]} />
-            <Text style={styles.analyzingText}>Analyzing…</Text>
+            <ActivityIndicator size="small" color={c.brand} />
+            <Text style={[styles.analyzingText, dyn.analyzingText]}>Analyzing…</Text>
           </Animated.View>
         )}
       </>
@@ -788,20 +802,22 @@ export default function ScreenshotsScreen() {
   const showActions = canRead && !deckEmpty && !showSkeleton;
 
   return (
-    <View style={styles.container}>
-      <LinearGradient colors={[...GRADIENTS.page]} style={StyleSheet.absoluteFill} />
+    <View style={[styles.container, dyn.pageBase]}>
+      <LinearGradient colors={[...c.pageGradient]} style={StyleSheet.absoluteFill} />
 
       {/* Header */}
       <Animated.View
         entering={enterList(0, reduced).delay(60)}
         style={[styles.header, { paddingTop: insets.top + SPACE.md }]}
       >
-        <Text accessibilityRole="header" style={styles.headerTitle}>
+        <Text accessibilityRole="header" style={[styles.headerTitle, dyn.headerTitle]}>
           {!deckEmpty
             ? `${Math.min(currentIndex + 1, visibleScreenshots.length)} / ${visibleScreenshots.length}`
             : 'Screenshots'}
         </Text>
-        <Text style={styles.headerSubtitle}>Swipe or use the buttons below</Text>
+        <Text style={[styles.headerSubtitle, dyn.headerSubtitle]}>
+          Swipe or use the buttons below
+        </Text>
       </Animated.View>
 
       {/* Filter chips */}
@@ -820,9 +836,11 @@ export default function ScreenshotsScreen() {
                 selected={active}
                 accessibilityLabel={`${f.label} screenshots`}
                 onPress={() => setActiveFilter(f.key)}
-                style={[styles.chip, active && styles.chipActive]}
+                style={[styles.chip, dyn.chip, active && styles.chipActive]}
               >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                <Text
+                  style={[styles.chipText, dyn.chipText, active && styles.chipTextActive]}
+                >
                   {f.label}
                 </Text>
               </PressableScale>
@@ -834,7 +852,7 @@ export default function ScreenshotsScreen() {
       {/* Deck */}
       <Animated.View
         entering={enterList(0, reduced).delay(220)}
-        style={[styles.deckArea, { paddingBottom: insets.bottom + TAB_BAR_INSET }]}
+        style={[styles.deckArea, dyn.pageBase, { paddingBottom: insets.bottom + TAB_BAR_INSET }]}
       >
         <View
           style={styles.deck}
@@ -857,6 +875,11 @@ export default function ScreenshotsScreen() {
             { bottom: insets.bottom + TAB_BAR_INSET + ACTION_SIZE + SPACE.lg },
           ]}
         >
+          {/*
+            Stays dark glass in BOTH appearances: its contents are white-on-dark
+            (inverse text + BRAND[300] actions), and a light-tinted snackbar
+            would strand them. GlassCard already draws HAIRLINE_DARK on `dark`.
+          */}
           <GlassCard tint="dark" intensity={60} radius={RADIUS.lg}>
             <View style={styles.snackbarInner}>
               <Ionicons name={snackbarIcon(lastAction)} size={18} color={TEXT.inverse} />
@@ -894,13 +917,14 @@ export default function ScreenshotsScreen() {
 }
 
 const styles = StyleSheet.create({
-  // Solid base color matches the page gradient's bottom stop. NativeTabs keeps
-  // adjacent tabs mounted; without this the previous tab's content shows
-  // through any gap in our own layout (especially while system dialogs are up).
-  container: { flex: 1, backgroundColor: '#FAF5FF' },
+  // The opaque base colour lives in `dyn.pageBase` (it tracks the page
+  // gradient's bottom stop). NativeTabs keeps adjacent tabs mounted; without it
+  // the previous tab's content shows through any gap in our own layout
+  // (especially while system dialogs are up).
+  container: { flex: 1 },
   header: { backgroundColor: 'transparent', padding: SPACE.base, alignItems: 'center' },
-  headerTitle: { ...TYPE.title2, color: TEXT.primary },
-  headerSubtitle: { ...TYPE.subhead, fontWeight: '500', color: TEXT.tertiary, marginTop: SPACE.xs },
+  headerTitle: { ...TYPE.title2 },
+  headerSubtitle: { ...TYPE.subhead, fontWeight: '500', marginTop: SPACE.xs },
   // flexGrow: 0 is load-bearing: a horizontal ScrollView in a column flex
   // layout otherwise claims ALL remaining vertical space, shoving the card
   // deck off the bottom of the screen.
@@ -914,22 +938,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
-    backgroundColor: SURFACE.card,
     borderWidth: 1,
-    borderColor: HAIRLINE,
   },
+  // A selected chip is a brand surface, so it keeps BRAND[600] + white text in
+  // both appearances — the lighter dark-mode `c.brand` would drop white text to
+  // ~2.7:1.
   chipActive: { backgroundColor: BRAND[600], borderColor: BRAND[600] },
-  chipText: { ...TYPE.footnote, fontWeight: '600', color: TEXT.secondary },
+  chipText: { ...TYPE.footnote, fontWeight: '600' },
   chipTextActive: { color: TEXT.inverse },
   deckArea: {
     flex: 1,
     alignItems: 'center',
     paddingHorizontal: 10,
     paddingTop: 10,
-    // Opaque: the deck's cards are position:absolute, so this flex region is
-    // otherwise empty. Under expo-router's native tabs on iOS 26 an empty,
-    // transparent region lets the adjacent (Stacks) tab composite through.
-    backgroundColor: '#FAF5FF',
+    // Opaque (via `dyn.pageBase`): the deck's cards are position:absolute, so
+    // this flex region is otherwise empty. Under expo-router's native tabs on
+    // iOS 26 an empty, transparent region lets the adjacent (Stacks) tab
+    // composite through.
   },
   /** Sized by flex so the action row below always fits, on any device. */
   deck: { width: CARD_WIDTH, flex: 1 },
@@ -940,7 +965,6 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     borderRadius: RADIUS.xl,
-    backgroundColor: SURFACE.card,
     // No `overflow: hidden` here — it would mask the shadow away. The children
     // carry the same radius instead.
     ...SHADOW.brandFloating,
@@ -954,7 +978,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: RADIUS.xl,
-    backgroundColor: INK[100],
   },
   swipeOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1001,10 +1024,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
-    backgroundColor: SURFACE.card,
     ...SHADOW.card,
   },
-  analyzingText: { ...TYPE.footnote, color: TEXT.secondary },
+  analyzingText: { ...TYPE.footnote },
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1019,9 +1041,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   skipCircle: {
-    backgroundColor: SURFACE.card,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   // Opaque + rounded so iOS can derive the shadow path from the bounds rather
@@ -1047,8 +1067,8 @@ const styles = StyleSheet.create({
     marginBottom: 28,
     ...SHADOW.brandFloating,
   },
-  caughtUpTitle: { ...TYPE.title1, color: TEXT.primary },
-  caughtUpSub: { ...TYPE.callout, color: TEXT.tertiary, marginTop: SPACE.sm },
+  caughtUpTitle: { ...TYPE.title1 },
+  caughtUpSub: { ...TYPE.callout, marginTop: SPACE.sm },
   reloadBtn: { borderRadius: RADIUS.pill, overflow: 'hidden' },
   reloadFill: {
     flexDirection: 'row',
@@ -1090,3 +1110,34 @@ const styles = StyleSheet.create({
     transformOrigin: 'left',
   },
 });
+
+/**
+ * The appearance-dependent half of the sheet above. A plain object, not
+ * StyleSheet.create: it is rebuilt whenever the palette changes, and registering
+ * a new sheet on every change would leak IDs.
+ */
+function makeDynamicStyles(c: ThemeColors) {
+  // On dark the deck's shadow is effectively invisible, so the paper edge that
+  // separates a card from the page has to be drawn.
+  const darkEdge =
+    c.appearance === 'dark'
+      ? { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline }
+      : null;
+
+  return {
+    /** Matches the page gradient's bottom stop, so gaps read as the page. */
+    pageBase: { backgroundColor: c.pageGradient[2] },
+    headerTitle: { color: c.text },
+    headerSubtitle: { color: c.textTertiary },
+    chip: { backgroundColor: c.card, borderColor: c.hairline },
+    chipText: { color: c.textSecondary },
+    card: { backgroundColor: c.card, ...darkEdge },
+    /** Placeholder behind the screenshot while it decodes. */
+    cardImage: { backgroundColor: c.field },
+    analyzingPill: { backgroundColor: c.card, ...darkEdge },
+    analyzingText: { color: c.textSecondary },
+    skipCircle: { backgroundColor: c.card, borderColor: c.hairline },
+    caughtUpTitle: { color: c.text },
+    caughtUpSub: { color: c.textTertiary },
+  };
+}

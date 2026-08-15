@@ -55,7 +55,7 @@ export interface ClassificationPillsProps {
 }
 
 export function ClassificationPills({ value, onChange }: ClassificationPillsProps) {
-  const activeRef = useRef<HTMLButtonElement | null>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   // The popup mounts with the placeholder default ('other', the LAST pill)
   // selected. Centring it on mount would scroll the row to its far end before
   // the extractor has said anything — so only react to real changes.
@@ -66,18 +66,32 @@ export function ClassificationPills({ value, onChange }: ClassificationPillsProp
       settled.current = true;
       return;
     }
-    // block:'nearest' keeps this from also scrolling the popup body vertically.
-    activeRef.current?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    // Read the active pill off the row rather than holding a ref that hops
+    // between buttons — a moving `ref` object is detached and reattached in
+    // separate commit phases and is null exactly when this effect needs it.
+    const row = rowRef.current;
+    const active = row?.querySelector<HTMLElement>('[aria-checked="true"]');
+    if (!row || !active) return;
+    // Scroll the ROW, not `active.scrollIntoView()`: inline:'center' walks every
+    // scrollable ancestor, which nudges the popup document sideways too. Instant
+    // rather than smooth — the popup lives for seconds, so the row should simply
+    // already be in the right place when it appears.
+    const centered = active.offsetLeft - row.offsetLeft - (row.clientWidth - active.offsetWidth) / 2;
+    row.scrollLeft = Math.max(0, centered);
   }, [value]);
 
   return (
-    <div className={styles.pillsRow} role="radiogroup" aria-label="Classification">
+    <div
+      ref={rowRef}
+      className={styles.pillsRow}
+      role="radiogroup"
+      aria-label="Classification"
+    >
       {CLASSIFICATIONS.map((c) => {
         const active = c === value;
         return (
           <button
             key={c}
-            ref={active ? activeRef : undefined}
             type="button"
             role="radio"
             aria-checked={active}

@@ -23,6 +23,18 @@ import {
 } from '@/lib/useTheme';
 import { getAppearancePreference, setAppearancePreference } from '@/lib/storage';
 
+/**
+ * Screens still reading the static light tokens rather than the palette. While
+ * this list is non-empty the app pins itself to light, because a half-converted
+ * dark mode (dark shell, white screen) is worse than none — see app.json's
+ * matching `userInterfaceStyle`.
+ *
+ * When it empties: change this to `[]`, flip app.json back to "automatic", and
+ * dark mode goes live with no other code change.
+ */
+const UNCONVERTED_SCREENS: string[] = ['app/(tabs)/calendar.tsx', 'app/item/[id].tsx'];
+const DARK_READY = UNCONVERTED_SCREENS.length === 0;
+
 export default function ThemeProvider({ children }: { children: React.ReactNode }) {
   const system = useSystemColorScheme();
   const [preference, setPreferenceState] = useState<AppearancePreference>('system');
@@ -39,8 +51,9 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
     };
   }, []);
 
-  const appearance: Appearance =
+  const resolved: Appearance =
     preference === 'system' ? (system === 'dark' ? 'dark' : 'light') : preference;
+  const appearance: Appearance = DARK_READY ? resolved : 'light';
 
   // Keep NativeWind in lockstep so `dark:` variants and StyleSheet colours can
   // never disagree — a half-converted screen is worse than an unconverted one.

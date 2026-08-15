@@ -7,7 +7,7 @@
  * hold Skeletons until the first storage read lands, so the screen never shows
  * a frame of placeholder zeroes.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Text,
   View,
@@ -20,6 +20,7 @@ import {
   ActivityIndicator,
   Platform,
   StyleSheet,
+  type ViewStyle,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -47,19 +48,22 @@ import {
 } from '@/lib/storage';
 import { syncNow, newSpaceKey } from '@/lib/sync';
 import {
+  cancelSiloNotifications,
+  requestNotificationPermission,
+  syncNotifications,
+} from '@/lib/notifications';
+import {
   ACCENT,
   BRAND,
   GRADIENTS,
-  HAIRLINE,
-  INK,
   RADIUS,
   SHADOW,
   SPACE,
-  STATUS,
-  SURFACE,
   TEXT,
   TYPE,
+  type ThemeColors,
 } from '@/lib/theme';
+import { useTheme, useThemeColors, type AppearancePreference } from '@/lib/useTheme';
 import { UserSettings } from '@/lib/types';
 import { APP_VERSION, SUPPORT_EMAIL } from '@/lib/config';
 
@@ -77,6 +81,24 @@ const SPACE_KEY_RE = /^[A-Za-z0-9_-]{6,128}$/;
  * stagger, so the indices have to be declared in one place to stay in sync.
  */
 const ORDER = { profile: 0, stats: 1, preferences: 2, devices: 3, data: 4, about: 5 } as const;
+
+/** The three things the Appearance picker can be set to, in segment order. */
+const APPEARANCE_OPTIONS: { value: AppearancePreference; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
+/**
+ * On dark, SHADOW.card is effectively invisible — the card and the page are
+ * both near-black, so the drop shadow that separates them in light does nothing.
+ * A hairline is what actually draws the edge there.
+ */
+function darkEdge(c: ThemeColors): ViewStyle | null {
+  return c.appearance === 'dark'
+    ? { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline }
+    : null;
+}
 
 /**
  * Mirror of add.tsx's lazy expo-clipboard require (see that file's WHY: a
@@ -113,12 +135,13 @@ function Section({
   children: React.ReactNode;
 }) {
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
   return (
     <Animated.View style={styles.section} entering={enterList(index, reduced)}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={[styles.sectionTitle, { color: c.textTertiary }]}>{title}</Text>
       {/* Shadow lives on the outer view: the inner one clips its rows to the
           corner radius, and `overflow: hidden` would clip the shadow too. */}
-      <View style={styles.cardShadow}>
+      <View style={[styles.cardShadow, { backgroundColor: c.card }, darkEdge(c)]}>
         <View style={styles.card}>{children}</View>
       </View>
     </Animated.View>
@@ -144,22 +167,26 @@ function Row({
   danger?: boolean;
   divider?: boolean;
 }) {
+  const c = useThemeColors();
+  // `tint` must stay a 6-digit hex: the icon wash is an 8-digit hex built from it.
+  const divide = divider ? [styles.rowDivider, { borderBottomColor: c.hairline }] : undefined;
+
   const body = (
     <View style={styles.row}>
       <View style={[styles.rowIcon, { backgroundColor: tint + '1A' }]}>
         <Ionicons name={icon} size={17} color={tint} />
       </View>
       <View style={styles.rowText}>
-        <Text style={[styles.rowLabel, danger && styles.rowLabelDanger]}>{label}</Text>
-        {!!sub && <Text style={styles.rowSub}>{sub}</Text>}
+        <Text style={[styles.rowLabel, { color: danger ? c.danger : c.text }]}>{label}</Text>
+        {!!sub && <Text style={[styles.rowSub, { color: c.textTertiary }]}>{sub}</Text>}
       </View>
-      {right ?? (onPress ? <Ionicons name="chevron-forward" size={16} color={INK[300]} /> : null)}
+      {right ?? (onPress ? <Ionicons name="chevron-forward" size={16} color={c.decorative} /> : null)}
     </View>
   );
 
   // Rows that only host a control (switch, stepper, version string) are not
   // buttons — rendering them as a Pressable would announce a dead tap target.
-  if (!onPress) return <View style={divider ? styles.rowDivider : undefined}>{body}</View>;
+  if (!onPress) return <View style={divide}>{body}</View>;
 
   return (
     <PressableScale
@@ -169,11 +196,70 @@ function Row({
       // Rows already clear the 44pt minimum; the default slop would spill into
       // the neighbouring row and steal its taps.
       hitSlop={0}
-      containerStyle={divider ? styles.rowDivider : undefined}
+      containerStyle={divide}
       accessibilityLabel={sub ? `${label}. ${sub}` : label}
     >
       {body}
     </PressableScale>
+  );
+}
+
+/**
+ * Appearance picker — the user-facing half of dark mode, and the first row in
+ * Preferences because it is the setting people go looking for.
+ *
+ * "System" is not a third palette: it defers to the OS and keeps following it,
+ * which is why the preference (not the resolved appearance) drives selection.
+ * The segments sit below the label rather than in the row's right slot — three
+ * words do not fit next to a label at any comfortable tap size.
+ */
+function AppearanceRow({ tint }: { tint: string }) {
+  const c = useThemeColors();
+  const { preference, setPreference } = useTheme();
+
+  return (
+    <View style={[styles.rowDivider, { borderBottomColor: c.hairline }]}>
+      <View style={styles.row}>
+        <View style={[styles.rowIcon, { backgroundColor: tint + '1A' }]}>
+          <Ionicons name="contrast" size={17} color={tint} />
+        </View>
+        <View style={styles.rowText}>
+          <Text style={[styles.rowLabel, { color: c.text }]}>Appearance</Text>
+          <Text style={[styles.rowSub, { color: c.textTertiary }]}>
+            Follow your device, or pick one
+          </Text>
+        </View>
+      </View>
+
+      <View style={[styles.segment, { backgroundColor: c.field }]}>
+        {APPEARANCE_OPTIONS.map((opt) => {
+          const active = preference === opt.value;
+          return (
+            <PressableScale
+              key={opt.value}
+              haptic="selection"
+              scaleTo={0.96}
+              // Segments are adjacent; the default slop would overlap the neighbour.
+              hitSlop={0}
+              selected={active}
+              onPress={() => setPreference(opt.value)}
+              containerStyle={styles.segmentSlot}
+              style={[styles.segmentItem, active && { backgroundColor: c.brand }]}
+              accessibilityLabel={`${opt.label} appearance`}
+            >
+              <Text
+                style={[
+                  styles.segmentText,
+                  { color: active ? c.textInverse : c.textSecondary },
+                ]}
+              >
+                {opt.label}
+              </Text>
+            </PressableScale>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
@@ -182,6 +268,16 @@ export default function Settings() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
+  // Row glyph tints. The brand/accent steps tuned for white go muddy on the
+  // dark card, so each lightens a step; the status roles already flip themselves.
+  const tint = useMemo(
+    () => ({
+      brand: c.appearance === 'dark' ? BRAND[400] : BRAND[500],
+      accent: c.appearance === 'dark' ? ACCENT[400] : ACCENT[500],
+    }),
+    [c.appearance]
+  );
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [stats, setStats] = useState({ items: 0, stacks: 0, since: '' });
   // Until the first storage read resolves, the counts are meaningless zeroes —
@@ -340,6 +436,35 @@ export default function Settings() {
     Haptics.selectionAsync();
   };
 
+  /**
+   * The toggle is the ONLY place Silo asks for notification permission — the
+   * user has just expressed intent, which is the moment with the best chance of
+   * a yes. Turning it on with permission denied would leave a switch that says
+   * "on" and does nothing, so a refusal snaps it back and points at Settings.
+   */
+  const toggleNotifications = async (enabled: boolean) => {
+    if (!enabled) {
+      update({ notifications_enabled: false });
+      await cancelSiloNotifications();
+      return;
+    }
+
+    const granted = await requestNotificationPermission();
+    if (!granted) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      toast.show({
+        message: 'Notifications are off for Silo in iOS Settings',
+        tone: 'danger',
+        action: { label: 'Open', onPress: () => Linking.openSettings().catch(() => {}) },
+      });
+      return;
+    }
+
+    update({ notifications_enabled: true });
+    const [items, current] = await Promise.all([getItems(), getSettings()]);
+    await syncNotifications(items, { ...current, notifications_enabled: true });
+  };
+
   const adjustDuration = (delta: number) => {
     const next = Math.min(120, Math.max(5, settings.default_duration + delta));
     update({ default_duration: next });
@@ -392,12 +517,17 @@ export default function Settings() {
   const showAdvanced = __DEV__ || !!sync.serverUrl;
 
   return (
-    <View style={styles.page}>
+    <View style={[styles.page, { backgroundColor: c.sunken }]}>
       <ScreenHeader title="Settings" />
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + SPACE.xxxl }}>
         {/* Profile card */}
-        <Animated.View style={styles.profileCard} entering={enterList(ORDER.profile, reduced)}>
+        <Animated.View
+          style={[styles.profileCard, { backgroundColor: c.card }, darkEdge(c)]}
+          entering={enterList(ORDER.profile, reduced)}
+        >
+          {/* Brand gradient + white glyph in both appearances — this is a brand
+              surface, not a page surface. */}
           <LinearGradient
             colors={GRADIENTS.brand}
             start={{ x: 0, y: 0 }}
@@ -409,8 +539,8 @@ export default function Settings() {
           <View style={styles.profileText}>
             {ready ? (
               <>
-                <Text style={styles.profileName}>Your Silo</Text>
-                <Text style={styles.profileMeta}>
+                <Text style={[styles.profileName, { color: c.text }]}>Your Silo</Text>
+                <Text style={[styles.profileMeta, { color: c.textTertiary }]}>
                   {stats.since ? `On this device · since ${stats.since}` : 'On this device'}
                 </Text>
               </>
@@ -426,26 +556,27 @@ export default function Settings() {
         {/* Stats */}
         <Animated.View style={styles.statRow} entering={enterList(ORDER.stats, reduced)}>
           {[
-            { n: stats.items, l: 'Items', i: 'documents' as const, c: BRAND[500] },
-            { n: stats.stacks, l: 'Stacks', i: 'albums' as const, c: ACCENT[500] },
+            { n: stats.items, l: 'Items', i: 'documents' as const, c: tint.brand },
+            { n: stats.stacks, l: 'Stacks', i: 'albums' as const, c: tint.accent },
           ].map((s) => (
-            <View key={s.l} style={styles.statTile}>
+            <View key={s.l} style={[styles.statTile, { backgroundColor: c.card }, darkEdge(c)]}>
               <Ionicons name={s.i} size={18} color={s.c} />
               {ready ? (
-                <Text style={styles.statNum}>{s.n}</Text>
+                <Text style={[styles.statNum, { color: c.text }]}>{s.n}</Text>
               ) : (
                 <Skeleton width={34} height={22} radius={RADIUS.xs} style={styles.skeletonStat} />
               )}
-              <Text style={styles.statLabel}>{s.l}</Text>
+              <Text style={[styles.statLabel, { color: c.textTertiary }]}>{s.l}</Text>
             </View>
           ))}
         </Animated.View>
 
         {/* Preferences */}
         <Section title="Preferences" index={ORDER.preferences}>
+          <AppearanceRow tint={tint.brand} />
           <Row
             icon="time"
-            tint={BRAND[500]}
+            tint={tint.brand}
             label="Default review length"
             sub="How long to block out when scheduling"
             right={
@@ -454,48 +585,50 @@ export default function Settings() {
                   haptic="selection"
                   scaleTo={0.9}
                   onPress={() => adjustDuration(-5)}
-                  style={styles.stepper}
+                  style={[styles.stepper, { backgroundColor: c.field }]}
                   accessibilityLabel="Decrease review length by 5 minutes"
                 >
-                  <Ionicons name="remove" size={16} color={INK[600]} />
+                  <Ionicons name="remove" size={16} color={c.textSecondary} />
                 </PressableScale>
-                <Text style={styles.stepperValue}>{settings.default_duration}m</Text>
+                <Text style={[styles.stepperValue, { color: c.text }]}>
+                  {settings.default_duration}m
+                </Text>
                 <PressableScale
                   haptic="selection"
                   scaleTo={0.9}
                   onPress={() => adjustDuration(5)}
-                  style={styles.stepper}
+                  style={[styles.stepper, { backgroundColor: c.field }]}
                   accessibilityLabel="Increase review length by 5 minutes"
                 >
-                  <Ionicons name="add" size={16} color={INK[600]} />
+                  <Ionicons name="add" size={16} color={c.textSecondary} />
                 </PressableScale>
               </View>
             }
           />
           <Row
             icon="sparkles"
-            tint={ACCENT[500]}
+            tint={tint.accent}
             label="Auto-suggest review time"
             sub="Let AI propose when to revisit a save"
             right={
               <Switch
                 value={settings.auto_schedule}
                 onValueChange={(v) => update({ auto_schedule: v })}
-                trackColor={{ true: BRAND[600], false: INK[200] }}
+                trackColor={{ true: c.brand, false: c.field }}
               />
             }
           />
           <Row
             icon="notifications"
-            tint={STATUS.warning}
+            tint={c.warning}
             label="Notifications"
-            sub="Bucket-list & review reminders (when available)"
+            sub="A daily nudge, a check-in after each plan, and the odd tidy-up"
             divider={false}
             right={
               <Switch
                 value={settings.notifications_enabled}
-                onValueChange={(v) => update({ notifications_enabled: v })}
-                trackColor={{ true: BRAND[600], false: INK[200] }}
+                onValueChange={toggleNotifications}
+                trackColor={{ true: c.brand, false: c.field }}
               />
             }
           />
@@ -504,26 +637,30 @@ export default function Settings() {
         {/* Your devices (S1 — pairing code + manual sync; server URL under Advanced) */}
         <Section title="Your devices" index={ORDER.devices}>
           {/* Status header: paired state + relative last-synced time */}
-          <View style={[styles.syncStatus, styles.rowDivider]}>
-            <View style={styles.syncBadge}>
-              <Ionicons name="cloud-outline" size={18} color={BRAND[600]} />
+          <View style={[styles.syncStatus, styles.rowDivider, { borderBottomColor: c.hairline }]}>
+            <View style={[styles.syncBadge, { backgroundColor: c.brandSoft }]}>
+              <Ionicons name="cloud-outline" size={18} color={c.brand} />
             </View>
             <View style={styles.rowText}>
-              <Text style={styles.rowLabel}>{sync.spaceKey ? 'Paired' : 'Not paired yet'}</Text>
-              <Text style={styles.rowSub}>
+              <Text style={[styles.rowLabel, { color: c.text }]}>
+                {sync.spaceKey ? 'Paired' : 'Not paired yet'}
+              </Text>
+              <Text style={[styles.rowSub, { color: c.textTertiary }]}>
                 {sync.lastSyncAt ? `Synced ${relTime(sync.lastSyncAt)}` : 'Never synced'}
               </Text>
             </View>
           </View>
 
           {/* Space code: monospace pill + copy + regenerate */}
-          <View style={[styles.field, styles.rowDivider]}>
-            <Text style={styles.fieldLabel}>Space code</Text>
+          <View style={[styles.field, styles.rowDivider, { borderBottomColor: c.hairline }]}>
+            <Text style={[styles.fieldLabel, { color: c.textTertiary }]}>Space code</Text>
             <View style={styles.fieldRow}>
-              <View style={styles.codePill}>
+              <View
+                style={[styles.codePill, { backgroundColor: c.brandSoft, borderColor: c.hairline }]}
+              >
                 <Text
                   numberOfLines={1}
-                  style={[styles.codeText, !sync.spaceKey && styles.codeTextEmpty]}
+                  style={[styles.codeText, { color: sync.spaceKey ? c.textBrand : c.textTertiary }]}
                 >
                   {sync.spaceKey ?? 'created on first sync'}
                 </Text>
@@ -532,26 +669,35 @@ export default function Settings() {
                 haptic="light"
                 onPress={copyCode}
                 disabled={!sync.spaceKey}
-                style={[styles.pillButton, !sync.spaceKey && styles.pillButtonDisabled]}
+                style={[styles.pillButton, { backgroundColor: sync.spaceKey ? c.brand : c.field }]}
                 containerStyle={styles.pillButtonSpacing}
               >
-                <Text style={styles.pillButtonText}>{copied ? 'Copied' : 'Copy'}</Text>
+                {/* textInverse, not white: on dark the brand fill lightens two
+                    steps and white on it drops under 3:1. */}
+                <Text
+                  style={[
+                    styles.pillButtonText,
+                    { color: sync.spaceKey ? c.textInverse : c.textTertiary },
+                  ]}
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </Text>
               </PressableScale>
               <PressableScale
                 haptic="light"
                 onPress={confirmRegenerate}
-                style={styles.iconButton}
+                style={[styles.iconButton, { backgroundColor: c.field }]}
                 containerStyle={styles.pillButtonSpacing}
                 accessibilityLabel="Regenerate space code"
               >
-                <Ionicons name="refresh" size={16} color={INK[600]} />
+                <Ionicons name="refresh" size={16} color={c.textSecondary} />
               </PressableScale>
             </View>
           </View>
 
           {/* Join an existing space (typed/pasted from another device) */}
-          <View style={[styles.field, styles.rowDivider]}>
-            <Text style={styles.fieldLabel}>Join existing space</Text>
+          <View style={[styles.field, styles.rowDivider, { borderBottomColor: c.hairline }]}>
+            <Text style={[styles.fieldLabel, { color: c.textTertiary }]}>Join existing space</Text>
             <View style={styles.fieldRow}>
               <TextInput
                 value={joinCode}
@@ -560,22 +706,28 @@ export default function Settings() {
                   if (joinError) setJoinError(null);
                 }}
                 placeholder="silo-…"
-                placeholderTextColor={INK[400]}
+                placeholderTextColor={c.textPlaceholder}
                 autoCapitalize="none"
                 autoCorrect={false}
-                style={[styles.input, styles.inputFlex]}
+                style={[
+                  styles.input,
+                  styles.inputFlex,
+                  { backgroundColor: c.sunken, borderColor: c.hairline, color: c.text },
+                ]}
                 accessibilityLabel="Space code from your other device"
               />
               <PressableScale
                 haptic="light"
                 onPress={joinSpace}
-                style={styles.pillButton}
+                style={[styles.pillButton, { backgroundColor: c.brand }]}
                 containerStyle={styles.pillButtonSpacing}
               >
-                <Text style={styles.pillButtonText}>Join</Text>
+                <Text style={[styles.pillButtonText, { color: c.textInverse }]}>Join</Text>
               </PressableScale>
             </View>
-            {!!joinError && <Text style={styles.errorText}>{joinError}</Text>}
+            {!!joinError && (
+              <Text style={[styles.errorText, { color: c.danger }]}>{joinError}</Text>
+            )}
           </View>
 
           {/* Sync now: spinner while running, then a brief "Synced N up, M down" flash */}
@@ -613,37 +765,43 @@ export default function Settings() {
                 hitSlop={0}
                 onPress={() => setAdvancedOpen((o) => !o)}
                 selected={advancedOpen}
-                containerStyle={styles.advancedWrap}
+                containerStyle={[styles.advancedWrap, { borderTopColor: c.hairline }]}
                 accessibilityLabel="Advanced sync settings"
               >
                 <View style={styles.advancedRow}>
-                  <Text style={styles.advancedLabel}>Advanced</Text>
+                  <Text style={[styles.advancedLabel, { color: c.textTertiary }]}>Advanced</Text>
                   <Ionicons
                     name={advancedOpen ? 'chevron-up' : 'chevron-down'}
                     size={16}
-                    color={INK[300]}
+                    color={c.decorative}
                   />
                 </View>
               </PressableScale>
               {advancedOpen && (
                 <View style={styles.advancedPanel}>
-                  <Text style={styles.fieldLabel}>Server URL</Text>
+                  <Text style={[styles.fieldLabel, { color: c.textTertiary }]}>Server URL</Text>
                   <TextInput
                     value={serverUrl}
                     onChangeText={setServerUrl}
                     onBlur={saveServerUrl}
                     placeholder="https://your-server.example"
-                    placeholderTextColor={INK[400]}
+                    placeholderTextColor={c.textPlaceholder}
                     autoCapitalize="none"
                     autoCorrect={false}
                     keyboardType="url"
-                    style={[styles.input, styles.inputBlock]}
+                    style={[
+                      styles.input,
+                      styles.inputBlock,
+                      { backgroundColor: c.sunken, borderColor: c.hairline, color: c.text },
+                    ]}
                     accessibilityLabel="Sync server URL"
                   />
-                  <Text style={styles.fieldHelp}>
+                  <Text style={[styles.fieldHelp, { color: c.textTertiary }]}>
                     Only change this if you’re running your own Silo server.
                   </Text>
-                  {!!syncError && <Text style={styles.errorText}>{syncError}</Text>}
+                  {!!syncError && (
+                    <Text style={[styles.errorText, { color: c.danger }]}>{syncError}</Text>
+                  )}
                 </View>
               )}
             </>
@@ -654,14 +812,14 @@ export default function Settings() {
         <Section title="Your data" index={ORDER.data}>
           <Row
             icon="download-outline"
-            tint={STATUS.success}
+            tint={c.success}
             label="Export my data"
             sub="Download everything as JSON"
             onPress={exportData}
           />
           <Row
             icon="trash-outline"
-            tint={STATUS.danger}
+            tint={c.danger}
             label="Delete all data"
             sub="Wipe this device — can't be undone"
             danger
@@ -674,44 +832,49 @@ export default function Settings() {
         <Section title="About" index={ORDER.about}>
           <Row
             icon="shield-checkmark-outline"
-            tint={BRAND[600]}
+            tint={c.brand}
             label="Privacy Policy"
             onPress={() => comingSoon('Privacy Policy')}
           />
           <Row
             icon="document-text-outline"
-            tint={INK[500]}
+            tint={c.textTertiary}
             label="Terms of Service"
             onPress={() => comingSoon('Terms of Service')}
           />
           <Row
             icon="mail-outline"
-            tint={ACCENT[500]}
+            tint={tint.accent}
             label="Send feedback"
             onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=Silo%20feedback`)}
           />
           <Row
             icon="information-circle-outline"
-            tint={INK[400]}
+            tint={c.decorative}
             label="Version"
-            right={<Text style={styles.versionText}>{APP_VERSION}</Text>}
+            right={<Text style={[styles.versionText, { color: c.textTertiary }]}>{APP_VERSION}</Text>}
             divider={false}
           />
         </Section>
 
-        <Text style={styles.footer}>Silo · all your saves, organized</Text>
+        <Text style={[styles.footer, { color: c.textTertiary }]}>
+          Silo · all your saves, organized
+        </Text>
       </ScrollView>
     </View>
   );
 }
 
+/**
+ * Layout only — every colour on this screen is appearance-dependent and is
+ * applied as a second style entry at the call site.
+ */
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: SURFACE.sunken },
+  page: { flex: 1 },
 
   section: { marginTop: SPACE.xxl },
   sectionTitle: {
     ...TYPE.overline,
-    color: TEXT.tertiary,
     textTransform: 'uppercase',
     marginBottom: SPACE.sm,
     marginLeft: SPACE.lg,
@@ -719,7 +882,6 @@ const styles = StyleSheet.create({
   cardShadow: {
     marginHorizontal: SPACE.base,
     borderRadius: RADIUS.xl,
-    backgroundColor: SURFACE.card,
     ...SHADOW.card,
   },
   card: { borderRadius: RADIUS.xl, overflow: 'hidden' },
@@ -730,7 +892,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.md,
   },
-  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: HAIRLINE },
+  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth },
   rowIcon: {
     height: 32,
     width: 32,
@@ -739,9 +901,25 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.sm,
   },
   rowText: { marginLeft: SPACE.md, flex: 1 },
-  rowLabel: { ...TYPE.callout, fontWeight: '600', color: TEXT.primary },
-  rowLabelDanger: { color: STATUS.danger },
-  rowSub: { ...TYPE.caption, fontWeight: '400', color: TEXT.tertiary, marginTop: 2 },
+  rowLabel: { ...TYPE.callout, fontWeight: '600' },
+  rowSub: { ...TYPE.caption, fontWeight: '400', marginTop: 2 },
+
+  segment: {
+    flexDirection: 'row',
+    gap: 3,
+    padding: 3,
+    marginHorizontal: SPACE.base,
+    marginBottom: SPACE.md,
+    borderRadius: RADIUS.pill,
+  },
+  segmentSlot: { flex: 1 },
+  segmentItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+  },
+  segmentText: { ...TYPE.footnote, fontWeight: '700' },
 
   profileCard: {
     flexDirection: 'row',
@@ -750,7 +928,6 @@ const styles = StyleSheet.create({
     marginTop: SPACE.base,
     padding: SPACE.base,
     borderRadius: RADIUS.xl,
-    backgroundColor: SURFACE.card,
     ...SHADOW.brandCard,
   },
   avatar: {
@@ -761,8 +938,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   profileText: { marginLeft: SPACE.base, flex: 1 },
-  profileName: { ...TYPE.title3, color: TEXT.primary },
-  profileMeta: { ...TYPE.footnote, fontWeight: '400', color: TEXT.tertiary, marginTop: 2 },
+  profileName: { ...TYPE.title3 },
+  profileMeta: { ...TYPE.footnote, fontWeight: '400', marginTop: 2 },
   skeletonLine: { marginTop: SPACE.sm },
 
   statRow: {
@@ -776,12 +953,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: SPACE.base,
     borderRadius: RADIUS.xl,
-    backgroundColor: SURFACE.card,
     ...SHADOW.card,
   },
-  statNum: { ...TYPE.title2, color: TEXT.primary, marginTop: 6 },
+  statNum: { ...TYPE.title2, marginTop: 6 },
   skeletonStat: { marginTop: 8, marginBottom: 4 },
-  statLabel: { ...TYPE.caption, color: TEXT.tertiary },
+  statLabel: { ...TYPE.caption },
 
   stepperRow: { flexDirection: 'row', alignItems: 'center' },
   stepper: {
@@ -790,12 +966,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: RADIUS.pill,
-    backgroundColor: INK[100],
   },
   stepperValue: {
     ...TYPE.subhead,
     fontWeight: '700',
-    color: TEXT.primary,
     width: 48,
     textAlign: 'center',
     marginHorizontal: SPACE.md,
@@ -813,14 +987,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: RADIUS.md,
-    backgroundColor: BRAND[50],
   },
 
   field: { paddingHorizontal: SPACE.base, paddingVertical: SPACE.md },
   fieldRow: { flexDirection: 'row', alignItems: 'center', marginTop: SPACE.sm },
-  fieldLabel: { ...TYPE.overline, color: TEXT.tertiary, textTransform: 'uppercase' },
-  fieldHelp: { ...TYPE.caption, fontWeight: '400', color: TEXT.tertiary, marginTop: 6 },
-  errorText: { ...TYPE.caption, fontWeight: '400', color: STATUS.danger, marginTop: 6 },
+  fieldLabel: { ...TYPE.overline, textTransform: 'uppercase' },
+  fieldHelp: { ...TYPE.caption, fontWeight: '400', marginTop: 6 },
+  errorText: { ...TYPE.caption, fontWeight: '400', marginTop: 6 },
 
   codePill: {
     flex: 1,
@@ -828,23 +1001,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[50],
     borderWidth: 1,
-    borderColor: HAIRLINE,
   },
-  codeText: { ...TYPE.footnote, fontFamily: MONO, color: BRAND[700] },
-  codeTextEmpty: { color: TEXT.tertiary },
+  codeText: { ...TYPE.footnote, fontFamily: MONO },
 
   input: {
     ...TYPE.footnote,
     fontFamily: MONO,
-    color: TEXT.primary,
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
-    backgroundColor: INK[50],
     borderWidth: 1,
-    borderColor: HAIRLINE,
   },
   inputFlex: { flex: 1 },
   inputBlock: { marginTop: SPACE.sm },
@@ -853,18 +1020,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[600],
   },
-  pillButtonDisabled: { backgroundColor: INK[200] },
   pillButtonSpacing: { marginLeft: SPACE.sm },
-  pillButtonText: { ...TYPE.footnote, fontWeight: '700', color: TEXT.inverse },
+  pillButtonText: { ...TYPE.footnote, fontWeight: '700' },
   iconButton: {
     height: 36,
     width: 36,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: RADIUS.pill,
-    backgroundColor: INK[100],
   },
 
   ctaBlock: { paddingHorizontal: SPACE.base, paddingTop: SPACE.md, paddingBottom: SPACE.base },
@@ -877,7 +1041,7 @@ const styles = StyleSheet.create({
   },
   ctaText: { ...TYPE.callout, fontWeight: '700', color: TEXT.inverse, marginLeft: SPACE.sm },
 
-  advancedWrap: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIRLINE },
+  advancedWrap: { borderTopWidth: StyleSheet.hairlineWidth },
   advancedRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -885,14 +1049,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.md,
   },
-  advancedLabel: { ...TYPE.caption, color: TEXT.tertiary, textTransform: 'uppercase' },
+  advancedLabel: { ...TYPE.caption, textTransform: 'uppercase' },
   advancedPanel: { paddingHorizontal: SPACE.base, paddingBottom: SPACE.base },
 
-  versionText: { ...TYPE.footnote, fontWeight: '400', color: TEXT.tertiary },
+  versionText: { ...TYPE.footnote, fontWeight: '400' },
   footer: {
     ...TYPE.caption,
     fontWeight: '400',
-    color: TEXT.tertiary,
     textAlign: 'center',
     marginTop: SPACE.xxl,
   },

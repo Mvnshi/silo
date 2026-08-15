@@ -18,7 +18,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import PressableScale from '@/components/ui/PressableScale';
 import { LAYOUT } from '@/lib/motion';
-import { BRAND, INK, RADIUS, SPACE, TEXT, TYPE } from '@/lib/theme';
+import { BRAND, RADIUS, SPACE, TEXT, TYPE } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 
 interface TagPickerProps {
   selectedTags: string[];
@@ -51,6 +52,7 @@ export default function TagPicker({
   onTagsChange,
   maxTags = 10,
 }: TagPickerProps) {
+  const c = useThemeColors();
   const [inputValue, setInputValue] = useState('');
 
   /**
@@ -92,12 +94,14 @@ export default function TagPicker({
   return (
     <View style={styles.container}>
       {/* Input Field */}
-      <View style={styles.inputContainer}>
-        <Ionicons name="pricetag-outline" size={20} color={INK[400]} />
+      <View
+        style={[styles.inputContainer, { backgroundColor: c.field, borderColor: c.hairline }]}
+      >
+        <Ionicons name="pricetag-outline" size={20} color={c.decorative} />
         <TextInput
-          style={styles.input}
+          style={[styles.input, { color: c.text }]}
           placeholder="Add a tag..."
-          placeholderTextColor={TEXT.placeholder}
+          placeholderTextColor={c.textPlaceholder}
           value={inputValue}
           onChangeText={setInputValue}
           onSubmitEditing={handleSubmit}
@@ -113,7 +117,7 @@ export default function TagPicker({
             accessibilityLabel={`Add tag ${inputValue.trim().toLowerCase()}`}
             onPress={handleSubmit}
           >
-            <Ionicons name="add-circle" size={24} color={BRAND[600]} />
+            <Ionicons name="add-circle" size={24} color={c.textBrand} />
           </PressableScale>
         )}
       </View>
@@ -121,7 +125,7 @@ export default function TagPicker({
       {/* Selected Tags */}
       {selectedTags.length > 0 && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Selected Tags</Text>
+          <Text style={[styles.sectionTitle, { color: c.textSecondary }]}>Selected Tags</Text>
           <View style={styles.tagsContainer}>
             {selectedTags.map((tag) => (
               <Animated.View key={tag} entering={FadeIn} exiting={FadeOut} layout={LAYOUT}>
@@ -143,7 +147,7 @@ export default function TagPicker({
       {/* Suggested Tags */}
       {availableSuggestions.length > 0 && selectedTags.length < maxTags && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Suggested Tags</Text>
+          <Text style={[styles.sectionTitle, { color: c.textSecondary }]}>Suggested Tags</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -154,11 +158,16 @@ export default function TagPicker({
                 <PressableScale
                   haptic="selection"
                   accessibilityLabel={`Add tag ${tag}`}
-                  style={styles.suggestedTag}
+                  style={[
+                    styles.suggestedTag,
+                    { backgroundColor: c.field, borderColor: c.hairline },
+                  ]}
                   onPress={() => addTag(tag)}
                 >
-                  <Text style={styles.suggestedTagText}>#{tag}</Text>
-                  <Ionicons name="add" size={16} color={BRAND[600]} />
+                  <Text style={[styles.suggestedTagText, { color: c.textSecondary }]}>#{tag}</Text>
+                  {/* The "+" keeps the brand tint — it's the affordance that says
+                      "tap to add", and it survives both grounds. */}
+                  <Ionicons name="add" size={16} color={c.textBrand} />
                 </PressableScale>
               </Animated.View>
             ))}
@@ -168,7 +177,9 @@ export default function TagPicker({
 
       {/* Tag Limit Info */}
       {selectedTags.length >= maxTags && (
-        <Text style={styles.limitText}>Maximum {maxTags} tags reached</Text>
+        <Text style={[styles.limitText, { color: c.textTertiary }]}>
+          Maximum {maxTags} tags reached
+        </Text>
       )}
     </View>
   );
@@ -182,8 +193,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.sm,
-    backgroundColor: INK[100],
     borderRadius: RADIUS.md,
+    // Sub-pixel edge: on dark the field alone doesn't separate from the card,
+    // and at hairline width it costs the layout nothing on light.
+    borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: SPACE.md,
     paddingVertical: SPACE.sm,
     marginBottom: SPACE.base,
@@ -191,7 +204,6 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     ...TYPE.body,
-    color: TEXT.primary,
     paddingVertical: SPACE.xs,
   },
   section: {
@@ -199,7 +211,6 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     ...TYPE.subhead,
-    color: TEXT.secondary,
     marginBottom: SPACE.sm,
   },
   tagsContainer: {
@@ -207,6 +218,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: SPACE.sm,
   },
+  /* A selected tag is a brand fill — violet with white text in both appearances. */
   selectedTag: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -229,21 +241,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.xs,
-    backgroundColor: BRAND[50],
     paddingHorizontal: SPACE.md,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
     borderWidth: 1,
-    borderColor: BRAND[200],
   },
   suggestedTagText: {
     ...TYPE.subhead,
-    color: BRAND[700],
   },
   limitText: {
     ...TYPE.caption,
     fontWeight: '500',
-    color: TEXT.tertiary,
     textAlign: 'center',
     marginTop: SPACE.sm,
   },

@@ -51,6 +51,7 @@ import {
   TEXT,
   TYPE,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 
 const ORB_SIZE = 200;
 const ORB_ICON = 88;
@@ -114,6 +115,7 @@ function Dot({
   width: number;
   scrollX: SharedValue<number>;
 }) {
+  const c = useThemeColors();
   const aStyle = useAnimatedStyle(() => {
     const range = [(index - 1) * width, index * width, (index + 1) * width];
     return {
@@ -121,7 +123,7 @@ function Dot({
       opacity: interpolate(scrollX.value, range, [0.35, 1, 0.35], 'clamp'),
     };
   });
-  return <Animated.View style={[styles.dot, aStyle]} />;
+  return <Animated.View style={[styles.dot, { backgroundColor: c.brand }, aStyle]} />;
 }
 
 function SlideView({
@@ -141,6 +143,7 @@ function SlideView({
   onAllow: () => void;
   onDecline: () => void;
 }) {
+  const c = useThemeColors();
   const orbStyle = useAnimatedStyle(() => {
     if (reduced) return { opacity: 1, transform: [{ scale: 1 }] };
     const range = [(index - 1) * width, index * width, (index + 1) * width];
@@ -167,6 +170,8 @@ function SlideView({
     <View style={[styles.slide, { width }]}>
       <Animated.View entering={first ? enterHero(0, reduced) : undefined}>
         <Animated.View style={orbStyle}>
+          {/* The orb is a brand surface: same gradient, same white glyph, in
+              both appearances. Only the copy under it follows the palette. */}
           <LinearGradient
             colors={[...slide.colors]}
             start={{ x: 0, y: 0 }}
@@ -183,9 +188,11 @@ function SlideView({
         entering={first ? enterList(2, reduced) : undefined}
       >
         <Animated.View style={[styles.copy, copyStyle]}>
-          <Text style={styles.title}>{slide.title}</Text>
-          <Text style={styles.subtitle}>{slide.subtitle}</Text>
-          {!!slide.note && <Text style={styles.note}>{slide.note}</Text>}
+          <Text style={[styles.title, { color: c.text }]}>{slide.title}</Text>
+          <Text style={[styles.subtitle, { color: c.textSecondary }]}>{slide.subtitle}</Text>
+          {!!slide.note && (
+            <Text style={[styles.note, { color: c.textBrand }]}>{slide.note}</Text>
+          )}
 
           {slide.prime && (
             <>
@@ -210,7 +217,7 @@ function SlideView({
                 onPress={onDecline}
                 style={styles.declineHit}
               >
-                <Text style={styles.decline}>Not now</Text>
+                <Text style={[styles.decline, { color: c.textSecondary }]}>Not now</Text>
               </PressableScale>
             </>
           )}
@@ -225,6 +232,7 @@ export default function Onboarding() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
 
   const scrollRef = useRef<React.ComponentRef<typeof Animated.ScrollView>>(null);
   const [page, setPage] = useState(0);
@@ -284,12 +292,12 @@ export default function Onboarding() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={[...GRADIENTS.page]} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={[...c.pageGradient]} style={StyleSheet.absoluteFill} />
 
       {/* Skip — always available; onboarding can never trap the user. */}
       <View style={[styles.topBar, { paddingTop: insets.top + SPACE.sm }]}>
         <PressableScale haptic="selection" onPress={finish}>
-          <Text style={styles.skip}>Skip</Text>
+          <Text style={[styles.skip, { color: c.textBrand }]}>Skip</Text>
         </PressableScale>
       </View>
 
@@ -362,7 +370,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
     paddingHorizontal: SPACE.xl,
   },
-  skip: { ...TYPE.bodyStrong, color: TEXT.brand },
+  skip: { ...TYPE.bodyStrong },
   slide: {
     flex: 1,
     alignItems: 'center',
@@ -380,17 +388,16 @@ const styles = StyleSheet.create({
   },
   copyWrap: { alignSelf: 'stretch' },
   copy: { alignItems: 'center' },
-  title: { ...TYPE.display, color: TEXT.primary, textAlign: 'center' },
+  title: { ...TYPE.display, textAlign: 'center' },
   subtitle: {
     ...TYPE.body,
-    color: TEXT.secondary,
     textAlign: 'center',
     marginTop: SPACE.md,
   },
-  note: { ...TYPE.footnote, color: TEXT.brand, marginTop: SPACE.base },
+  note: { ...TYPE.footnote, marginTop: SPACE.base },
   primeButton: { alignSelf: 'stretch', marginTop: SPACE.xl },
   declineHit: { paddingVertical: SPACE.md, paddingHorizontal: SPACE.lg },
-  decline: { ...TYPE.callout, color: TEXT.secondary },
+  decline: { ...TYPE.callout },
   footer: { paddingHorizontal: SPACE.xl },
   dots: {
     flexDirection: 'row',
@@ -401,7 +408,6 @@ const styles = StyleSheet.create({
   dot: {
     height: 8,
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[600],
   },
   ctaWrap: { alignSelf: 'stretch' },
   cta: {

@@ -7,12 +7,13 @@
  * made the capture-home cards visibly lag the rest of the UI).
  */
 import React from 'react';
-import { Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import PressableScale from './PressableScale';
-import { INK, RADIUS, SPRING } from '@/lib/theme';
+import { RADIUS, SPRING } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 
 interface OptionCardProps {
   icon: keyof typeof Ionicons.glyphMap;
@@ -31,6 +32,9 @@ export default function OptionCard({
   onPress,
   index = 0,
 }: OptionCardProps) {
+  const c = useThemeColors();
+  const isDark = c.appearance === 'dark';
+
   return (
     <Animated.View
       entering={FadeInDown.delay(index * 70)
@@ -41,13 +45,19 @@ export default function OptionCard({
         haptic="light"
         onPress={onPress}
         accessibilityLabel={`${title}. ${subtitle}`}
-        className="mb-3 flex-row items-center rounded-xl bg-white/85 p-3.5"
-        style={{
-          shadowColor: colors[0],
-          shadowOffset: { width: 0, height: 6 },
-          shadowOpacity: 0.18,
-          shadowRadius: 14,
-        }}
+        className="mb-3 flex-row items-center rounded-xl p-3.5"
+        style={[
+          {
+            backgroundColor: c.card,
+            shadowColor: colors[0],
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: 0.18,
+            shadowRadius: 14,
+          },
+          // The tinted glow is what lifts this row off the page on light; on the
+          // dark page it disappears entirely, so a hairline does the separating.
+          isDark && { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline },
+        ]}
       >
         <LinearGradient
           colors={colors}
@@ -64,10 +74,14 @@ export default function OptionCard({
           <Ionicons name={icon} size={26} color="#ffffff" />
         </LinearGradient>
         <View className="ml-3.5 flex-1">
-          <Text className="text-body font-bold text-ink-900">{title}</Text>
-          <Text className="mt-0.5 text-footnote text-ink-500">{subtitle}</Text>
+          <Text className="text-body font-bold" style={{ color: c.text }}>
+            {title}
+          </Text>
+          <Text className="mt-0.5 text-footnote" style={{ color: c.textTertiary }}>
+            {subtitle}
+          </Text>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={INK[300]} />
+        <Ionicons name="chevron-forward" size={18} color={c.decorative} />
       </PressableScale>
     </Animated.View>
   );

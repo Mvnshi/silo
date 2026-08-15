@@ -26,18 +26,8 @@ import Animated, {
 import { router, useLocalSearchParams } from 'expo-router';
 import { importSharedItem } from '@/lib/shareImport';
 import PressableScale from '@/components/ui/PressableScale';
-import {
-  DURATION,
-  GRADIENTS,
-  RADIUS,
-  SHADOW,
-  SPACE,
-  SPRING,
-  STATUS,
-  SURFACE,
-  TEXT,
-  TYPE,
-} from '@/lib/theme';
+import { DURATION, GRADIENTS, RADIUS, SHADOW, SPACE, SPRING, TEXT, TYPE } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { enterList, usePrefersReducedMotion } from '@/lib/motion';
 
 /** How long the "Saved" state stays on screen before we leave. Long enough to read. */
@@ -51,6 +41,7 @@ function asString(v: string | string[] | undefined): string {
 
 export default function ShareTarget() {
   const params = useLocalSearchParams();
+  const c = useThemeColors();
   const reduced = usePrefersReducedMotion();
   const [status, setStatus] = useState<Status>('saving');
   const started = useRef(false);
@@ -105,20 +96,21 @@ export default function ShareTarget() {
   const icon = failed ? 'alert-circle' : status === 'saved' ? 'checkmark' : 'sparkles';
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: c.page }]}>
       <Animated.View style={orbStyle}>
         <LinearGradient
-          colors={failed ? [STATUS.danger, STATUS.danger] : [...GRADIENTS.brand]}
+          colors={failed ? [c.danger, c.danger] : [...GRADIENTS.brand]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.orb}
         >
+          {/* The orb is always a saturated fill, so its glyph stays white. */}
           <Ionicons name={icon} size={34} color={TEXT.inverse} />
         </LinearGradient>
       </Animated.View>
 
       <View style={styles.copy}>
-        <Text style={styles.title}>
+        <Text style={[styles.title, { color: c.text }]}>
           {failed
             ? 'Couldn’t save that item.'
             : status === 'saved'
@@ -126,7 +118,7 @@ export default function ShareTarget() {
               : 'Saving to Silo…'}
         </Text>
         {failed ? (
-          <Text style={styles.subtitle}>
+          <Text style={[styles.subtitle, { color: c.textSecondary }]}>
             It didn’t make it into your library — give it another go.
           </Text>
         ) : null}
@@ -154,7 +146,7 @@ export default function ShareTarget() {
             style={styles.secondaryBtn}
             accessibilityLabel="Close"
           >
-            <Text style={styles.secondaryBtnText}>Close</Text>
+            <Text style={[styles.secondaryBtnText, { color: c.textBrand }]}>Close</Text>
           </PressableScale>
         </Animated.View>
       )}
@@ -169,7 +161,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: SPACE.lg,
     padding: SPACE.xl,
-    backgroundColor: SURFACE.page,
   },
   orb: {
     width: 84,
@@ -180,8 +171,8 @@ const styles = StyleSheet.create({
     ...SHADOW.brandFloating,
   },
   copy: { alignItems: 'center', gap: SPACE.sm },
-  title: { ...TYPE.title3, color: TEXT.primary, textAlign: 'center' },
-  subtitle: { ...TYPE.callout, color: TEXT.secondary, textAlign: 'center' },
+  title: { ...TYPE.title3, textAlign: 'center' },
+  subtitle: { ...TYPE.callout, textAlign: 'center' },
   actions: { alignItems: 'center', gap: SPACE.xs, alignSelf: 'stretch' },
   primaryBtn: {
     borderRadius: RADIUS.pill,
@@ -189,7 +180,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.xxl,
     alignItems: 'center',
   },
+  /* On the brand gradient — white in both appearances. */
   primaryBtnText: { ...TYPE.headline, color: TEXT.inverse },
   secondaryBtn: { padding: SPACE.md, alignItems: 'center' },
-  secondaryBtnText: { ...TYPE.bodyStrong, color: TEXT.brand },
+  secondaryBtnText: { ...TYPE.bodyStrong },
 });

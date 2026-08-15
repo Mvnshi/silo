@@ -141,6 +141,14 @@ textarea {
   color: var(--brand-700);
   font-weight: 700;
 }
+@media (prefers-color-scheme: dark) {
+  /* The light lavender wash is a bright slab on a dark card — this is a
+     placeholder, it should recede, not shout. */
+  .previewThumbPlaceholder {
+    background: linear-gradient(135deg, var(--brand-900), var(--brand-950));
+    color: var(--text-brand);
+  }
+}
 .previewBody {
   flex: 1;
   min-width: 0;
@@ -342,7 +350,9 @@ textarea {
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 500;
-  border: 1px dashed var(--ink-300);
+  /* decorative role, not a raw ink step: a dashed ink-300 hairline is glaring
+     on a dark card and invisible-adjacent on a light one. */
+  border: 1px dashed var(--text-decorative);
   transition: background 120ms ease, color 120ms ease;
 }
 .suggestChip:hover {

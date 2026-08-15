@@ -11,7 +11,7 @@
  * app offers to help you let go of them, a few at a time.
  */
 import React, { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -35,24 +35,32 @@ import {
 } from '@/lib/stats';
 import { enterList, usePrefersReducedMotion } from '@/lib/motion';
 import {
+  ACCENT,
   BRAND,
   DURATION,
   GRADIENTS,
-  HAIRLINE,
-  INK,
   RADIUS,
   SHADOW,
   SPACE,
-  STATUS,
-  SURFACE,
-  TEXT,
   TYPE,
+  type ThemeColors,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
+
+/**
+ * On dark, SHADOW.card does nothing — card and page are both near-black — so a
+ * hairline is what actually draws the card's edge. The metric/rate/chart cards
+ * already carry a 1px border, so only its colour has to follow the palette.
+ */
+function cardEdge(c: ThemeColors): ViewStyle {
+  return { backgroundColor: c.card, borderColor: c.hairline };
+}
 
 export default function StatsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
   const [items, setItems] = useState<Item[] | null>(null);
   const [cleanupOpen, setCleanupOpen] = useState(false);
 
@@ -82,7 +90,7 @@ export default function StatsScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={[...GRADIENTS.page]} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={[...c.pageGradient]} style={StyleSheet.absoluteFill} />
       <ScreenHeader
         title="Your Silo"
         transparent
@@ -93,7 +101,7 @@ export default function StatsScreen() {
             onPress={() => router.push('/settings')}
             accessibilityLabel="Settings"
           >
-            <Ionicons name="settings-outline" size={22} color={INK[700]} />
+            <Ionicons name="settings-outline" size={22} color={c.text} />
           </PressableScale>
         }
       />
@@ -236,48 +244,55 @@ function Metric({
   delta?: number;
   tone?: 'default' | 'brand' | 'accent' | 'warn';
 }) {
+  const c = useThemeColors();
+  // The accent pink has no role in the palette; it lightens a step on dark for
+  // the same reason `brand` does — the 500 step goes muddy on a near-black card.
   const color =
     tone === 'brand'
-      ? BRAND[600]
+      ? c.brand
       : tone === 'accent'
-        ? '#ec4899'
+        ? c.appearance === 'dark'
+          ? ACCENT[400]
+          : ACCENT[500]
         : tone === 'warn'
-          ? STATUS.warning
-          : INK[600];
+          ? c.warning
+          : c.textSecondary;
 
   return (
     <View style={styles.metricCell}>
-      <View style={styles.metricCard}>
+      <View style={[styles.metricCard, cardEdge(c)]}>
         <Ionicons name={icon} size={18} color={color} />
         <View style={styles.metricValueRow}>
-          <Text style={styles.metricValue}>{value}</Text>
+          <Text style={[styles.metricValue, { color: c.text }]}>{value}</Text>
           {typeof delta === 'number' && delta !== 0 && (
             <Text
               style={[
                 styles.metricDelta,
-                { color: delta > 0 ? STATUS.success : TEXT.tertiary },
+                { color: delta > 0 ? c.success : c.textTertiary },
               ]}
             >
               {delta > 0 ? `+${delta}` : delta}
             </Text>
           )}
         </View>
-        <Text style={styles.metricLabel}>{label}</Text>
+        <Text style={[styles.metricLabel, { color: c.textTertiary }]}>{label}</Text>
       </View>
     </View>
   );
 }
 
 function RateCard({ stats }: { stats: SiloStats }) {
+  const c = useThemeColors();
   const pct = stats.resurfacingRate === null ? null : Math.round(stats.resurfacingRate * 100);
   return (
-    <View style={styles.card}>
-      <Text style={styles.cardEyebrow}>SAVE → DO RATE</Text>
+    <View style={[styles.card, cardEdge(c)]}>
+      <Text style={[styles.cardEyebrow, { color: c.textTertiary }]}>SAVE → DO RATE</Text>
       <View style={styles.rateRow}>
-        <Text style={styles.rateValue}>{pct === null ? '—' : `${pct}%`}</Text>
-        <Text style={styles.rateWindow}>last 30 days</Text>
+        <Text style={[styles.rateValue, { color: c.text }]}>{pct === null ? '—' : `${pct}%`}</Text>
+        <Text style={[styles.rateWindow, { color: c.textTertiary }]}>last 30 days</Text>
       </View>
-      <View style={styles.rateTrack}>
+      <View style={[styles.rateTrack, { backgroundColor: c.field }]}>
+        {/* The fill is a brand surface and keeps its gradient in both appearances. */}
         <LinearGradient
           colors={[...GRADIENTS.brand]}
           start={{ x: 0, y: 0 }}
@@ -285,7 +300,9 @@ function RateCard({ stats }: { stats: SiloStats }) {
           style={[styles.rateFill, { width: `${pct ?? 0}%` }]}
         />
       </View>
-      <Text style={styles.cardCaption}>{describeRate(stats.resurfacingRate)}</Text>
+      <Text style={[styles.cardCaption, { color: c.textSecondary }]}>
+        {describeRate(stats.resurfacingRate)}
+      </Text>
     </View>
   );
 }
@@ -295,66 +312,92 @@ function RateCard({ stats }: { stats: SiloStats }) {
  * solid one — so the gap between them IS the problem the product exists to fix.
  */
 function WeeklyChart({ weeks }: { weeks: WeekBucket[] }) {
+  const c = useThemeColors();
   const peak = Math.max(1, ...weeks.map((w) => Math.max(w.saves, w.uses)));
+  // Saves are the quiet bar, Done the loud one. On dark that means going DOWN
+  // the violet scale for saves — the pale tint that recedes on white would
+  // out-shout the solid bar on a near-black card and invert the whole reading.
+  const savesColor = c.appearance === 'dark' ? BRAND[800] : BRAND[200];
+
   return (
-    <Animated.View entering={FadeIn.duration(DURATION.base)} style={styles.card}>
-      <Text style={styles.cardEyebrow}>LAST 12 WEEKS</Text>
+    <Animated.View entering={FadeIn.duration(DURATION.base)} style={[styles.card, cardEdge(c)]}>
+      <Text style={[styles.cardEyebrow, { color: c.textTertiary }]}>LAST 12 WEEKS</Text>
       <View style={styles.chart}>
         {weeks.map((w) => (
           <View key={w.start} style={styles.chartColumn}>
             <View style={styles.chartStack}>
               <View
-                style={[styles.chartBarSaves, { height: `${(w.saves / peak) * 100}%` }]}
+                style={[
+                  styles.chartBar,
+                  { backgroundColor: savesColor, height: `${(w.saves / peak) * 100}%` },
+                ]}
               />
-              <View style={[styles.chartBarUses, { height: `${(w.uses / peak) * 100}%` }]} />
+              <View
+                style={[
+                  styles.chartBarUses,
+                  { backgroundColor: c.brand, height: `${(w.uses / peak) * 100}%` },
+                ]}
+              />
             </View>
           </View>
         ))}
       </View>
       <View style={styles.legend}>
-        <Legend color={BRAND[200]} label="Saved" />
-        <Legend color={BRAND[600]} label="Done" />
+        <Legend color={savesColor} label="Saved" />
+        <Legend color={c.brand} label="Done" />
       </View>
     </Animated.View>
   );
 }
 
 function Legend({ color, label }: { color: string; label: string }) {
+  const c = useThemeColors();
   return (
     <View style={styles.legendItem}>
       <View style={[styles.legendSwatch, { backgroundColor: color }]} />
-      <Text style={styles.legendLabel}>{label}</Text>
+      <Text style={[styles.legendLabel, { color: c.textTertiary }]}>{label}</Text>
     </View>
   );
 }
 
 function CleanupCard({ count, onPress }: { count: number; onPress: () => void }) {
+  const c = useThemeColors();
   return (
     <PressableScale
       haptic="light"
       scaleTo={0.985}
-      style={styles.cleanupCard}
+      // The warning tint + a wash of the same hue for the border and glyph well,
+      // so the card reads as "attention" on either ground.
+      style={[
+        styles.cleanupCard,
+        { backgroundColor: c.warningSoft, borderColor: c.warning + '38' },
+      ]}
       onPress={onPress}
       accessibilityLabel={`Tidy up ${count} stale saves`}
     >
-      <View style={styles.cleanupIcon}>
-        <Ionicons name="sparkles" size={20} color={STATUS.warning} />
+      <View style={[styles.cleanupIcon, { backgroundColor: c.warning + '1F' }]}>
+        <Ionicons name="sparkles" size={20} color={c.warning} />
       </View>
       <View style={styles.cleanupBody}>
-        <Text style={styles.cleanupTitle}>
+        <Text style={[styles.cleanupTitle, { color: c.text }]}>
           {count} {count === 1 ? 'save is' : 'saves are'} going stale
         </Text>
-        <Text style={styles.cleanupSub}>
+        <Text style={[styles.cleanupSub, { color: c.textSecondary }]}>
           Keep the ones you still want. Let the rest go — it takes a minute.
         </Text>
       </View>
-      <Ionicons name="chevron-forward" size={18} color={TEXT.decorative} />
+      <Ionicons name="chevron-forward" size={18} color={c.decorative} />
     </PressableScale>
   );
 }
 
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Layout only, plus the level card — that one is a brand surface, so its violet
+ * gradient and white-on-violet text are the same in both appearances. Every
+ * other colour is applied as a second style entry at the call site.
+ */
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: {
@@ -427,11 +470,9 @@ const styles = StyleSheet.create({
     padding: SPACE.xs,
   },
   metricCard: {
-    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.xl,
     padding: SPACE.base,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   metricValueRow: {
@@ -442,7 +483,6 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     ...TYPE.title1,
-    color: TEXT.primary,
   },
   metricDelta: {
     ...TYPE.caption,
@@ -450,26 +490,21 @@ const styles = StyleSheet.create({
   },
   metricLabel: {
     ...TYPE.footnote,
-    color: TEXT.tertiary,
     marginTop: 2,
   },
 
   card: {
-    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.xl,
     padding: SPACE.lg,
     marginTop: SPACE.base,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   cardEyebrow: {
     ...TYPE.overline,
-    color: TEXT.tertiary,
   },
   cardCaption: {
     ...TYPE.footnote,
-    color: TEXT.secondary,
     marginTop: SPACE.md,
   },
 
@@ -481,16 +516,13 @@ const styles = StyleSheet.create({
   },
   rateValue: {
     ...TYPE.display,
-    color: TEXT.primary,
   },
   rateWindow: {
     ...TYPE.footnote,
-    color: TEXT.tertiary,
   },
   rateTrack: {
     height: 10,
     borderRadius: RADIUS.pill,
-    backgroundColor: INK[100],
     marginTop: SPACE.md,
     overflow: 'hidden',
   },
@@ -515,18 +547,16 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'flex-end',
   },
-  chartBarSaves: {
+  chartBar: {
     width: '100%',
     minHeight: 3,
     borderRadius: RADIUS.xs,
-    backgroundColor: BRAND[200],
   },
   chartBarUses: {
     position: 'absolute',
     bottom: 0,
     width: '100%',
     borderRadius: RADIUS.xs,
-    backgroundColor: BRAND[600],
   },
   legend: {
     flexDirection: 'row',
@@ -545,17 +575,14 @@ const styles = StyleSheet.create({
   },
   legendLabel: {
     ...TYPE.caption,
-    color: TEXT.tertiary,
   },
 
   cleanupCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.md,
-    backgroundColor: STATUS.warningSoft,
     borderRadius: RADIUS.xl,
     borderWidth: 1,
-    borderColor: 'rgba(217, 119, 6, 0.22)',
     padding: SPACE.base,
     marginTop: SPACE.base,
   },
@@ -563,18 +590,15 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: RADIUS.md,
-    backgroundColor: 'rgba(217, 119, 6, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   cleanupBody: { flex: 1 },
   cleanupTitle: {
     ...TYPE.bodyStrong,
-    color: TEXT.primary,
   },
   cleanupSub: {
     ...TYPE.footnote,
-    color: TEXT.secondary,
     marginTop: 2,
   },
 });

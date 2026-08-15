@@ -3,28 +3,49 @@
  *
  * Mount once at the root. It replaces `Alert.prompt`, which is iOS-only and
  * therefore silently did nothing on Android at every call site that used it.
+ *
+ * The dialog follows the app appearance; only the confirm button is fixed,
+ * because it is a brand surface rather than a page one.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import PressableScale from './PressableScale';
 import { registerTextPrompt, TextPromptOptions } from '@/lib/prompt';
-import {
-  BRAND,
-  DURATION,
-  HAIRLINE,
-  INK,
-  RADIUS,
-  SHADOW,
-  SPACE,
-  SURFACE,
-  TEXT,
-  TYPE,
-} from '@/lib/theme';
+import { BRAND, DURATION, RADIUS, SHADOW, SPACE, TYPE } from '@/lib/theme';
+import type { ThemeColors } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { enterHero, usePrefersReducedMotion } from '@/lib/motion';
+
+/**
+ * Every colour in the dialog, built once per palette change. Plain object, not
+ * StyleSheet.create — that would allocate a new sheet on every render.
+ */
+function makeDynamicStyles(c: ThemeColors) {
+  return {
+    scrim: { backgroundColor: c.scrim },
+    // SHADOW.floating carries the lift on light. On the dark page a shadow is
+    // invisible, so the card leans on a hairline to read as a raised sheet.
+    card:
+      c.appearance === 'dark'
+        ? {
+            backgroundColor: c.card,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: c.hairline,
+          }
+        : { backgroundColor: c.card },
+    title: { color: c.text },
+    message: { color: c.textSecondary },
+    input: { color: c.text, backgroundColor: c.field, borderColor: c.hairline },
+    cancelBtn: { backgroundColor: c.field },
+    cancelText: { color: c.textSecondary },
+  };
+}
 
 export default function TextPromptHost() {
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
   const [options, setOptions] = useState<TextPromptOptions | null>(null);
   const [value, setValue] = useState('');
   const resolverRef = useRef<((v: string | null) => void) | null>(null);
@@ -61,7 +82,7 @@ export default function TextPromptHost() {
         <Animated.View
           entering={FadeIn.duration(DURATION.fast)}
           exiting={FadeOut.duration(DURATION.instant)}
-          style={styles.scrim}
+          style={[styles.scrim, dyn.scrim]}
         >
           {/* Tapping the scrim cancels — a dialog whose only exit is a small
               button reads as a trap. */}
@@ -75,18 +96,20 @@ export default function TextPromptHost() {
             <View style={StyleSheet.absoluteFill} />
           </PressableScale>
 
-          <Animated.View entering={enterHero(0, reduced)} style={styles.card}>
-            <Text style={styles.title} accessibilityRole="header">
+          <Animated.View entering={enterHero(0, reduced)} style={[styles.card, dyn.card]}>
+            <Text style={[styles.title, dyn.title]} accessibilityRole="header">
               {options.title}
             </Text>
-            {!!options.message && <Text style={styles.message}>{options.message}</Text>}
+            {!!options.message && (
+              <Text style={[styles.message, dyn.message]}>{options.message}</Text>
+            )}
 
             <TextInput
-              style={styles.input}
+              style={[styles.input, dyn.input]}
               value={value}
               onChangeText={setValue}
               placeholder={options.placeholder}
-              placeholderTextColor={TEXT.placeholder}
+              placeholderTextColor={c.textPlaceholder}
               maxLength={options.maxLength ?? 60}
               autoFocus
               selectTextOnFocus
@@ -100,11 +123,11 @@ export default function TextPromptHost() {
                 haptic="light"
                 scaleTo={0.96}
                 containerStyle={styles.actionSlot}
-                style={styles.cancelBtn}
+                style={[styles.cancelBtn, dyn.cancelBtn]}
                 onPress={() => finish(null)}
                 accessibilityLabel="Cancel"
               >
-                <Text style={styles.cancelText}>Cancel</Text>
+                <Text style={[styles.cancelText, dyn.cancelText]}>Cancel</Text>
               </PressableScale>
               <PressableScale
                 haptic="medium"
@@ -125,10 +148,10 @@ export default function TextPromptHost() {
   );
 }
 
+/** Appearance-independent only — colours live in `makeDynamicStyles`. */
 const styles = StyleSheet.create({
   scrim: {
     flex: 1,
-    backgroundColor: SURFACE.scrim,
     alignItems: 'center',
     justifyContent: 'center',
     padding: SPACE.xl,
@@ -136,28 +159,22 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 380,
-    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.xl,
     padding: SPACE.xl,
     ...SHADOW.floating,
   },
   title: {
     ...TYPE.title3,
-    color: TEXT.primary,
   },
   message: {
     ...TYPE.subhead,
     fontWeight: '400',
-    color: TEXT.secondary,
     marginTop: SPACE.xs,
   },
   input: {
     ...TYPE.body,
-    color: TEXT.primary,
-    backgroundColor: SURFACE.field,
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.md,
     marginTop: SPACE.base,
@@ -173,13 +190,12 @@ const styles = StyleSheet.create({
   cancelBtn: {
     paddingVertical: 14,
     borderRadius: RADIUS.pill,
-    backgroundColor: INK[100],
     alignItems: 'center',
   },
   cancelText: {
     ...TYPE.bodyStrong,
-    color: TEXT.secondary,
   },
+  // Confirm is a brand surface: violet fill + white label in both appearances.
   confirmBtn: {
     paddingVertical: 14,
     borderRadius: RADIUS.pill,

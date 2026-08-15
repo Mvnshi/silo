@@ -13,13 +13,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import PressableScale from './PressableScale';
 import { DURATION, GRADIENTS, RADIUS, SPRING } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 
 interface EmptyStateProps {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   subtitle?: string;
   colors?: readonly [string, string];
-  /** Use light text on a dark background (e.g. the Streams feed). */
+  /**
+   * Light text on a permanently dark ground (e.g. the Streams feed). This is
+   * about the SURFACE, not the app appearance — a media feed stays dark even
+   * while the app renders light, so this is independent of the palette.
+   */
   dark?: boolean;
   cta?: { label: string; onPress: () => void };
   /** Secondary, lower-emphasis action rendered as plain text under the CTA. */
@@ -35,6 +40,8 @@ export default function EmptyState({
   cta,
   secondary,
 }: EmptyStateProps) {
+  const c = useThemeColors();
+
   return (
     <Animated.View
       entering={FadeIn.duration(DURATION.slow)}
@@ -63,15 +70,15 @@ export default function EmptyState({
 
       <Text
         accessibilityRole="header"
-        className={`mt-7 text-center text-title3 font-bold ${dark ? 'text-white' : 'text-ink-900'}`}
+        className="mt-7 text-center text-title3 font-bold"
+        style={{ color: dark ? '#ffffff' : c.text }}
       >
         {title}
       </Text>
       {!!subtitle && (
         <Text
-          className={`mt-2 text-center text-subhead font-normal ${
-            dark ? 'text-white/70' : 'text-ink-500'
-          }`}
+          className="mt-2 text-center text-subhead font-normal"
+          style={{ color: dark ? 'rgba(255,255,255,0.7)' : c.textTertiary }}
         >
           {subtitle}
         </Text>
@@ -103,8 +110,11 @@ export default function EmptyState({
           accessibilityLabel={secondary.label}
           className="mt-4"
         >
+          {/* Brand-coloured link text, so it takes the palette's brand step —
+              BRAND[600] would go muddy against the dark page. */}
           <Text
-            className={`text-subhead font-bold ${dark ? 'text-white/80' : 'text-brand-600'}`}
+            className="text-subhead font-bold"
+            style={{ color: dark ? 'rgba(255,255,255,0.8)' : c.textBrand }}
           >
             {secondary.label}
           </Text>

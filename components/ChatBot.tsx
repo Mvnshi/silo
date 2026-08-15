@@ -12,7 +12,7 @@
  * KeyboardAvoidingView — the lift would be applied twice.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TextInput, ScrollView, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -41,18 +41,16 @@ import { usePrefersReducedMotion } from '@/lib/motion';
 import {
   BRAND,
   DURATION,
-  HAIRLINE,
-  INK,
   MIN_TAP,
   RADIUS,
   SHADOW,
   SPACE,
   SPRING,
-  STATUS,
-  SURFACE,
   TEXT,
   TYPE,
+  type ThemeColors,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -138,11 +136,48 @@ async function retrieve(query: string, items: Item[]): Promise<Item[]> {
     .filter(Boolean);
 }
 
+/**
+ * The appearance-dependent half of `styles` — a plain object so it can be
+ * memoised per palette rather than re-registered as a sheet on every render.
+ */
+function makeDynamicStyles(c: ThemeColors) {
+  return {
+    backdropTint: { backgroundColor: c.scrim },
+    /**
+     * SHADOW.floating is what lifts the sheet off the page on light; on dark a
+     * shadow over a dark backdrop is invisible, so the hairline draws the edge.
+     */
+    sheetInner: {
+      backgroundColor: c.card,
+      ...(c.appearance === 'dark'
+        ? { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline }
+        : null),
+    },
+    header: { borderBottomColor: c.hairline },
+    avatar: { backgroundColor: c.brandSoft },
+    headerTitle: { color: c.text },
+    headerSubtitle: { color: c.textTertiary },
+    botBubble: { backgroundColor: c.field },
+    botBubbleText: { color: c.text },
+    errorBubble: { backgroundColor: c.dangerSoft, borderColor: c.danger },
+    errorLabel: { color: c.danger },
+    retryButton: { backgroundColor: c.card, borderColor: c.danger },
+    retryText: { color: c.danger },
+    sourceChip: { backgroundColor: c.brandSoft, borderColor: c.brandBorder },
+    sourceChipText: { color: c.textBrand },
+    composer: { backgroundColor: c.card, borderTopColor: c.hairline },
+    input: { backgroundColor: c.field, color: c.text },
+    sendButtonDisabled: { backgroundColor: c.field },
+  };
+}
+
 export default function ChatBot({ onClose }: ChatBotProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const reduced = usePrefersReducedMotion();
   const keyboard = useAnimatedKeyboard();
+  const c = useThemeColors();
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
 
   const [isExpanded, setIsExpanded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -294,6 +329,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
           style={styles.fab}
           onPress={() => setIsExpanded(true)}
         >
+          {/* The FAB is a brand fill in both appearances, so its glyph is white. */}
           <Ionicons name="chatbubbles" size={26} color={TEXT.inverse} />
         </PressableScale>
       )}
@@ -310,7 +346,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
             haptic="light"
             accessibilityLabel="Close assistant"
             containerStyle={StyleSheet.absoluteFill}
-            style={styles.backdropTint}
+            style={[styles.backdropTint, dyn.backdropTint]}
             onPress={closeChat}
           />
         </Animated.View>
@@ -322,15 +358,17 @@ export default function ChatBot({ onClose }: ChatBotProps) {
         accessibilityElementsHidden={!isExpanded}
         importantForAccessibility={isExpanded ? 'auto' : 'no-hide-descendants'}
       >
-        <View style={styles.sheetInner}>
-          <View style={styles.header}>
+        <View style={[styles.sheetInner, dyn.sheetInner]}>
+          <View style={[styles.header, dyn.header]}>
             <View style={styles.headerLeft}>
-              <View style={styles.avatar}>
-                <Ionicons name="sparkles" size={22} color={BRAND[600]} />
+              <View style={[styles.avatar, dyn.avatar]}>
+                <Ionicons name="sparkles" size={22} color={c.textBrand} />
               </View>
               <View>
-                <Text style={styles.headerTitle}>Assistant</Text>
-                <Text style={styles.headerSubtitle}>Answers from your saves</Text>
+                <Text style={[styles.headerTitle, dyn.headerTitle]}>Assistant</Text>
+                <Text style={[styles.headerSubtitle, dyn.headerSubtitle]}>
+                  Answers from your saves
+                </Text>
               </View>
             </View>
             <PressableScale
@@ -339,7 +377,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
               style={styles.closeButton}
               onPress={closeChat}
             >
-              <Ionicons name="close" size={22} color={TEXT.secondary} />
+              <Ionicons name="close" size={22} color={c.textSecondary} />
             </PressableScale>
           </View>
 
@@ -378,24 +416,28 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                     <View
                       style={[
                         styles.bubble,
+                        // The user's own bubble is a brand fill in both
+                        // appearances — only the assistant's follows the palette.
                         message.isUser
                           ? styles.userBubble
                           : message.isError
-                            ? styles.errorBubble
-                            : styles.botBubble,
+                            ? [styles.errorBubble, dyn.errorBubble]
+                            : [styles.botBubble, dyn.botBubble],
                       ]}
                     >
                       {message.isError && (
                         <View style={styles.errorHeader}>
-                          <Ionicons name="alert-circle" size={15} color={STATUS.danger} />
-                          <Text style={styles.errorLabel}>Couldn&apos;t answer</Text>
+                          <Ionicons name="alert-circle" size={15} color={c.danger} />
+                          <Text style={[styles.errorLabel, dyn.errorLabel]}>
+                            Couldn&apos;t answer
+                          </Text>
                         </View>
                       )}
 
                       <Text
                         style={[
                           styles.bubbleText,
-                          message.isUser ? styles.userBubbleText : styles.botBubbleText,
+                          message.isUser ? styles.userBubbleText : dyn.botBubbleText,
                         ]}
                       >
                         {message.text}
@@ -405,11 +447,11 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                         <PressableScale
                           haptic="light"
                           accessibilityLabel="Try again"
-                          style={styles.retryButton}
+                          style={[styles.retryButton, dyn.retryButton]}
                           onPress={() => handleRetry(message.id, message.retryQuery!)}
                         >
-                          <Ionicons name="refresh" size={14} color={STATUS.danger} />
-                          <Text style={styles.retryText}>Try again</Text>
+                          <Ionicons name="refresh" size={14} color={c.danger} />
+                          <Text style={[styles.retryText, dyn.retryText]}>Try again</Text>
                         </PressableScale>
                       )}
                     </View>
@@ -421,11 +463,14 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                             key={source.id}
                             haptic="selection"
                             accessibilityLabel={`Open ${source.title}`}
-                            style={styles.sourceChip}
+                            style={[styles.sourceChip, dyn.sourceChip]}
                             onPress={() => openSource(source.id)}
                           >
-                            <Ionicons name="link" size={12} color={BRAND[700]} />
-                            <Text style={styles.sourceChipText} numberOfLines={1}>
+                            <Ionicons name="link" size={12} color={c.textBrand} />
+                            <Text
+                              style={[styles.sourceChipText, dyn.sourceChipText]}
+                              numberOfLines={1}
+                            >
                               {source.title}
                             </Text>
                           </PressableScale>
@@ -438,7 +483,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                 {loading && (
                   <Animated.View
                     entering={FadeIn.duration(DURATION.fast)}
-                    style={[styles.bubble, styles.botBubble, styles.typingBubble]}
+                    style={[styles.bubble, styles.botBubble, dyn.botBubble, styles.typingBubble]}
                     accessibilityLabel="Thinking"
                   >
                     {[0, 1, 2].map((i) => (
@@ -448,11 +493,11 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                 )}
               </ScrollView>
 
-              <View style={styles.composer}>
+              <View style={[styles.composer, dyn.composer]}>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, dyn.input]}
                   placeholder="Ask about your saved content..."
-                  placeholderTextColor={TEXT.placeholder}
+                  placeholderTextColor={c.textPlaceholder}
                   value={inputText}
                   onChangeText={setInputText}
                   multiline
@@ -468,10 +513,12 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                   haptic="light"
                   disabled={!canSend}
                   accessibilityLabel="Send message"
-                  style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+                  style={[styles.sendButton, !canSend && dyn.sendButtonDisabled]}
                   onPress={handleSend}
                 >
-                  <Ionicons name="send" size={18} color={canSend ? TEXT.inverse : INK[400]} />
+                  {/* Enabled = white on the brand fill; disabled = a decorative
+                      glyph on the neutral field. */}
+                  <Ionicons name="send" size={18} color={canSend ? TEXT.inverse : c.decorative} />
                 </PressableScale>
               </View>
             </>
@@ -484,6 +531,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
 
 /** One dot of the three-dot "thinking" indicator, offset by `index`. */
 function TypingDot({ index, reduced }: { index: number; reduced: boolean }) {
+  const c = useThemeColors();
   const pulse = useSharedValue(0);
 
   useEffect(() => {
@@ -506,7 +554,7 @@ function TypingDot({ index, reduced }: { index: number; reduced: boolean }) {
     transform: [{ translateY: -3 * pulse.value }],
   }));
 
-  return <Animated.View style={[styles.typingDot, style]} />;
+  return <Animated.View style={[styles.typingDot, { backgroundColor: c.textTertiary }, style]} />;
 }
 
 const styles = StyleSheet.create({
@@ -516,7 +564,6 @@ const styles = StyleSheet.create({
   },
   backdropTint: {
     flex: 1,
-    backgroundColor: SURFACE.scrim,
   },
   fabContainer: {
     position: 'absolute',
@@ -544,7 +591,6 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: RADIUS.xl,
     overflow: 'hidden',
-    backgroundColor: SURFACE.card,
   },
   header: {
     flexDirection: 'row',
@@ -554,7 +600,6 @@ const styles = StyleSheet.create({
     paddingRight: SPACE.sm,
     paddingVertical: SPACE.md,
     borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -565,18 +610,15 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[100],
     alignItems: 'center',
     justifyContent: 'center',
   },
   headerTitle: {
     ...TYPE.headline,
-    color: TEXT.primary,
   },
   headerSubtitle: {
     ...TYPE.caption,
     fontWeight: '500',
-    color: TEXT.tertiary,
     marginTop: SPACE.xxs,
   },
   closeButton: {
@@ -607,24 +649,19 @@ const styles = StyleSheet.create({
   },
   botBubble: {
     alignSelf: 'flex-start',
-    backgroundColor: SURFACE.field,
     borderBottomLeftRadius: RADIUS.xs,
   },
   errorBubble: {
     alignSelf: 'flex-start',
-    backgroundColor: STATUS.dangerSoft,
     borderWidth: 1,
-    borderColor: STATUS.danger,
     borderBottomLeftRadius: RADIUS.xs,
   },
   bubbleText: {
     ...TYPE.body,
   },
+  /* White on the violet user bubble in both appearances. */
   userBubbleText: {
     color: TEXT.inverse,
-  },
-  botBubbleText: {
-    color: TEXT.primary,
   },
   errorHeader: {
     flexDirection: 'row',
@@ -634,7 +671,6 @@ const styles = StyleSheet.create({
   },
   errorLabel: {
     ...TYPE.overline,
-    color: STATUS.danger,
   },
   retryButton: {
     flexDirection: 'row',
@@ -645,14 +681,11 @@ const styles = StyleSheet.create({
     paddingVertical: SPACE.xs,
     paddingHorizontal: SPACE.md,
     borderRadius: RADIUS.pill,
-    backgroundColor: SURFACE.card,
     borderWidth: 1,
-    borderColor: STATUS.danger,
   },
   retryText: {
     ...TYPE.footnote,
     fontWeight: '700',
-    color: STATUS.danger,
   },
   sourceRow: {
     flexDirection: 'row',
@@ -668,13 +701,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.sm,
     paddingVertical: SPACE.xs,
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[50],
     borderWidth: 1,
-    borderColor: BRAND[200],
   },
   sourceChipText: {
     ...TYPE.caption,
-    color: BRAND[700],
     flexShrink: 1,
   },
   typingBubble: {
@@ -687,7 +717,6 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[500],
   },
   composer: {
     flexDirection: 'row',
@@ -695,19 +724,16 @@ const styles = StyleSheet.create({
     gap: SPACE.sm,
     padding: SPACE.md,
     borderTopWidth: 1,
-    borderTopColor: HAIRLINE,
-    backgroundColor: SURFACE.card,
   },
   input: {
     flex: 1,
     maxHeight: 96,
-    backgroundColor: SURFACE.field,
     borderRadius: RADIUS.lg,
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.md,
     ...TYPE.body,
-    color: TEXT.primary,
   },
+  /* Brand fill — violet in both appearances. */
   sendButton: {
     width: MIN_TAP,
     height: MIN_TAP,
@@ -715,8 +741,5 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND[600],
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  sendButtonDisabled: {
-    backgroundColor: INK[200],
   },
 });

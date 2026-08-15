@@ -28,16 +28,12 @@ import EmptyState from '@/components/ui/EmptyState';
 import Skeleton from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import {
-  BRAND,
-  HAIRLINE,
   RADIUS,
   SHADOW,
   SPACE,
-  STATUS,
-  SURFACE,
-  TEXT,
   TYPE,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { Stack, Item } from '@/lib/types';
 import { getStackById, getItems, updateStack, deleteStack, updateItem } from '@/lib/storage';
 import { celebrationHaptic } from '@/lib/haptics';
@@ -47,6 +43,7 @@ export default function StackDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const c = useThemeColors();
   const [stack, setStack] = useState<Stack | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
@@ -188,7 +185,7 @@ export default function StackDetailScreen() {
     // Card-shaped placeholders in the list's own rhythm, so nothing shifts
     // when the items land.
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: c.page }]}>
         <ScreenHeader />
         <View style={styles.listContent} accessible accessibilityLabel="Loading stack">
           {[0, 1, 2, 3].map((i) => (
@@ -201,7 +198,7 @@ export default function StackDetailScreen() {
 
   if (!stack) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: c.page }]}>
         <ScreenHeader />
         <EmptyState
           icon="alert-circle-outline"
@@ -214,7 +211,7 @@ export default function StackDetailScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: c.page }]}>
       <ScreenHeader
         title={stack.name}
         right={
@@ -223,20 +220,20 @@ export default function StackDetailScreen() {
           <View style={styles.headerActions}>
             <PressableScale
               haptic="light"
-              style={styles.headerButton}
+              style={[styles.headerButton, { backgroundColor: c.card, borderColor: c.hairline }]}
               onPress={handleEditStack}
               accessibilityLabel="Rename this stack"
             >
-              <Ionicons name="pencil" size={17} color={BRAND[600]} />
+              <Ionicons name="pencil" size={17} color={c.brand} />
             </PressableScale>
 
             <PressableScale
               haptic="light"
-              style={styles.headerButton}
+              style={[styles.headerButton, { backgroundColor: c.card, borderColor: c.hairline }]}
               onPress={handleDeleteStack}
               accessibilityLabel="Delete this stack"
             >
-              <Ionicons name="trash" size={17} color={STATUS.danger} />
+              <Ionicons name="trash" size={17} color={c.danger} />
             </PressableScale>
           </View>
         }
@@ -247,12 +244,14 @@ export default function StackDetailScreen() {
       <View style={styles.meta}>
         <View style={styles.countRow}>
           <View style={[styles.stackDot, { backgroundColor: stack.color }]} />
-          <Text style={styles.itemCount}>
+          <Text style={[styles.itemCount, { color: c.textTertiary }]}>
             {items.length} {items.length === 1 ? 'item' : 'items'}
           </Text>
         </View>
         {stack.description ? (
-          <Text style={styles.stackDescription}>{stack.description}</Text>
+          <Text style={[styles.stackDescription, { color: c.textSecondary }]}>
+            {stack.description}
+          </Text>
         ) : null}
       </View>
 
@@ -288,10 +287,13 @@ export default function StackDetailScreen() {
   );
 }
 
+/**
+ * Appearance-independent only — the page, card, border and text colours are
+ * applied at the call sites from `useThemeColors()`.
+ */
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: BRAND[50],
   },
   headerActions: {
     // Explicit width so the two buttons keep their size instead of being
@@ -306,9 +308,7 @@ const styles = StyleSheet.create({
     width: 35,
     height: 35,
     borderRadius: RADIUS.pill,
-    backgroundColor: SURFACE.card,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     justifyContent: 'center',
     alignItems: 'center',
     ...SHADOW.hairline,
@@ -320,7 +320,6 @@ const styles = StyleSheet.create({
   },
   stackDescription: {
     ...TYPE.footnote,
-    color: TEXT.secondary,
   },
   countRow: {
     flexDirection: 'row',
@@ -334,7 +333,6 @@ const styles = StyleSheet.create({
   },
   itemCount: {
     ...TYPE.caption,
-    color: TEXT.tertiary,
   },
   listContent: {
     padding: SPACE.base,

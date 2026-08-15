@@ -13,7 +13,7 @@
  *   reloads the list under the user's finger.
  */
 import React, { useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -27,7 +27,8 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { Item } from '@/lib/types';
 import { classConfig } from '@/lib/classification';
-import { BRAND, INK, RADIUS, SPRING, STATUS, TEXT } from '@/lib/theme';
+import { BRAND, RADIUS, SPRING } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { enterList, usePrefersReducedMotion } from '@/lib/motion';
 
 const SWIPE_THRESHOLD = 60;
@@ -71,6 +72,7 @@ function ItemCardPro({
   selected = false,
 }: Props) {
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
   const scale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
@@ -137,12 +139,19 @@ function ItemCardPro({
             onPressOut={() => {
               scale.value = withSpring(1, SPRING.settle);
             }}
-            className="mb-3 flex-row items-center rounded-xl bg-white p-2.5"
+            className="mb-3 flex-row items-center rounded-xl p-2.5"
             style={{
+              backgroundColor: c.card,
               shadowColor: cfg.from,
               shadowOffset: { width: 0, height: 8 },
               shadowOpacity: 0.16,
               shadowRadius: 16,
+              // The classification-tinted shadow is what lifts this card off the
+              // page — on a near-black ground it reads as nothing, so the card
+              // holds its own edge with a hairline instead.
+              ...(c.appearance === 'dark'
+                ? { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline }
+                : null),
             }}
           >
               {/* Thumbnail or gradient icon tile */}
@@ -183,24 +192,32 @@ function ItemCardPro({
                     <Ionicons
                       name="checkmark-circle"
                       size={15}
-                      color={STATUS.success}
+                      color={c.success}
                       style={{ marginLeft: 6 }}
                     />
                   )}
-                  <Text className="ml-auto text-caption font-medium text-ink-500">
+                  <Text
+                    className="ml-auto text-caption font-medium"
+                    style={{ color: c.textTertiary }}
+                  >
                     {timeAgo(item.created_at)}
                   </Text>
                 </View>
 
                 <Text
                   numberOfLines={2}
-                  className="mt-1.5 text-callout font-bold leading-[19px] text-ink-900"
+                  className="mt-1.5 text-callout font-bold leading-[19px]"
+                  style={{ color: c.text }}
                 >
                   {item.title}
                 </Text>
 
                 {!!item.description && (
-                  <Text numberOfLines={1} className="mt-0.5 text-footnote text-ink-500">
+                  <Text
+                    numberOfLines={1}
+                    className="mt-0.5 text-footnote"
+                    style={{ color: c.textTertiary }}
+                  >
                     {item.description}
                   </Text>
                 )}
@@ -208,14 +225,26 @@ function ItemCardPro({
                 {(tags.length > 0 || !!item.duration) && (
                   <View className="mt-2 flex-row items-center">
                     {tags.map((t) => (
-                      <View key={t} className="mr-1.5 rounded-pill bg-ink-100 px-2 py-0.5">
-                        <Text className="text-caption font-medium text-ink-500">#{t}</Text>
+                      <View
+                        key={t}
+                        className="mr-1.5 rounded-pill px-2 py-0.5"
+                        style={{ backgroundColor: c.field }}
+                      >
+                        <Text
+                          className="text-caption font-medium"
+                          style={{ color: c.textSecondary }}
+                        >
+                          #{t}
+                        </Text>
                       </View>
                     ))}
                     {!!item.duration && (
                       <View className="ml-auto flex-row items-center">
-                        <Ionicons name="time-outline" size={13} color={TEXT.decorative} />
-                        <Text className="ml-1 text-caption font-medium text-ink-500">
+                        <Ionicons name="time-outline" size={13} color={c.decorative} />
+                        <Text
+                          className="ml-1 text-caption font-medium"
+                          style={{ color: c.textTertiary }}
+                        >
                           {item.duration}m
                         </Text>
                       </View>
@@ -234,7 +263,9 @@ function ItemCardPro({
                     alignItems: 'center',
                     justifyContent: 'center',
                     borderWidth: 2,
-                    borderColor: selected ? BRAND[500] : INK[300],
+                    // BRAND[500] when picked in both appearances — it is a brand
+                    // surface, and white-on-violet has to stay readable.
+                    borderColor: selected ? BRAND[500] : c.decorative,
                     backgroundColor: selected ? BRAND[500] : 'transparent',
                   }}
                 >
@@ -244,7 +275,7 @@ function ItemCardPro({
                 <Ionicons
                   name="chevron-forward"
                   size={16}
-                  color={TEXT.decorative}
+                  color={c.decorative}
                   style={{ marginLeft: 4 }}
                 />
               )}

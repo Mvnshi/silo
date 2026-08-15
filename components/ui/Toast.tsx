@@ -8,6 +8,11 @@
  *
  * The toast floats above the tab bar, auto-dismisses after `DURATION.toast`,
  * and pauses nothing — tapping Undo dismisses it immediately.
+ *
+ * APPEARANCE: this is deliberately a dark glass surface in BOTH appearances —
+ * it floats over arbitrary content, and a surface that restyled itself per
+ * appearance would read as part of the page instead of above it. So its own
+ * colours stay literal rather than coming from the palette.
  */
 import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -18,6 +23,7 @@ import * as Haptics from 'expo-haptics';
 import GlassCard from './GlassCard';
 import PressableScale from './PressableScale';
 import { BRAND, DURATION, HIT_SLOP, RADIUS, SHADOW, SPACE, STATUS, TYPE } from '@/lib/theme';
+import { useIsDark } from '@/lib/useTheme';
 import { enterFromBottom, exitToBottom, usePrefersReducedMotion } from '@/lib/motion';
 
 export type ToastTone = 'neutral' | 'success' | 'danger';
@@ -63,6 +69,7 @@ const TONE_COLOR: Record<ToastTone, string> = {
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const reduced = usePrefersReducedMotion();
+  const isDark = useIsDark();
   const [toast, setToast] = useState<ToastOptions | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -103,7 +110,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           pointerEvents="box-none"
           accessibilityLiveRegion="polite"
         >
-          <GlassCard tint="dark" intensity={60} radius={RADIUS.lg} style={styles.card}>
+          {/* tint is pinned dark: the toast's ground is the toast, not the page. */}
+          <GlassCard
+            tint="dark"
+            intensity={60}
+            radius={RADIUS.lg}
+            style={[styles.card, isDark && styles.cardOnDark]}
+          >
             <View style={styles.row}>
               <Ionicons name={TONE_ICON[tone]} size={19} color={TONE_COLOR[tone]} />
               <Text style={styles.message} numberOfLines={2}>
@@ -141,6 +154,12 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: 'rgba(15, 23, 42, 0.55)',
+  },
+  // On a light page the dark card plus SHADOW.floating separate on their own.
+  // On the dark page neither does: the shadow vanishes and GlassCard's default
+  // 14%-white edge is too faint against near-black, so brighten just the rim.
+  cardOnDark: {
+    borderColor: 'rgba(255, 255, 255, 0.22)',
   },
   row: {
     flexDirection: 'row',

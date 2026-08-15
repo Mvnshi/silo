@@ -18,7 +18,7 @@
 import '../global.css';
 import { useEffect, useState } from 'react';
 import { AppState, LogBox } from 'react-native';
-import { Stack, Redirect, usePathname } from 'expo-router';
+import { Stack, Redirect, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { syncNow } from '@/lib/sync';
 
@@ -37,8 +37,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { seedData, shouldSeedData } from '@/lib/seed';
-import { runMigrations, hasOnboarded } from '@/lib/storage';
+import { runMigrations, hasOnboarded, getItems, getSettings } from '@/lib/storage';
 import { drainPendingShares } from '@/lib/shareImport';
+import * as Notifications from 'expo-notifications';
+import { configureNotifications, routeForResponse, syncNotifications } from '@/lib/notifications';
 import { ToastProvider } from '@/components/ui/Toast';
 import TextPromptHost from '@/components/ui/TextPrompt';
 import ThemeProvider from '@/components/ThemeProvider';
@@ -49,10 +51,15 @@ import { useThemeColors } from '@/lib/useTheme';
 // Best-effort: if the call loses the race with auto-hide, startup is unaffected.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+// Foreground presentation behaviour for local notifications. Module scope so it
+// is installed exactly once, before any notification can arrive.
+configureNotifications();
+
 export default function RootLayout() {
   // null = still reading the flag (render a blank frame, not the wrong screen).
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
   const pathname = usePathname();
+  const router = useRouter();
 
   useEffect(() => {
     hasOnboarded().then((done) => setNeedsOnboarding(!done));
@@ -104,6 +111,21 @@ export default function RootLayout() {
       // One sync per cold start, after the drain so fresh shares ride along.
       // Best-effort: unconfigured/offline must never affect startup.
       syncNow().catch(() => {});
+      refreshNotifications();
+    }
+
+    /**
+     * Rebuild the local-notification schedule from current state. Idempotent
+     * (it cancels what it owns first), permission- and preference-gated
+     * internally, and never throws — so it is safe on every foreground.
+     */
+    async function refreshNotifications() {
+      try {
+        const [items, settings] = await Promise.all([getItems(), getSettings()]);
+        await syncNotifications(items, settings);
+      } catch {
+        // Notifications are a nicety; never let them affect startup.
+      }
     }
 
     setupAudio();
@@ -116,10 +138,22 @@ export default function RootLayout() {
       drainPendingShares()
         .catch(() => {})
         // Sync AFTER the drain resolves so a just-shared save pushes in the same pass.
-        .then(() => syncNow().catch(() => {}));
+        .then(() => syncNow().catch(() => {}))
+        // Reminders follow the data, so rebuild them once the data has settled.
+        .then(() => refreshNotifications());
     });
     return () => sub.remove();
   }, []);
+
+  // Tapping a Silo notification should land where the action is — the Today
+  // view for a check-in or the digest, "Your Silo" for the tidy-up nudge.
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const route = routeForResponse(response);
+      if (route) router.push(route as never);
+    });
+    return () => sub.remove();
+  }, [router]);
 
   // Drop the splash only once we know which screen to mount, so the first
   // thing after the logo is a fully-rendered surface — never a blank frame.
@@ -164,7 +198,13 @@ function AppShell({ needsOnboarding }: { needsOnboarding: boolean }) {
         >
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
-          <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+          {/* A plain push, NOT presentation:'modal'. react-native-screens
+              presents a modal as its own view controller, which renders ABOVE
+              the root view where ToastProvider lives — so every toast raised
+              from Settings (export result, sync failure) would have been
+              invisible. Settings is reached from "Your Silo" via its gear, so a
+              push is also the more consistent transition. */}
+          <Stack.Screen name="settings" />
         </Stack>
         {/* Backs promptForText() — replaces the iOS-only Alert.prompt. */}
         <TextPromptHost />

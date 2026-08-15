@@ -10,7 +10,7 @@
  * column rather than a sweep across the page.
  */
 import React, { useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -27,6 +27,7 @@ import * as Haptics from 'expo-haptics';
 import { Item } from '@/lib/types';
 import { classConfig } from '@/lib/classification';
 import { BRAND, DURATION, RADIUS, SPRING, STATUS } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { usePrefersReducedMotion } from '@/lib/motion';
 
 const SWIPE_THRESHOLD = 60;
@@ -51,12 +52,14 @@ function CompactCard({
   selected = false,
 }: CompactCardProps) {
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
   const scale = useSharedValue(1);
   const cfg = classConfig(item.classification);
   const isDone =
     item.status === 'done' || item.bucketlist_completed === true || item.viewed === true;
+  const isPicked = selectMode && selected;
   // Fall back to the gradient-icon tile if the thumbnail fails to load.
   const [imageFailed, setImageFailed] = useState(false);
   const isFirstPaint = useRef(index < 12).current;
@@ -124,14 +127,21 @@ function CompactCard({
             onPressOut={() => {
               scale.value = withSpring(1, SPRING.settle);
             }}
-            className="m-1.5 flex-1 overflow-hidden rounded-xl bg-white"
+            className="m-1.5 flex-1 overflow-hidden rounded-xl"
             style={{
+              backgroundColor: c.card,
               shadowColor: cfg.from,
               shadowOffset: { width: 0, height: 6 },
               shadowOpacity: 0.16,
               shadowRadius: 14,
-              borderWidth: selectMode && selected ? 2 : 0,
-              borderColor: BRAND[500],
+              // The classification-tinted shadow vanishes on a near-black page,
+              // so an unselected tile falls back to a hairline edge in dark.
+              borderWidth: isPicked
+                ? 2
+                : c.appearance === 'dark'
+                  ? StyleSheet.hairlineWidth
+                  : 0,
+              borderColor: isPicked ? BRAND[500] : c.hairline,
             }}
           >
             <View className="aspect-square w-full overflow-hidden">
@@ -154,6 +164,8 @@ function CompactCard({
                 </LinearGradient>
               )}
 
+              {/* Sits on the thumbnail, so the unpicked ring stays white in both
+                  appearances — `decorative` would disappear into a dark photo. */}
               {selectMode ? (
                 <View
                   className="absolute left-2 top-2"
@@ -172,6 +184,9 @@ function CompactCard({
                 </View>
               ) : null}
 
+              {/* Stays a white chip in both appearances: it floats over the
+                  thumbnail, not the page, and white guarantees separation from
+                  whatever image happens to be underneath. */}
               {isDone && (
                 <View className="absolute right-2 top-2 rounded-pill bg-white/90 p-0.5">
                   <Ionicons name="checkmark-circle" size={20} color={STATUS.success} />
@@ -191,7 +206,8 @@ function CompactCard({
               </View>
               <Text
                 numberOfLines={2}
-                className="mt-1.5 text-footnote font-bold leading-[17px] text-ink-900"
+                className="mt-1.5 text-footnote font-bold leading-[17px]"
+                style={{ color: c.text }}
               >
                 {item.title}
               </Text>

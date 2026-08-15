@@ -30,6 +30,7 @@ import {
   TextInput,
   RefreshControl,
   Alert,
+  type ViewStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -53,16 +54,14 @@ import { useToast } from '@/components/ui/Toast';
 import {
   BRAND,
   GRADIENTS,
-  HAIRLINE,
   HIT_SLOP,
-  INK,
   RADIUS,
   SHADOW,
   SPACE,
-  STATUS,
-  TEXT,
   TYPE,
+  type ThemeColors,
 } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 import { enterFromBottom, exitToBottom, usePrefersReducedMotion } from '@/lib/motion';
 import { Item, Stack } from '@/lib/types';
 import {
@@ -89,6 +88,10 @@ export default function StacksScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
+  // Built once per appearance — this screen paints a lot of small coloured
+  // chrome (chips, field, skeletons) and rebuilding it per render would churn.
+  const dyn = useMemo(() => makeDynamicStyles(c), [c]);
 
   const [items, setItems] = useState<Item[]>([]);
   const [stacks, setStacks] = useState<Stack[]>([]);
@@ -503,12 +506,18 @@ export default function StacksScreen() {
 
   /** Content-shaped placeholders so the first frame never lies about being empty. */
   function renderSkeletons() {
+    // Skeleton's default block is near-white — on a dark card it reads as a row
+    // of lit panels rather than absent content, so darken block and sweep.
+    const tone =
+      c.appearance === 'dark'
+        ? { color: c.field, sweepColor: 'rgba(255,255,255,0.06)' }
+        : {};
     if (viewMode === 'grid') {
       return (
         <View style={styles.skeletonGrid}>
           {Array.from({ length: 6 }).map((_, i) => (
             <View key={i} style={styles.skeletonGridCell}>
-              <Skeleton height={168} radius={RADIUS.xl} />
+              <Skeleton height={168} radius={RADIUS.xl} {...tone} />
             </View>
           ))}
         </View>
@@ -517,12 +526,12 @@ export default function StacksScreen() {
     return (
       <View>
         {Array.from({ length: 6 }).map((_, i) => (
-          <View key={i} style={styles.skeletonRow}>
-            <Skeleton width={68} height={68} radius={RADIUS.lg} />
+          <View key={i} style={[styles.skeletonRow, dyn.skeletonRow]}>
+            <Skeleton width={68} height={68} radius={RADIUS.lg} {...tone} />
             <View style={styles.skeletonRowBody}>
-              <Skeleton width="40%" height={14} />
-              <Skeleton width="85%" height={16} style={{ marginTop: SPACE.sm }} />
-              <Skeleton width="60%" height={12} style={{ marginTop: SPACE.xs }} />
+              <Skeleton width="40%" height={14} {...tone} />
+              <Skeleton width="85%" height={16} style={{ marginTop: SPACE.sm }} {...tone} />
+              <Skeleton width="60%" height={12} style={{ marginTop: SPACE.xs }} {...tone} />
             </View>
           </View>
         ))}
@@ -570,7 +579,7 @@ export default function StacksScreen() {
     <RefreshControl
       refreshing={refreshing}
       onRefresh={handleRefresh}
-      tintColor={BRAND[600]}
+      tintColor={c.brand}
       // The header is absolutely positioned, so the spinner needs to clear it.
       progressViewOffset={headerHeight}
     />
@@ -578,11 +587,11 @@ export default function StacksScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={[...GRADIENTS.page]} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={[...c.pageGradient]} style={StyleSheet.absoluteFill} />
 
       {/* Sticky search + stacks bar */}
       <View
-        style={[styles.stickyHeader, { paddingTop: insets.top + SPACE.sm }]}
+        style={[styles.stickyHeader, dyn.stickyHeader, { paddingTop: insets.top + SPACE.sm }]}
         onLayout={(e) => {
           // Guarded: an unconditional setState here re-renders every row on
           // every layout pass, which is what makes the memoized cards expensive.
@@ -590,11 +599,11 @@ export default function StacksScreen() {
           setHeaderHeight((h) => (Math.abs(h - next) > 1 ? next : h));
         }}
       >
-        <LinearGradient colors={[...GRADIENTS.header]} style={StyleSheet.absoluteFill} />
+        <LinearGradient colors={[...c.headerGradient]} style={StyleSheet.absoluteFill} />
 
         {/* Title + select + settings */}
         <View style={styles.titleRow}>
-          <Text style={styles.screenTitle} accessibilityRole="header">
+          <Text style={[styles.screenTitle, dyn.screenTitle]} accessibilityRole="header">
             Stacks
           </Text>
           <View style={styles.titleActions}>
@@ -604,7 +613,9 @@ export default function StacksScreen() {
               onPress={() => (selectMode ? exitSelect() : setSelectMode(true))}
               accessibilityLabel={selectMode ? 'Cancel selection' : 'Select items'}
             >
-              <Text style={styles.selectAction}>{selectMode ? 'Cancel' : 'Select'}</Text>
+              <Text style={[styles.selectAction, dyn.selectAction]}>
+                {selectMode ? 'Cancel' : 'Select'}
+              </Text>
             </PressableScale>
             <PressableScale
               haptic="light"
@@ -625,12 +636,12 @@ export default function StacksScreen() {
         </View>
 
         {/* Search */}
-        <View style={styles.searchContainer}>
-          <Ionicons name="search" size={20} color={INK[400]} />
+        <View style={[styles.searchContainer, dyn.searchContainer]}>
+          <Ionicons name="search" size={20} color={c.decorative} />
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, dyn.searchInput]}
             placeholder="Search your saves"
-            placeholderTextColor={TEXT.placeholder}
+            placeholderTextColor={c.textPlaceholder}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoCapitalize="none"
@@ -648,7 +659,7 @@ export default function StacksScreen() {
               onPress={() => setSearchQuery('')}
               accessibilityLabel="Clear search"
             >
-              <Ionicons name="close-circle" size={20} color={INK[400]} />
+              <Ionicons name="close-circle" size={20} color={c.decorative} />
             </PressableScale>
           )}
           <PressableScale
@@ -659,7 +670,7 @@ export default function StacksScreen() {
             onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
             accessibilityLabel={viewMode === 'list' ? 'Switch to grid view' : 'Switch to list view'}
           >
-            <Ionicons name={viewMode === 'list' ? 'grid' : 'list'} size={20} color={BRAND[600]} />
+            <Ionicons name={viewMode === 'list' ? 'grid' : 'list'} size={20} color={c.brand} />
           </PressableScale>
         </View>
 
@@ -673,12 +684,20 @@ export default function StacksScreen() {
           <PressableScale
             haptic="selection"
             selected={!selectedStackId}
-            style={[styles.stackChip, !selectedStackId && styles.stackChipActive]}
+            // `stackChipActive` last: the brand fill must win over the dynamic
+            // card/hairline pair that dresses the resting chip.
+            style={[styles.stackChip, dyn.stackChip, !selectedStackId && styles.stackChipActive]}
             onPress={() => setSelectedStackId(null)}
             accessibilityLabel="All stacks"
           >
-            <Ionicons name="apps" size={16} color={!selectedStackId ? '#fff' : INK[700]} />
-            <Text style={[styles.stackChipText, !selectedStackId && styles.stackChipTextActive]}>
+            <Ionicons name="apps" size={16} color={!selectedStackId ? '#fff' : c.textSecondary} />
+            <Text
+              style={[
+                styles.stackChipText,
+                dyn.stackChipText,
+                !selectedStackId && styles.stackChipTextActive,
+              ]}
+            >
               All
             </Text>
           </PressableScale>
@@ -690,13 +709,19 @@ export default function StacksScreen() {
                 key={stack.id}
                 haptic="selection"
                 selected={active}
-                style={[styles.stackChip, active && styles.stackChipActive]}
+                style={[styles.stackChip, dyn.stackChip, active && styles.stackChipActive]}
                 onPress={() => setSelectedStackId(stack.id)}
                 onLongPress={() => handleStackLongPress(stack.id)}
                 accessibilityLabel={stack.name}
               >
                 <View style={[styles.stackDot, { backgroundColor: stack.color }]} />
-                <Text style={[styles.stackChipText, active && styles.stackChipTextActive]}>
+                <Text
+                  style={[
+                    styles.stackChipText,
+                    dyn.stackChipText,
+                    active && styles.stackChipTextActive,
+                  ]}
+                >
                   {stack.name}
                 </Text>
               </PressableScale>
@@ -705,12 +730,12 @@ export default function StacksScreen() {
 
           <PressableScale
             haptic="light"
-            style={styles.createStackButton}
+            style={[styles.createStackButton, dyn.createStackButton]}
             onPress={handleCreateStack}
             accessibilityLabel="Create a new stack"
           >
-            <Ionicons name="add" size={16} color={BRAND[600]} />
-            <Text style={styles.createStackText}>New stack</Text>
+            <Ionicons name="add" size={16} color={c.brand} />
+            <Text style={[styles.createStackText, dyn.createStackText]}>New stack</Text>
           </PressableScale>
         </ScrollView>
       </View>
@@ -769,9 +794,9 @@ export default function StacksScreen() {
           entering={enterFromBottom(0, reduced)}
           exiting={exitToBottom(reduced)}
         >
-          <GlassCard tint="light" intensity={55} radius={RADIUS.xl}>
+          <GlassCard tint={c.glassTint} intensity={55} radius={RADIUS.xl}>
             <View style={styles.bulkBarRow}>
-              <Text style={styles.bulkCount}>
+              <Text style={[styles.bulkCount, dyn.bulkCount]}>
                 {bulkBusy ? 'Working…' : `${selectedIds.size} selected`}
               </Text>
               <PressableScale
@@ -781,8 +806,8 @@ export default function StacksScreen() {
                 style={[styles.bulkAction, { opacity: selectedIds.size === 0 || bulkBusy ? 0.4 : 1 }]}
                 accessibilityLabel="Mark selected items done"
               >
-                <Ionicons name="checkmark-done" size={18} color={BRAND[600]} />
-                <Text style={[styles.bulkActionText, { color: BRAND[600] }]}>Done</Text>
+                <Ionicons name="checkmark-done" size={18} color={c.brand} />
+                <Text style={[styles.bulkActionText, { color: c.brand }]}>Done</Text>
               </PressableScale>
               <PressableScale
                 haptic="light"
@@ -791,8 +816,8 @@ export default function StacksScreen() {
                 style={[styles.bulkAction, { opacity: selectedIds.size === 0 || bulkBusy ? 0.4 : 1 }]}
                 accessibilityLabel="Delete selected items"
               >
-                <Ionicons name="trash" size={18} color={STATUS.danger} />
-                <Text style={[styles.bulkActionText, { color: STATUS.danger }]}>Delete</Text>
+                <Ionicons name="trash" size={18} color={c.danger} />
+                <Text style={[styles.bulkActionText, { color: c.danger }]}>Delete</Text>
               </PressableScale>
             </View>
           </GlassCard>
@@ -814,6 +839,7 @@ export default function StacksScreen() {
  * icon here is indistinguishable from decoration.
  */
 function ThinkingSparkle({ reduced }: { reduced: boolean }) {
+  const c = useThemeColors();
   const pulse = useSharedValue(0);
   useEffect(() => {
     if (reduced) return;
@@ -829,9 +855,39 @@ function ThinkingSparkle({ reduced }: { reduced: boolean }) {
   }));
   return (
     <Animated.View style={[aStyle, { marginRight: SPACE.sm }]}>
-      <Ionicons name="sparkles" size={18} color={BRAND[600]} />
+      <Ionicons name="sparkles" size={18} color={c.brand} />
     </Animated.View>
   );
+}
+
+/**
+ * Colour-only companions to `styles`. A plain object, NOT StyleSheet.create —
+ * this is rebuilt whenever the appearance flips, and registering fresh
+ * stylesheet ids on every flip would just leak them.
+ */
+function makeDynamicStyles(c: ThemeColors) {
+  // On dark the brand-tinted shadows these surfaces lean on are all but
+  // invisible against a near-black page, so they get a hairline edge instead.
+  const darkEdge: ViewStyle =
+    c.appearance === 'dark'
+      ? { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline }
+      : {};
+  return {
+    stickyHeader:
+      c.appearance === 'dark'
+        ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.hairline }
+        : null,
+    screenTitle: { color: c.text },
+    selectAction: { color: c.brand },
+    searchContainer: { backgroundColor: c.card, borderColor: c.hairline },
+    searchInput: { color: c.text },
+    stackChip: { backgroundColor: c.card, borderColor: c.hairline },
+    stackChipText: { color: c.textSecondary },
+    createStackButton: { backgroundColor: c.brandSoft, borderColor: c.brandBorder },
+    createStackText: { color: c.brand },
+    skeletonRow: { backgroundColor: c.card, ...darkEdge },
+    bulkCount: { color: c.text },
+  };
 }
 
 const styles = StyleSheet.create({
@@ -858,9 +914,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.xs,
     paddingBottom: 10,
   },
+  // Colour for every rule below that names one lives in `makeDynamicStyles`.
   screenTitle: {
     ...TYPE.title1,
-    color: TEXT.primary,
   },
   titleActions: {
     flexDirection: 'row',
@@ -870,7 +926,6 @@ const styles = StyleSheet.create({
   selectAction: {
     ...TYPE.callout,
     fontWeight: '700',
-    color: BRAND[600],
   },
   avatar: {
     width: 38,
@@ -882,19 +937,16 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
     marginBottom: SPACE.md,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: RADIUS.pill,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     ...SHADOW.card,
   },
   searchInput: {
     flex: 1,
     ...TYPE.body,
-    color: TEXT.primary,
     marginLeft: SPACE.sm,
   },
   stacksContainer: {
@@ -903,16 +955,16 @@ const styles = StyleSheet.create({
   stackChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
     paddingHorizontal: SPACE.base,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
     borderWidth: 1,
-    borderColor: HAIRLINE,
     marginRight: SPACE.sm,
     minWidth: 60,
     ...SHADOW.hairline,
   },
+  // Stays BRAND[600] in both appearances: it is a brand surface, and the
+  // lighter dark-mode brand would drop white-on-violet under 3:1.
   stackChipActive: {
     backgroundColor: BRAND[600],
     borderColor: BRAND[600],
@@ -920,7 +972,6 @@ const styles = StyleSheet.create({
   },
   stackChipText: {
     ...TYPE.subhead,
-    color: INK[700],
     marginLeft: 6,
     flexShrink: 0,
   },
@@ -935,18 +986,15 @@ const styles = StyleSheet.create({
   createStackButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: BRAND[100],
     paddingHorizontal: SPACE.md,
     paddingVertical: SPACE.sm,
     borderRadius: RADIUS.pill,
     borderWidth: 1,
-    borderColor: BRAND[200],
     marginRight: SPACE.sm,
   },
   createStackText: {
     ...TYPE.subhead,
     fontWeight: '700',
-    color: BRAND[600],
     marginLeft: SPACE.xs,
   },
   viewModeButton: {
@@ -968,7 +1016,6 @@ const styles = StyleSheet.create({
   skeletonRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
     borderRadius: RADIUS.xl,
     padding: 10,
     marginBottom: SPACE.md,
@@ -1001,7 +1048,6 @@ const styles = StyleSheet.create({
   bulkCount: {
     ...TYPE.subhead,
     fontWeight: '700',
-    color: TEXT.primary,
     flex: 1,
   },
   bulkAction: {

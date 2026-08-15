@@ -15,7 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import PressableScale from './PressableScale';
-import { HAIRLINE, HIT_SLOP, INK, MIN_TAP, SPACE, SURFACE, TEXT, TYPE } from '@/lib/theme';
+import { HIT_SLOP, MIN_TAP, SPACE, TYPE } from '@/lib/theme';
+import { useThemeColors } from '@/lib/useTheme';
 
 interface Props {
   title?: string;
@@ -45,6 +46,7 @@ export default function ScreenHeader({
 }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const c = useThemeColors();
 
   function handleBack() {
     // canGoBack is the common case; `replace` is only for a cold deep-link,
@@ -58,7 +60,9 @@ export default function ScreenHeader({
       style={[
         styles.bar,
         { paddingTop: insets.top + SPACE.md },
-        transparent ? styles.transparent : styles.solid,
+        transparent
+          ? styles.transparent
+          : [styles.solid, { backgroundColor: c.card, borderBottomColor: c.hairline }],
         style,
       ]}
     >
@@ -72,15 +76,21 @@ export default function ScreenHeader({
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <Ionicons name="chevron-back" size={26} color={INK[700]} />
+            <Ionicons name="chevron-back" size={26} color={c.text} />
           </PressableScale>
         )}
       </View>
 
       <View style={styles.titleWrap} pointerEvents="none">
-        {eyebrow ? <Text style={styles.eyebrow}>{eyebrow.toUpperCase()}</Text> : null}
+        {eyebrow ? (
+          <Text style={[styles.eyebrow, { color: c.textTertiary }]}>{eyebrow.toUpperCase()}</Text>
+        ) : null}
         {title ? (
-          <Text style={styles.title} numberOfLines={1} accessibilityRole="header">
+          <Text
+            style={[styles.title, { color: c.text }]}
+            numberOfLines={1}
+            accessibilityRole="header"
+          >
             {title}
           </Text>
         ) : null}
@@ -98,10 +108,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     paddingBottom: SPACE.md,
   },
+  // Colours (background + border) are applied at the call site from the palette.
   solid: {
-    backgroundColor: SURFACE.card,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: HAIRLINE,
   },
   transparent: {
     backgroundColor: 'transparent',
@@ -119,11 +128,9 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     ...TYPE.overline,
-    color: TEXT.tertiary,
     marginBottom: 2,
   },
   title: {
     ...TYPE.headline,
-    color: TEXT.primary,
   },
 });
