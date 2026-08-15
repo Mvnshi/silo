@@ -10,7 +10,8 @@
  * so it stays centred whether or not a right-hand action is present.
  */
 import React from 'react';
-import { StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,6 +31,13 @@ interface Props {
   hideBack?: boolean;
   /** Transparent bar for hero screens that scroll content underneath. */
   transparent?: boolean;
+  /**
+   * Animated style for the title block alone (not the back button or the right
+   * slot). Hero screens use this to fade the title in as the bar solidifies —
+   * a title sitting unscrimmed on top of arbitrary artwork is never legible,
+   * and it duplicates the real title a few points below it.
+   */
+  titleStyle?: StyleProp<ViewStyle>;
   style?: ViewStyle;
 }
 
@@ -42,6 +50,7 @@ export default function ScreenHeader({
   fallbackHref = '/(tabs)',
   hideBack = false,
   transparent = false,
+  titleStyle,
   style,
 }: Props) {
   const router = useRouter();
@@ -81,7 +90,7 @@ export default function ScreenHeader({
         )}
       </View>
 
-      <View style={styles.titleWrap} pointerEvents="none">
+      <Animated.View style={[styles.titleWrap, titleStyle]} pointerEvents="none">
         {eyebrow ? (
           <Text style={[styles.eyebrow, { color: c.textTertiary }]}>{eyebrow.toUpperCase()}</Text>
         ) : null}
@@ -94,7 +103,7 @@ export default function ScreenHeader({
             {title}
           </Text>
         ) : null}
-      </View>
+      </Animated.View>
 
       <View style={[styles.slot, styles.slotRight]}>{right}</View>
     </View>

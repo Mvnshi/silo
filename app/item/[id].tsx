@@ -28,6 +28,7 @@ import {
   Alert,
   Linking,
   ActivityIndicator,
+  Dimensions,
   Modal,
   Platform,
   TextInput,
@@ -81,23 +82,20 @@ import {
 } from '@/lib/theme';
 import { useThemeColors } from '@/lib/useTheme';
 
-const HERO_HEIGHT = 300;
+/**
+ * 16:9, not a square-ish 300.
+ *
+ * Two reasons. It matches the aspect of the media most saves actually are, and
+ * — less obviously — it crops YouTube's letterbox. `hqdefault.jpg` (the only
+ * thumbnail oEmbed hands back) is a 4:3 canvas with black bars baked in above
+ * and below the frame. Rendered `cover` into a 4:3 box those bars survive as a
+ * black band under the hero; rendered into 16:9 they are exactly what gets
+ * cropped away.
+ */
+const HERO_HEIGHT = Math.round(Dimensions.get('window').width * (9 / 16));
 
 /** Animating expo-image directly keeps its caching + contentFit on the hero. */
 const AnimatedImage = Animated.createAnimatedComponent(Image);
-
-/**
- * The header sits on top of the hero, so its glyphs need guaranteed contrast
- * over an arbitrary photo. A soft wash does that without the "always solid bar"
- * look; the real bar background fades in over it on scroll.
- * (Not in GRADIENTS — every shared scrim there is dark, for white glyphs.)
- *
- * The wash has to run the same direction as the glyphs it protects: dark ink on
- * white in light, near-white ink on the page ground in dark. A white wash under
- * dark-mode glyphs would erase them.
- */
-const HEADER_SCRIM_LIGHT = ['rgba(255,255,255,0.92)', 'rgba(255,255,255,0)'] as const;
-const HEADER_SCRIM_DARK = ['rgba(11,11,16,0.92)', 'rgba(11,11,16,0)'] as const;
 
 /** What the user saved, in their words — the header title. */
 const TYPE_LABEL: Record<ItemType, string> = {
@@ -159,25 +157,30 @@ export default function ItemDetailScreen() {
     return { transform: [{ translateY }, { scale }] };
   }, [reduced]);
 
-  // Bar background appears as the title scrolls under it. Forced on while
-  // editing, where legible Cancel/Save matters more than the hero.
-  const headerBgStyle = useAnimatedStyle(
-    () => ({
-      opacity: isEditing ? 1 : interpolate(scrollY.value, [180, 240], [0, 1], 'clamp'),
-    }),
-    [isEditing]
-  );
-
   /**
    * Load item from storage
    */
+  /**
+   * Holds the Sound that was actually created, so unmount can unload it.
+   *
+   * The cleanup below can't close over the `sound` STATE: this effect is keyed
+   * on [id], so it captures whatever `sound` was at mount — `null` on every
+   * normal open. Navigating away mid-playback therefore unloaded nothing, and
+   * the narration kept playing over whatever screen came next.
+   */
+  const soundRef = useRef<Audio.Sound | null>(null);
+
   useEffect(() => {
     loadItem();
     return () => {
-      if (sound) {
-        sound.unloadAsync();
+      const s = soundRef.current;
+      if (s) {
+        s.unloadAsync().catch(() => {});
+        soundRef.current = null;
       }
     };
+    // loadItem is stable for a given id and intentionally excluded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   async function loadItem() {
@@ -302,6 +305,7 @@ export default function ItemDetailScreen() {
           { uri: item.audio_url },
           { shouldPlay: true }
         );
+        soundRef.current = newSound;
         setSound(newSound);
         setIsPlaying(true);
 
@@ -517,11 +521,9 @@ export default function ItemDetailScreen() {
   }
 
   const cfg = classConfig(item.classification);
-  const hasHero = !!item.imageUri;
 
   const header = (
     <ScreenHeader
-      transparent={hasHero}
       // While editing the slot holds Cancel + Save, which overhang the centred
       // title — so the title steps aside rather than sitting underneath.
       eyebrow={isEditing ? undefined : cfg.label}
@@ -569,7 +571,7 @@ export default function ItemDetailScreen() {
 
   return (
     <View style={[styles.container, dyn.container]}>
-      {!hasHero && header}
+      {header}
 
       <KeyboardAvoidingView
         style={styles.flex}
@@ -1051,20 +1053,6 @@ export default function ItemDetailScreen() {
         </Modal>
       </KeyboardAvoidingView>
 
-      {hasHero && (
-        <View style={styles.headerFloat} pointerEvents="box-none">
-          <LinearGradient
-            colors={c.appearance === 'dark' ? HEADER_SCRIM_DARK : HEADER_SCRIM_LIGHT}
-            style={StyleSheet.absoluteFill}
-            pointerEvents="none"
-          />
-          <Animated.View
-            style={[StyleSheet.absoluteFill, styles.headerFloatBg, dyn.headerFloatBg, headerBgStyle]}
-            pointerEvents="none"
-          />
-          {header}
-        </View>
-      )}
     </View>
   );
 }
@@ -1083,7 +1071,6 @@ function makeDynamicStyles(c: ThemeColors) {
       : {};
   return {
     container: { backgroundColor: c.page },
-    headerFloatBg: { backgroundColor: c.card, borderBottomColor: c.hairline },
     editActionText: { color: c.textSecondary },
     // The ground the hero paints onto while the image decodes. Left near-white
     // it flashes a lit panel over the dark page on every open.
@@ -1143,15 +1130,6 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-  },
-  headerFloat: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-  },
-  headerFloatBg: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   pickerContainer: {
     marginVertical: SPACE.base,
