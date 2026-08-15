@@ -27,13 +27,36 @@ function apiHeaders(): Record<string, string> {
   return headers;
 }
 
+/** Network budget for one Gemini round-trip. RN's `fetch` has no default timeout. */
+const REQUEST_TIMEOUT_MS = 20000;
+
+/**
+ * A signal that aborts after `ms`.
+ *
+ * Prefers the standard `AbortSignal.timeout`, but React Native polyfills
+ * AbortSignal from the `abort-controller` package, which predates that static —
+ * calling it unguarded would throw on every request. Hence the fallback.
+ */
+function timeoutSignal(ms: number): AbortSignal {
+  const ctor = AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal };
+  if (typeof ctor.timeout === 'function') return ctor.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
 /** True once the Worker URL is configured (otherwise AI features no-op cleanly). */
 export function isApiConfigured(): boolean {
   return API_BASE_URL.length > 0;
 }
 
-/** POST a task to the single Gemini proxy endpoint. Throws a friendly error on failure. */
-async function postGemini<T>(body: Record<string, unknown>): Promise<T> {
+/**
+ * POST a task to the single Gemini proxy endpoint. Throws a friendly error on
+ * failure. Pass `signal` to make the call cancellable (capture lets the user
+ * back out of a slow analysis); when omitted the request still gives up after
+ * REQUEST_TIMEOUT_MS instead of hanging forever.
+ */
+async function postGemini<T>(body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   if (!isApiConfigured()) {
     throw new Error('AI isn’t set up yet — add your Worker URL to turn it on.');
   }
@@ -41,6 +64,12 @@ async function postGemini<T>(body: Record<string, unknown>): Promise<T> {
     method: 'POST',
     headers: apiHeaders(),
     body: JSON.stringify(body),
+    // React Native declares its own `AbortSignal` global (see
+    // react-native/src/types/globals.d.ts) that is structurally incompatible
+    // with the ambient one `new AbortController()` is typed to produce — one
+    // runtime object, two declarations. The cast lives here so callers can just
+    // pass `controller.signal`.
+    signal: (signal ?? timeoutSignal(REQUEST_TIMEOUT_MS)) as unknown as RequestInit['signal'],
   });
   if (!response.ok) {
     let msg = `Request failed (${response.status})`;
@@ -71,9 +100,15 @@ export async function analyzeImage(
  * happen server-side in the Worker (egress-hardened); the client just posts the
  * URL. On a dead/private/login-walled link the Worker returns `ok:false` with
  * whatever it has, so the caller can still save the raw link (never lose a save).
+ *
+ * `signal` lets capture cancel an in-flight extraction (the Cancel button under
+ * the analysis skeleton); without one the call still times out on its own.
  */
-export async function extractLink(url: string): Promise<ExtractedLinkResponse> {
-  return postGemini<ExtractedLinkResponse>({ task: 'extract', url });
+export async function extractLink(
+  url: string,
+  signal?: AbortSignal,
+): Promise<ExtractedLinkResponse> {
+  return postGemini<ExtractedLinkResponse>({ task: 'extract', url }, signal);
 }
 
 /** Suggest when to review an item via the Gemini proxy. */

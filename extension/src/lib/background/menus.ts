@@ -3,15 +3,24 @@
  * EXTENSION_SPEC.md §3 rows "Right-click image save", "Right-click highlight",
  * "Save link without leaving the page".
  *
- * Behaviour:
- * - Idempotent registration: removeAll first, then re-create. Necessary
- *   because MV3 service workers respawn and onInstalled doesn't fire on
- *   every wake, so we may end up here with menus already present.
- * - All work funnels through `saveActions.ts` so M2's spotlight can reuse
- *   the exact same code path (single behaviour, one place to fix bugs).
- * - Best-effort toast via chrome.notifications. If the `notifications`
- *   permission isn't granted yet (we ship without it), the API returns
- *   undefined and we swallow it — the save itself still succeeded.
+ * Registration is deliberately split in two, because the two halves have
+ * different lifetimes:
+ *
+ * - `registerContextMenus()` CREATES the menu items. Menu items are persisted
+ *   by the browser, so this belongs on `onInstalled` / `onStartup` only.
+ * - `registerContextMenuClicks()` attaches the click listener, and MUST run at
+ *   the top level of the background entrypoint on every worker boot. MV3 evicts
+ *   the service worker after ~30s idle and re-runs the entrypoint to deliver
+ *   the next event; a listener attached from inside an `onInstalled` callback
+ *   exists only for that one worker generation. Registering it there (as this
+ *   file used to) meant the first right-click save after install worked and
+ *   every one after the worker slept silently no-oped.
+ *
+ * All work funnels through `saveActions.ts` so the spotlight can reuse the
+ * exact same code path (single behaviour, one place to fix bugs).
+ *
+ * Best-effort toast via chrome.notifications: if the API is unavailable we
+ * swallow it — the save itself still succeeded.
  */
 import { saveImage, saveLink, saveSelection } from './saveActions';
 
@@ -19,9 +28,8 @@ const MENU_IMAGE = 'silo-save-image';
 const MENU_SELECTION = 'silo-save-selection';
 const MENU_LINK = 'silo-save-link';
 
+/** Create the menu items. Idempotent: removeAll first so a re-run can't collide. */
 export function registerContextMenus(): void {
-  // SW respawn: a stale menu from the previous worker invocation would
-  // collide on create. Tear them all down first.
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create(
       { id: MENU_IMAGE, title: 'Save image to Silo', contexts: ['image'] },
@@ -36,9 +44,10 @@ export function registerContextMenus(): void {
       swallowLastError
     );
   });
+}
 
-  // onClicked is module-global and survives SW respawn registration —
-  // attaching here on every cold boot is correct.
+/** Attach the click handler. Call from the background entrypoint's top level. */
+export function registerContextMenuClicks(): void {
   chrome.contextMenus.onClicked.addListener((info) => {
     void handleClick(info);
   });

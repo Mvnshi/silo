@@ -1,31 +1,45 @@
-/**
- * Library page styles. Tokens mirror lib/theme.ts (violet brand + slate ink) —
- * keep in sync by hand; CSS modules can't import TS consts.
+/*
+ * Library page styles.
+ *
+ * The palette is NOT declared here. Every `var(--…)` below comes from the one
+ * token block emitted by `lib/theme.ts` and installed by `library/main.tsx`
+ * before the first render. Semantic roles (`--text-*`, `--surface-*`) flip in
+ * dark mode; raw `--brand-*` / `--ink-*` steps are fixed in both schemes.
  */
-:root {
-  --brand-50: #f5f3ff;
-  --brand-100: #ede9fe;
-  --brand-200: #ddd6fe;
-  --brand-600: #7c3aed;
-  --brand-700: #6d28d9;
-  --ink-100: #f1f5f9;
-  --ink-300: #cbd5e1;
-  --ink-400: #94a3b8;
-  --ink-500: #64748b;
-  --ink-700: #334155;
-  --ink-900: #0f172a;
-  --hairline: rgba(15, 23, 42, 0.08);
+
+* {
+  box-sizing: border-box;
+}
+
+/* The UA default `margin: 8px` on body framed the violet page in white and,
+   with .page's min-height:100vh, forced a permanent scrollbar at zero items.
+   The background literal repeats brand-50 so the ground is right in the first
+   frame, before the token <style> exists. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #f5f3ff;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  html,
+  body {
+    background: #0b0e18;
+  }
 }
 
 /* Page scaffold — soft brand gradient like the phone's GRADIENTS.page. */
 .page {
   min-height: 100vh;
-  margin: 0;
   padding: 32px clamp(16px, 4vw, 48px) 64px;
-  background: linear-gradient(160deg, #eef2ff, #f5f3ff 50%, #faf5ff);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color: var(--ink-900);
-  box-sizing: border-box;
+  background: var(--gradient-page);
+  color: var(--text-primary);
 }
 
 .header {
@@ -47,7 +61,7 @@
 .subtitle {
   margin: 4px 0 0;
   font-size: 14px;
-  color: var(--ink-500);
+  color: var(--text-tertiary);
 }
 
 .search {
@@ -56,20 +70,26 @@
   max-width: 420px;
   padding: 12px 18px;
   font-size: 15px;
-  color: var(--ink-900);
-  background: #fff;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--surface-card);
   border: 1px solid var(--hairline);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   outline: none;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-card);
+}
+.search::placeholder {
+  color: var(--text-placeholder);
 }
 .search:focus {
-  border-color: var(--brand-200);
-  box-shadow: 0 0 0 3px var(--brand-100);
+  border-color: var(--brand-400);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
 }
 
-/* Sync status chip — sits beside the search field. Unpaired: quiet slate on
-   white. Paired: violet on the brand tint so "synced" reads at a glance. */
+/* Sync status chip — sits beside the search field and is the ONLY place sync
+   health surfaces, so each state gets its own read. Unpaired/syncing: quiet
+   slate on white. ok: violet on the brand tint. stale: amber. error: red and
+   explicitly actionable. */
 .syncChip {
   display: inline-flex;
   align-items: center;
@@ -77,13 +97,14 @@
   padding: 10px 16px;
   font-size: 13px;
   font-weight: 600;
+  font-family: inherit;
   white-space: nowrap;
-  color: var(--ink-700);
-  background: #fff;
+  color: var(--text-secondary);
+  background: var(--surface-card);
   border: 1px solid var(--hairline);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-card);
   transition: transform 0.12s ease, box-shadow 0.15s ease;
 }
 .syncChip:hover {
@@ -92,10 +113,24 @@
 .syncChip:active {
   transform: scale(0.97);
 }
+.syncChip:focus-visible {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
+}
 .syncChipPaired {
-  color: var(--brand-600);
-  background: var(--brand-50);
-  border-color: var(--brand-100);
+  color: var(--text-brand);
+  background: var(--surface-brand-soft);
+  border-color: var(--border-brand-soft);
+}
+.syncChipStale {
+  color: var(--status-warning);
+  background: var(--status-warning-soft);
+  border-color: var(--status-warning-soft);
+}
+.syncChipError {
+  color: var(--status-danger);
+  background: var(--status-danger-soft);
+  border-color: var(--status-danger-soft);
 }
 
 .chips {
@@ -109,18 +144,23 @@
   padding: 8px 14px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--ink-700);
-  background: #fff;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--surface-card);
   border: 1px solid var(--hairline);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
   transition: transform 0.12s ease;
 }
 .chip:active {
   transform: scale(0.97);
 }
+.chip:focus-visible {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
+}
 .chipActive {
-  color: #fff;
+  color: var(--text-inverse);
   background: var(--brand-600);
   border-color: var(--brand-600);
 }
@@ -134,11 +174,11 @@
 .card {
   break-inside: avoid;
   margin-bottom: 16px;
-  background: #fff;
+  background: var(--surface-card);
   border: 1px solid var(--hairline);
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-card);
   transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 .card:hover {
@@ -154,7 +194,7 @@
   width: 100%;
   max-height: 280px;
   object-fit: cover;
-  background: var(--ink-100);
+  background: var(--surface-field);
 }
 
 .cardTile {
@@ -171,20 +211,34 @@
   padding: 14px 16px 12px;
 }
 
+/* Shape only — the hue arrives inline from classConfig() as --pill-deep /
+   --pill-to plus the tint background. */
 .cardClass {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: var(--brand-600);
+  color: var(--pill-deep);
+}
+@media (prefers-color-scheme: dark) {
+  /* `deep` is tuned for a tint on white and measures ~2:1 on a dark card.
+     Lift the gradient's light end toward white instead — clears 4.5:1 for
+     every one of the twelve classes. */
+  .cardClass {
+    color: color-mix(in srgb, var(--pill-to) 82%, #ffffff);
+  }
 }
 
 .cardTitle {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 15px;
   font-weight: 700;
   line-height: 1.35;
   letter-spacing: -0.2px;
+  color: var(--text-primary);
 }
 
 .cardDesc,
@@ -192,7 +246,7 @@
   margin: 6px 0 0;
   font-size: 13px;
   line-height: 1.45;
-  color: var(--ink-500);
+  color: var(--text-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -214,9 +268,9 @@
 .tag {
   font-size: 11px;
   font-weight: 600;
-  color: var(--brand-700);
-  background: var(--brand-50);
-  border-radius: 999px;
+  color: var(--text-brand);
+  background: var(--surface-brand-soft);
+  border-radius: var(--radius-pill);
   padding: 3px 9px;
 }
 
@@ -229,7 +283,7 @@
 
 .cardDate {
   font-size: 11px;
-  color: var(--ink-400);
+  color: var(--text-tertiary);
 }
 
 .cardActions {
@@ -241,35 +295,92 @@
 .card:hover .cardActions {
   opacity: 1;
 }
+/* Keyboard users never trigger :hover — without this the actions are
+   focusable but invisible. */
+.card:focus-within .cardActions {
+  opacity: 1;
+}
 
 .actionBtn {
-  width: 26px;
-  height: 26px;
+  /* 32px, not 26: delete sits 6px from "open original", and the two do very
+     different things. */
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
-  font-size: 13px;
-  color: var(--brand-600);
-  background: var(--brand-50);
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text-brand);
+  background: var(--surface-brand-soft);
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
 }
+.actionBtn:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
 .actionDanger {
-  color: #b91c1c;
-  background: #fef2f2;
+  color: var(--status-danger);
+  background: var(--status-danger-soft);
+}
+
+/* ---- First-paint skeletons ---------------------------------------------- */
+
+.skeletonCard {
+  break-inside: avoid;
+  margin-bottom: 16px;
+  background: var(--surface-card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.skeletonBlock,
+.skeletonLine {
+  background: linear-gradient(
+    90deg,
+    var(--surface-field) 0%,
+    var(--surface-sunken) 50%,
+    var(--surface-field) 100%
+  );
+  background-size: 200% 100%;
+  animation: sweep 1.3s ease-in-out infinite;
+}
+
+.skeletonBody {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeletonLine {
+  height: 10px;
+  border-radius: var(--radius-xs);
+}
+
+@keyframes sweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 .empty {
   text-align: center;
   padding: 96px 24px;
-  color: var(--ink-500);
+  color: var(--text-tertiary);
 }
 .empty h2 {
   margin: 18px 0 6px;
   font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.4px;
-  color: var(--ink-900);
+  color: var(--text-primary);
 }
 .empty p {
   margin: 0;
@@ -284,9 +395,68 @@
   place-items: center;
   font-size: 36px;
   color: #fff;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  border-radius: var(--radius-pill);
+  background: var(--gradient-brand);
   box-shadow: 0 16px 32px rgba(139, 92, 246, 0.35);
+}
+
+/* ---- Undo toast ---------------------------------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: min(90vw, 30rem);
+  padding: 12px 12px 12px 18px;
+  font-size: 14px;
+  color: var(--text-inverse);
+  background: var(--text-primary);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-raised);
+  animation: toastIn 200ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.toastMsg {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toastAction {
+  flex: none;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--text-inverse);
+  background: rgba(255, 255, 255, 0.16);
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.toastAction:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+.toastAction:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 
 /* ---- Sync pairing modal (S2) -------------------------------------------- */
@@ -298,16 +468,15 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(15, 23, 42, 0.45);
+  background: var(--surface-scrim);
 }
 
 .modalCard {
   width: 100%;
   max-width: 28rem;
-  box-sizing: border-box;
   padding: 28px;
-  background: #fff;
-  border-radius: 22px;
+  background: var(--surface-card);
+  border-radius: var(--radius-xl);
   box-shadow: 0 24px 64px rgba(124, 58, 237, 0.25);
 }
 
@@ -316,14 +485,14 @@
   font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.4px;
-  color: var(--ink-900);
+  color: var(--text-primary);
 }
 
 .modalText {
   margin: 8px 0 6px;
   font-size: 13px;
   line-height: 1.55;
-  color: var(--ink-500);
+  color: var(--text-secondary);
 }
 
 .modalLabel {
@@ -333,7 +502,7 @@
   font-weight: 800;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: var(--brand-600);
+  color: var(--text-brand);
 }
 
 .modalInputRow {
@@ -345,18 +514,21 @@
   flex: 1;
   width: 100%;
   min-width: 0; /* let the flex row shrink the input, not overflow the card */
-  box-sizing: border-box;
   padding: 11px 14px;
   font-size: 14px;
-  color: var(--ink-900);
-  background: #fff;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--surface-card);
   border: 1px solid var(--hairline);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   outline: none;
 }
+.modalInput::placeholder {
+  color: var(--text-placeholder);
+}
 .modalInput:focus {
-  border-color: var(--brand-200);
-  box-shadow: 0 0 0 3px var(--brand-100);
+  border-color: var(--brand-400);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
 }
 
 .modalMono {
@@ -369,10 +541,11 @@
   padding: 0 16px;
   font-size: 13px;
   font-weight: 700;
-  color: var(--brand-600);
-  background: var(--brand-50);
-  border: 1px solid var(--brand-100);
-  border-radius: 12px;
+  font-family: inherit;
+  color: var(--text-brand);
+  background: var(--surface-brand-soft);
+  border: 1px solid var(--border-brand-soft);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: transform 0.12s ease;
 }
@@ -390,12 +563,13 @@
   padding: 13px 18px;
   font-size: 15px;
   font-weight: 700;
+  font-family: inherit;
   color: #fff;
-  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  background: var(--gradient-brand);
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(139, 92, 246, 0.35);
+  box-shadow: var(--shadow-brand);
   transition: transform 0.12s ease, opacity 0.15s ease;
 }
 .modalCta:active {
@@ -409,19 +583,50 @@
 .modalError {
   margin: 12px 0 0;
   font-size: 13px;
-  color: #b91c1c;
+  color: var(--status-danger);
 }
 
+/* Shared by the modal CTA (white text) and the sync chip (slate/violet/red
+   text) — currentColor keeps it legible on both. */
 .spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.4);
-  border-top-color: #fff;
-  border-radius: 999px;
+  flex: none;
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  border-radius: var(--radius-pill);
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .skeletonBlock,
+  .skeletonLine {
+    animation-duration: 3s;
+  }
+  .toast {
+    animation: none;
+  }
+  .card,
+  .chip,
+  .syncChip,
+  .generateBtn,
+  .modalCta,
+  .cardActions {
+    transition-duration: 1ms;
+  }
+  .card:hover {
+    transform: none;
+  }
+  .chip:active,
+  .syncChip:active,
+  .generateBtn:active,
+  .modalCta:active {
+    transform: none;
   }
 }

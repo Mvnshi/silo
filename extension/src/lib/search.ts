@@ -11,9 +11,8 @@
  * loop can rank in <10ms, and we want zero supply-chain surface area for a
  * background script.
  */
-import Dexie from 'dexie';
 import type { Item } from './types';
-import { getItems } from './store';
+import { getItems, onItemsChanged } from './store';
 
 interface IndexedItem {
   item: Item;
@@ -53,29 +52,25 @@ async function rebuild(): Promise<IndexedItem[]> {
 }
 
 /**
- * Hook into Dexie's per-table events so any write — from this context or
- * another tab sharing the IndexedDB — invalidates the cache. Debounced 150ms
- * so a burst of inserts (paste-many, import) only triggers one rebuild.
+ * Hook into Dexie's per-table events so any write in this context invalidates
+ * the cache. Debounced 150ms so a burst of inserts (paste-many, import) only
+ * triggers one rebuild.
+ *
+ * Subscribes through `store.onItemsChanged` rather than opening its own Dexie
+ * handle: hooks are per-instance, so a second handle would never see the
+ * writes store.ts makes (and, declaring an older schema version, would fail to
+ * open at all).
  */
 function installInvalidationHooks(): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
-  // Lazy-import the same db instance Dexie has cached for the 'silo' database.
-  const db = new Dexie('silo');
-  db.version(1).stores({
-    items: 'id, created_at, classification, stack_id, archived, viewed',
-    stacks: 'id, name',
-  });
-  const invalidate = (): void => {
+  onItemsChanged(() => {
     if (rebuildTimer) clearTimeout(rebuildTimer);
     rebuildTimer = setTimeout(() => {
       index = null;
       buildingPromise = null;
     }, 150);
-  };
-  db.table('items').hook('creating', invalidate);
-  db.table('items').hook('updating', invalidate);
-  db.table('items').hook('deleting', invalidate);
+  });
 }
 
 async function ensureIndex(): Promise<IndexedItem[]> {

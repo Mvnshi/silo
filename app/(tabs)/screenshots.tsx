@@ -2,10 +2,18 @@
  * Screenshots Screen
  *
  * Card-deck review of recent device screenshots. The top card is pan-driven
- * (swipe right = import + AI-analyze; swipe left = skip); the next two are
- * rendered behind it as a peek stack. A filter strip lets the user scope by
- * recency or hide ones they've already imported. Every swipe shows a 5-second
- * "Undo" snackbar — on import-undo we delete the just-created item.
+ * (swipe right = import + AI-analyze; swipe left = skip) and the next two sit
+ * behind it as a peek stack that grows as the top card leaves. A Skip / Save
+ * button row mirrors the gesture so the screen is usable with VoiceOver and
+ * Switch Control. A filter strip scopes by recency or hides imports.
+ *
+ * Every triage shows an Undo snackbar with a visibly draining expiry bar; once
+ * the Worker returns a time suggestion the same snackbar grows a "Schedule"
+ * action. Nothing about triage is allowed to open a modal — a blocking alert
+ * lands on top of the *next* card and stops rapid review dead.
+ *
+ * Permission is read before it is requested, so a first run shows a priming
+ * card and a hard denial shows a Settings route — never "No screenshots found".
  *
  * Dependencies:
  * - expo-media-library: Photo library access (via lib/screenshots)
@@ -17,9 +25,10 @@ import {
   View,
   Text,
   StyleSheet,
-  Alert,
   Dimensions,
   ScrollView,
+  ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -32,31 +41,70 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
   runOnJS,
   interpolate,
-  Extrapolate,
+  Extrapolation,
+  Easing,
 } from 'react-native-reanimated';
 import {
-  getRecentScreenshots,
+  queryRecentScreenshots,
+  requestMediaLibraryPermissions,
   imageUriToBase64,
   getMimeTypeFromFilename,
   Screenshot,
+  MediaPermissionStatus,
 } from '@/lib/screenshots';
 import { analyzeImage, suggestScheduleTime } from '@/lib/api';
 import { addItem, getItems, deleteItem } from '@/lib/storage';
 import { createItem } from '@/lib/items';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
-import { BRAND, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
+import type { Item, ScheduleSuggestionResponse } from '@/lib/types';
+import {
+  BRAND,
+  DURATION,
+  GRADIENTS,
+  HAIRLINE,
+  HAIRLINE_DARK,
+  INK,
+  RADIUS,
+  SHADOW,
+  SPACE,
+  SPRING,
+  STATUS,
+  SURFACE,
+  TEXT,
+  TYPE,
+} from '@/lib/theme';
+import {
+  enterFromBottom,
+  enterList,
+  exitToBottom,
+  usePrefersReducedMotion,
+} from '@/lib/motion';
 import Skeleton from '@/components/ui/Skeleton';
 import PressableScale from '@/components/ui/PressableScale';
 import GlassCard from '@/components/ui/GlassCard';
+import EmptyState from '@/components/ui/EmptyState';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
 const CARD_WIDTH = SCREEN_WIDTH - 20;
-const CARD_HEIGHT = SCREEN_HEIGHT * 0.7;
-const SNACKBAR_MS = 5000;
+/** Fallback deck height until the deck reports its real one via onLayout. */
+const DECK_HEIGHT_GUESS = Math.round(SCREEN_HEIGHT * 0.5);
+/**
+ * Horizontal velocity (px/s) that commits a swipe regardless of distance.
+ * Rapid triage is a flick, not a drag — without this the natural gesture
+ * snaps back and the deck feels stuck.
+ */
+const FLING = 800;
+/** Degrees the card is tilted to by the time it leaves the screen. */
+const EXIT_TILT = 22;
+/** Diameter of the Skip / Save circles, and the room reserved for that row. */
+const ACTION_SIZE = 56;
+/** Clearance for the native (liquid-glass) tab bar, above the home indicator. */
+const TAB_BAR_INSET = 76;
 
 type FilterKey = 'all' | 'today' | 'week' | 'unprocessed';
 const FILTERS: { key: FilterKey; label: string }[] = [
@@ -67,15 +115,40 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 ];
 
 interface LastAction {
-  kind: 'imported' | 'skipped';
+  kind: 'imported' | 'skipped' | 'failed';
   itemId?: string;
+  item?: Item;
+  /** Whether the deck advanced — Undo only steps back when it did. */
+  advanced: boolean;
+  /** Arrives asynchronously from the Worker; unlocks the Schedule action. */
+  suggestion?: ScheduleSuggestionResponse;
+  /** Terminal state after the user taps Schedule. */
+  scheduleResult?: 'ok' | 'error';
+}
+
+function snackbarLabel(a: LastAction): string {
+  if (a.scheduleResult === 'ok') return 'Added to calendar';
+  if (a.scheduleResult === 'error') return "Couldn't add to calendar";
+  if (a.kind === 'failed') return "Couldn't import";
+  return a.kind === 'imported' ? 'Imported' : 'Skipped';
+}
+
+function snackbarIcon(a: LastAction): keyof typeof Ionicons.glyphMap {
+  if (a.scheduleResult === 'ok') return 'calendar';
+  if (a.scheduleResult === 'error' || a.kind === 'failed') return 'alert-circle';
+  return a.kind === 'imported' ? 'checkmark-circle' : 'close-circle';
 }
 
 export default function ScreenshotsScreen() {
   const insets = useSafeAreaInsets();
+  const reduced = usePrefersReducedMotion();
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
+  const [permission, setPermission] = useState<MediaPermissionStatus | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [loading, setLoading] = useState(false);
+  /** Initial library fetch only — never the per-card import (that's `analyzing`). */
+  const [loading, setLoading] = useState(true);
+  /** A card's AI round-trip is in flight; triage is paused until it lands. */
+  const [analyzing, setAnalyzing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
   /** URIs already imported into Silo — drives the Unprocessed filter. */
   const [importedUris, setImportedUris] = useState<Set<string>>(new Set());
@@ -83,6 +156,7 @@ export default function ScreenshotsScreen() {
   const [importsToday, setImportsToday] = useState(0);
   /** Most recent action, for the Undo snackbar. */
   const [lastAction, setLastAction] = useState<LastAction | null>(null);
+  const [deckHeight, setDeckHeight] = useState(DECK_HEIGHT_GUESS);
   /** Held in a ref so the timeout can clear it independently of React state. */
   const snackbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -92,7 +166,16 @@ export default function ScreenshotsScreen() {
   const rotate = useSharedValue(0);
   const opacity = useSharedValue(1);
   const lastHapticTime = useSharedValue(0);
+  /** 1 → 0 over the undo window; drives the snackbar's expiry bar. */
+  const expiry = useSharedValue(0);
   const importingRef = useRef(false);
+
+  const resetAnimation = useCallback(() => {
+    translateX.value = 0;
+    translateY.value = 0;
+    rotate.value = 0;
+    opacity.value = 1;
+  }, [translateX, translateY, rotate, opacity]);
 
   /**
    * Refresh the imported-URIs set and today's import count from storage.
@@ -117,35 +200,32 @@ export default function ScreenshotsScreen() {
     }
   }, []);
 
-  /** Load recent screenshots from device. */
-  async function loadScreenshots() {
-    try {
-      setLoading(true);
-      const recentScreenshots = await getRecentScreenshots(30);
-      setScreenshots(recentScreenshots);
-      setCurrentIndex(0);
-      resetAnimation();
-    } catch (error) {
-      console.error('Failed to load screenshots:', error);
-      Alert.alert('Error', 'Failed to load screenshots. Please check permissions.');
-    } finally {
-      setLoading(false);
-    }
-  }
+  /**
+   * Load recent screenshots from the device. Reports permission status rather
+   * than throwing, so there is nothing here to catch.
+   */
+  const loadScreenshots = useCallback(async () => {
+    setLoading(true);
+    const { status, assets } = await queryRecentScreenshots(30);
+    setPermission(status);
+    setScreenshots(assets);
+    setCurrentIndex(0);
+    setLoading(false);
+  }, []);
 
-  function resetAnimation() {
-    translateX.value = 0;
-    translateY.value = 0;
-    rotate.value = 0;
-    opacity.value = 1;
-  }
+  /** Priming CTA — the OS dialog only ever appears after the user asks for it. */
+  const requestAccess = useCallback(async () => {
+    const status = await requestMediaLibraryPermissions();
+    setPermission(status);
+    if (status === 'granted' || status === 'limited') await loadScreenshots();
+  }, [loadScreenshots]);
 
   useFocusEffect(
     useCallback(() => {
       loadScreenshots();
       refreshImportedFromStorage();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }, [refreshImportedFromStorage])
+    }, [loadScreenshots, refreshImportedFromStorage])
   );
 
   // Reset the visible-deck index whenever the filter changes — the new list is
@@ -153,8 +233,11 @@ export default function ScreenshotsScreen() {
   useEffect(() => {
     setCurrentIndex(0);
     resetAnimation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilter]);
+  }, [activeFilter, resetAnimation]);
+
+  useEffect(() => () => {
+    if (snackbarTimerRef.current) clearTimeout(snackbarTimerRef.current);
+  }, []);
 
   // ---- Filter logic -------------------------------------------------------
   const visibleScreenshots = useMemo(() => {
@@ -171,16 +254,29 @@ export default function ScreenshotsScreen() {
     return screenshots.filter((s) => s.creationTime >= startOfWindow);
   }, [screenshots, activeFilter, importedUris]);
 
+  // Park the card transform whenever a *different* screenshot reaches the top —
+  // whether the index advanced, the list shrank under it (Unprocessed), or Undo
+  // stepped back. Keying on the card rather than writing the transform inline
+  // is what stops the exit spring being cancelled a frame after it starts.
+  const topShotId = visibleScreenshots[currentIndex]?.id;
+  useEffect(() => {
+    resetAnimation();
+  }, [topShotId, resetAnimation]);
+
   // ---- Snackbar -----------------------------------------------------------
   function showSnackbar(action: LastAction) {
     if (snackbarTimerRef.current) clearTimeout(snackbarTimerRef.current);
     setLastAction(action);
-    snackbarTimerRef.current = setTimeout(() => setLastAction(null), SNACKBAR_MS);
+    // Restart the drain from full so the undo window is legible, not guessed.
+    expiry.value = 1;
+    expiry.value = withTiming(0, { duration: DURATION.toast, easing: Easing.linear });
+    snackbarTimerRef.current = setTimeout(() => setLastAction(null), DURATION.toast);
   }
 
   function dismissSnackbar() {
     if (snackbarTimerRef.current) clearTimeout(snackbarTimerRef.current);
     snackbarTimerRef.current = null;
+    expiry.value = 0;
     setLastAction(null);
   }
 
@@ -194,33 +290,59 @@ export default function ScreenshotsScreen() {
         console.warn('undo: failed to delete item:', err);
       }
     }
-    // Step back to the same card. Cap at 0.
-    setCurrentIndex((i) => Math.max(0, i - 1));
+    // Only step back if the deck actually moved. Under the Unprocessed filter
+    // an import removes its own card instead of advancing the index.
+    if (lastAction.advanced) setCurrentIndex((i) => Math.max(0, i - 1));
     resetAnimation();
     await refreshImportedFromStorage();
     dismissSnackbar();
   }
 
-  // ---- Swipe handlers -----------------------------------------------------
-  function moveToNext() {
-    if (currentIndex < visibleScreenshots.length) {
-      setCurrentIndex(currentIndex + 1);
-      resetAnimation();
+  /** Snackbar action: accept the Worker's suggested slot. No modal, no alert. */
+  async function scheduleFromSnackbar() {
+    const action = lastAction;
+    if (!action?.item || !action.suggestion) return;
+    try {
+      await scheduleItemReview(
+        action.item,
+        action.suggestion.date,
+        action.suggestion.time,
+        action.item.duration || 15
+      );
+      celebrationHaptic();
+      showSnackbar({ ...action, scheduleResult: 'ok' });
+    } catch (error) {
+      console.error('Failed to schedule event:', error);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      showSnackbar({ ...action, scheduleResult: 'error' });
     }
   }
 
+  // ---- Triage -------------------------------------------------------------
+  function moveToNext() {
+    setCurrentIndex((i) => (i < visibleScreenshots.length ? i + 1 : i));
+  }
+
   async function handleSwipeRight(screenshot: Screenshot) {
-    if (importingRef.current) return;
+    if (importingRef.current) {
+      resetAnimation();
+      return;
+    }
     importingRef.current = true;
+    setAnalyzing(true);
     try {
-      setLoading(true);
       const item = await importScreenshot(screenshot);
-      moveToNext();
+      // Under Unprocessed the imported card drops out of the list at a position
+      // <= currentIndex, so advancing as well would silently skip the next one.
+      // Either way a new screenshot reaches the top and the reset effect fires.
+      const removedFromDeck = activeFilter === 'unprocessed';
+      if (!removedFromDeck) moveToNext();
       celebrationHaptic();
-      showSnackbar({ kind: 'imported', itemId: item.id });
+      showSnackbar({ kind: 'imported', itemId: item.id, item, advanced: !removedFromDeck });
       await refreshImportedFromStorage();
 
-      // Soft schedule suggestion. Best-effort — never blocks the flow.
+      // Soft schedule suggestion. Best-effort — it arrives as an extra action on
+      // the snackbar that's already up, never as a dialog over the next card.
       try {
         const suggestion = await suggestScheduleTime({
           title: item.title,
@@ -228,25 +350,8 @@ export default function ScreenshotsScreen() {
           description: item.description,
           duration: item.duration,
         });
-        Alert.alert(
-          'Schedule this item?',
-          `${suggestion.reason}\n\nDate: ${suggestion.date}\nTime: ${suggestion.time}`,
-          [
-            { text: 'No thanks', style: 'cancel' },
-            {
-              text: 'Add to Calendar',
-              onPress: async () => {
-                try {
-                  await scheduleItemReview(item, suggestion.date, suggestion.time, item.duration || 15);
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                  Alert.alert('Success', 'Event added to calendar');
-                } catch (error) {
-                  console.error('Failed to schedule event:', error);
-                  Alert.alert('Error', 'Failed to add event to calendar');
-                }
-              },
-            },
-          ]
+        setLastAction((prev) =>
+          prev && prev.itemId === item.id ? { ...prev, suggestion } : prev
         );
       } catch {
         // schedule suggestion is optional (needs the Worker key)
@@ -254,9 +359,10 @@ export default function ScreenshotsScreen() {
     } catch (error) {
       console.error('Failed to import screenshot:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', 'Failed to import screenshot');
+      resetAnimation();
+      showSnackbar({ kind: 'failed', advanced: false });
     } finally {
-      setLoading(false);
+      setAnalyzing(false);
       importingRef.current = false;
     }
   }
@@ -264,7 +370,26 @@ export default function ScreenshotsScreen() {
   function handleSwipeLeft() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     moveToNext();
-    showSnackbar({ kind: 'skipped' });
+    showSnackbar({ kind: 'skipped', advanced: true });
+  }
+
+  /**
+   * Button-driven triage. Runs the same exit as the gesture (minus throw
+   * velocity) so the deck behaves identically for pointer, VoiceOver and
+   * Switch Control users.
+   */
+  function triage(direction: 'left' | 'right') {
+    const shot = visibleScreenshots[currentIndex];
+    // A non-zero transform means this card is already flying out — a second tap
+    // would restart the spring and commit the same screenshot twice.
+    if (!shot || analyzing || Math.abs(translateX.value) > 1) return;
+    const dir = direction === 'right' ? 1 : -1;
+    const onDone = direction === 'right' ? () => handleSwipeRight(shot) : handleSwipeLeft;
+    translateX.value = withSpring(dir * SCREEN_WIDTH * 1.5, SPRING.settle, (finished) => {
+      if (finished) runOnJS(onDone)();
+    });
+    rotate.value = withSpring(dir * EXIT_TILT, SPRING.settle);
+    opacity.value = withTiming(0, { duration: DURATION.base, easing: Easing.out(Easing.quad) });
   }
 
   async function importScreenshot(screenshot: Screenshot) {
@@ -315,6 +440,7 @@ export default function ScreenshotsScreen() {
   let panGesture: ReturnType<typeof Gesture.Pan> | null = null;
   try {
     panGesture = Gesture.Pan()
+      .enabled(!analyzing)
       .onStart(() => {
         lastHapticTime.value = 0;
       })
@@ -326,26 +452,53 @@ export default function ScreenshotsScreen() {
           event.translationX,
           [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
           [-20, 0, 20],
-          Extrapolate.CLAMP
+          Extrapolation.CLAMP
         );
       })
       .onEnd((event) => {
-        const shouldSwipeRight = event.translationX > SWIPE_THRESHOLD;
-        const shouldSwipeLeft = event.translationX < -SWIPE_THRESHOLD;
+        const tx = event.translationX;
+        const vx = event.velocityX;
+        // A flick commits even when it never travelled far — but only in the
+        // direction the card is already leaning, so a snap-back flick can't
+        // import the screenshot the user was rejecting.
+        const flung = Math.abs(vx) > FLING;
+        const right = tx > SWIPE_THRESHOLD || (flung && vx > 0 && tx > 0);
+        const left = tx < -SWIPE_THRESHOLD || (flung && vx < 0 && tx < 0);
 
-        if (shouldSwipeRight) {
-          translateX.value = withSpring(SCREEN_WIDTH * 1.5, { damping: 15, stiffness: 150 });
-          opacity.value = withSpring(0, { damping: 15, stiffness: 150 });
+        if (right || left) {
+          const dir = right ? 1 : -1;
           const top = visibleScreenshots[currentIndex];
-          if (top) runOnJS(handleSwipeRight)(top);
-        } else if (shouldSwipeLeft) {
-          translateX.value = withSpring(-SCREEN_WIDTH * 1.5, { damping: 15, stiffness: 150 });
-          opacity.value = withSpring(0, { damping: 15, stiffness: 150 });
-          runOnJS(handleSwipeLeft)();
+          // The index moves from the completion callback, not now: writing it
+          // immediately would reset the transform ~a frame into the exit.
+          translateX.value = withSpring(
+            dir * SCREEN_WIDTH * 1.5,
+            { ...SPRING.settle, velocity: vx },
+            (finished) => {
+              if (!finished) return;
+              if (right) {
+                if (top) runOnJS(handleSwipeRight)(top);
+              } else {
+                runOnJS(handleSwipeLeft)();
+              }
+            }
+          );
+          // Carry Y and rotation through the exit — freezing them at release
+          // makes the card look like it detached from the throw.
+          translateY.value = withSpring(translateY.value + event.velocityY * 0.12, {
+            ...SPRING.settle,
+            velocity: event.velocityY,
+          });
+          rotate.value = withSpring(dir * EXIT_TILT, { ...SPRING.settle, velocity: vx / 60 });
+          // Timing, not spring: a spring to 0 opacity undershoots past 0 and
+          // the card flickers back into view on the way out.
+          opacity.value = withTiming(0, {
+            duration: DURATION.base,
+            easing: Easing.out(Easing.quad),
+          });
         } else {
-          translateX.value = withSpring(0, { damping: 20, stiffness: 300 });
-          translateY.value = withSpring(0, { damping: 20, stiffness: 300 });
-          rotate.value = withSpring(0, { damping: 20, stiffness: 300 });
+          translateX.value = withSpring(0, SPRING.snappy);
+          translateY.value = withSpring(0, SPRING.snappy);
+          rotate.value = withSpring(0, SPRING.snappy);
         }
       });
   } catch (error) {
@@ -363,19 +516,47 @@ export default function ScreenshotsScreen() {
     opacity: opacity.value,
   }));
   const overlayStyle = useAnimatedStyle(() => {
-    const o = interpolate(Math.abs(translateX.value), [0, SWIPE_THRESHOLD], [0, 0.5], Extrapolate.CLAMP);
+    const o = interpolate(
+      Math.abs(translateX.value),
+      [0, SWIPE_THRESHOLD],
+      [0, 0.5],
+      Extrapolation.CLAMP
+    );
     const isRight = translateX.value > 0;
     return {
       opacity: o,
-      backgroundColor: isRight ? 'rgba(76, 175, 80, 0.6)' : 'rgba(244, 67, 54, 0.6)',
+      backgroundColor: isRight ? 'rgba(22, 163, 74, 0.6)' : 'rgba(220, 38, 38, 0.6)',
     };
   });
   const importIndicatorStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(translateX.value, [0, SWIPE_THRESHOLD], [0, 1], Extrapolate.CLAMP),
+    opacity: interpolate(translateX.value, [0, SWIPE_THRESHOLD], [0, 1], Extrapolation.CLAMP),
   }));
   const skipIndicatorStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(-translateX.value, [0, SWIPE_THRESHOLD], [0, 1], Extrapolate.CLAMP),
+    opacity: interpolate(-translateX.value, [0, SWIPE_THRESHOLD], [0, 1], Extrapolation.CLAMP),
   }));
+  // The peek stack is driven by the drag, not by index, so the card underneath
+  // rises into place as the top one leaves instead of popping in one frame.
+  const peek1Style = useAnimatedStyle(() => {
+    const p = Math.abs(translateX.value);
+    return {
+      transform: [
+        { scale: interpolate(p, [0, SWIPE_THRESHOLD], [0.95, 1], Extrapolation.CLAMP) },
+        { translateY: interpolate(p, [0, SWIPE_THRESHOLD], [14, 0], Extrapolation.CLAMP) },
+      ],
+      opacity: interpolate(p, [0, SWIPE_THRESHOLD], [0.85, 1], Extrapolation.CLAMP),
+    };
+  });
+  const peek2Style = useAnimatedStyle(() => {
+    const p = Math.abs(translateX.value);
+    return {
+      transform: [
+        { scale: interpolate(p, [0, SWIPE_THRESHOLD], [0.9, 0.95], Extrapolation.CLAMP) },
+        { translateY: interpolate(p, [0, SWIPE_THRESHOLD], [28, 14], Extrapolation.CLAMP) },
+      ],
+      opacity: interpolate(p, [0, SWIPE_THRESHOLD], [0.7, 0.85], Extrapolation.CLAMP),
+    };
+  });
+  const expiryStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: expiry.value }] }));
 
   // ---- Renderers ----------------------------------------------------------
 
@@ -389,26 +570,28 @@ export default function ScreenshotsScreen() {
           end={{ x: 1, y: 1 }}
           style={styles.caughtUpOrb}
         >
-          <Ionicons name="checkmark" size={72} color="#fff" />
+          <Ionicons name="checkmark" size={72} color={TEXT.inverse} />
         </LinearGradient>
-        <Text style={styles.caughtUpTitle}>All caught up</Text>
+        <Text accessibilityRole="header" style={styles.caughtUpTitle}>
+          All caught up
+        </Text>
         <Text style={styles.caughtUpSub}>
-          {importsToday > 0
-            ? `${importsToday} imported today`
-            : 'No imports today yet'}
+          {importsToday > 0 ? `${importsToday} imported today` : 'No imports today yet'}
         </Text>
         <PressableScale
           haptic="light"
           onPress={loadScreenshots}
-          style={{ marginTop: 24 }}
+          accessibilityLabel="Reload screenshots"
+          style={styles.reloadBtn}
+          containerStyle={{ marginTop: SPACE.xl }}
         >
           <LinearGradient
             colors={[...GRADIENTS.brand]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.reloadBtn}
+            style={styles.reloadFill}
           >
-            <Ionicons name="refresh" size={18} color="#fff" />
+            <Ionicons name="refresh" size={18} color={TEXT.inverse} />
             <Text style={styles.reloadText}>Reload</Text>
           </LinearGradient>
         </PressableScale>
@@ -420,21 +603,15 @@ export default function ScreenshotsScreen() {
   function renderPeekCard(depth: 1 | 2) {
     const shot = visibleScreenshots[currentIndex + depth];
     if (!shot) return null;
-    const isMid = depth === 1;
     return (
-      <View
+      <Animated.View
         pointerEvents="none"
-        style={[
-          styles.card,
-          styles.peekCard,
-          {
-            transform: [{ scale: isMid ? 0.95 : 0.9 }, { translateY: isMid ? 14 : 28 }],
-            opacity: isMid ? 0.85 : 0.7,
-          },
-        ]}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={[styles.card, styles.peekCard, depth === 1 ? peek1Style : peek2Style]}
       >
         <Image source={{ uri: shot.uri }} style={styles.cardImage} />
-      </View>
+      </Animated.View>
     );
   }
 
@@ -443,15 +620,24 @@ export default function ScreenshotsScreen() {
     const shot = visibleScreenshots[currentIndex];
     if (!shot) return null;
     const content = (
-      <Animated.View style={[styles.card, cardStyle]}>
+      <Animated.View
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={`Screenshot ${currentIndex + 1} of ${visibleScreenshots.length}`}
+        style={[styles.card, cardStyle]}
+      >
         <Image source={{ uri: shot.uri }} style={styles.cardImage} />
-        <Animated.View style={[styles.swipeOverlay, overlayStyle]}>
-          <Animated.View style={[styles.swipeIndicator, importIndicatorStyle, styles.importIndicator]}>
-            <Ionicons name="checkmark-circle" size={80} color="#fff" />
+        <Animated.View pointerEvents="none" style={[styles.swipeOverlay, overlayStyle]}>
+          <Animated.View
+            style={[styles.swipeIndicator, importIndicatorStyle, styles.importIndicator]}
+          >
+            <Ionicons name="checkmark-circle" size={80} color={TEXT.inverse} />
             <Text style={styles.swipeText}>SAVE</Text>
           </Animated.View>
-          <Animated.View style={[styles.swipeIndicator, skipIndicatorStyle, styles.skipIndicator]}>
-            <Ionicons name="close-circle" size={80} color="#fff" />
+          <Animated.View
+            style={[styles.swipeIndicator, skipIndicatorStyle, styles.skipIndicator]}
+          >
+            <Ionicons name="close-circle" size={80} color={TEXT.inverse} />
             <Text style={styles.swipeText}>SKIP</Text>
           </Animated.View>
         </Animated.View>
@@ -461,109 +647,247 @@ export default function ScreenshotsScreen() {
     return <GestureDetector gesture={panGesture}>{content}</GestureDetector>;
   }
 
+  /**
+   * Skip / Save row. The pan gesture is unreachable for VoiceOver and Switch
+   * Control, so these buttons — not the swipe — are the accessible path.
+   */
+  function renderActions() {
+    return (
+      <View style={styles.actionRow}>
+        <PressableScale
+          haptic="medium"
+          disabled={analyzing}
+          onPress={() => triage('left')}
+          accessibilityRole="button"
+          accessibilityLabel="Skip this screenshot"
+          accessibilityHint="Moves to the next screenshot without importing"
+          style={[styles.actionCircle, styles.skipCircle, analyzing && styles.actionDisabled]}
+        >
+          <Ionicons name="close" size={28} color={STATUS.danger} />
+        </PressableScale>
+        <PressableScale
+          haptic="medium"
+          disabled={analyzing}
+          onPress={() => triage('right')}
+          accessibilityRole="button"
+          accessibilityLabel="Save this screenshot to Silo"
+          accessibilityHint="Imports the screenshot and analyzes it"
+          style={[styles.saveCircleShadow, analyzing && styles.actionDisabled]}
+        >
+          <LinearGradient
+            colors={[...GRADIENTS.brand]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.actionCircle}
+          >
+            <Ionicons name="checkmark" size={30} color={TEXT.inverse} />
+          </LinearGradient>
+        </PressableScale>
+      </View>
+    );
+  }
+
+  /** Skeleton stack — mirrors the peek-card layout while loading. */
+  function renderSkeletonDeck() {
+    return (
+      <View pointerEvents="none" style={styles.skeletonStack}>
+        <Skeleton
+          width={CARD_WIDTH * 0.9}
+          height={deckHeight}
+          radius={RADIUS.xl}
+          style={[styles.skeletonCard, { transform: [{ translateY: 28 }], opacity: 0.7 }]}
+        />
+        <Skeleton
+          width={CARD_WIDTH * 0.95}
+          height={deckHeight}
+          radius={RADIUS.xl}
+          style={[styles.skeletonCard, { transform: [{ translateY: 14 }], opacity: 0.85 }]}
+        />
+        <Skeleton
+          width={CARD_WIDTH}
+          height={deckHeight}
+          radius={RADIUS.xl}
+          style={styles.skeletonCard}
+        />
+      </View>
+    );
+  }
+
   // ---- Top-level render ---------------------------------------------------
   const deckEmpty =
     visibleScreenshots.length === 0 || currentIndex >= visibleScreenshots.length;
+  const canRead = permission === 'granted' || permission === 'limited';
+  // Skeletons stand in for content we expect to arrive. A refocus with access
+  // denied re-enters `loading`, and flashing a fake deck before the Settings
+  // prompt would be a lie — so the permission states win over the placeholder.
+  const showSkeleton =
+    loading && screenshots.length === 0 && (permission === null || canRead);
+
+  function renderDeck() {
+    if (showSkeleton) return renderSkeletonDeck();
+    if (permission === 'denied') {
+      return (
+        <EmptyState
+          icon="lock-closed"
+          title="Photo access is off"
+          subtitle="Silo can't see your screenshots until you allow photo access in Settings."
+          cta={{ label: 'Open Settings', onPress: () => Linking.openSettings() }}
+        />
+      );
+    }
+    if (permission === 'undetermined') {
+      return (
+        <EmptyState
+          icon="images"
+          title="Let Silo find your screenshots"
+          subtitle="Silo reads screenshots only, and nothing leaves your phone until you save a card."
+          cta={{ label: 'Allow photo access', onPress: requestAccess }}
+        />
+      );
+    }
+    if (screenshots.length === 0) {
+      return permission === 'limited' ? (
+        <EmptyState
+          icon="images"
+          title="No screenshots in your selection"
+          subtitle="Silo can only see the photos you picked. Add your screenshots to keep triaging."
+          cta={{ label: 'Manage access', onPress: () => Linking.openSettings() }}
+          secondary={{ label: 'Reload', onPress: loadScreenshots }}
+        />
+      ) : (
+        <EmptyState
+          icon="images"
+          title="No screenshots yet"
+          subtitle="Screenshot anything worth keeping and it'll be waiting here."
+          cta={{ label: 'Reload', onPress: loadScreenshots }}
+        />
+      );
+    }
+    if (deckEmpty) return renderCaughtUp();
+    return (
+      <>
+        {/* Peek cards render BEHIND the top card (deeper depth first). */}
+        {renderPeekCard(2)}
+        {renderPeekCard(1)}
+        {renderTopCard()}
+        {analyzing && (
+          <Animated.View
+            entering={enterFromBottom(0, reduced)}
+            exiting={exitToBottom(reduced)}
+            style={styles.analyzingPill}
+            accessibilityLiveRegion="polite"
+          >
+            <ActivityIndicator size="small" color={BRAND[600]} />
+            <Text style={styles.analyzingText}>Analyzing…</Text>
+          </Animated.View>
+        )}
+      </>
+    );
+  }
+
+  const showActions = canRead && !deckEmpty && !showSkeleton;
 
   return (
     <View style={styles.container}>
       <LinearGradient colors={[...GRADIENTS.page]} style={StyleSheet.absoluteFill} />
 
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <Text style={styles.headerTitle}>
+      <Animated.View
+        entering={enterList(0, reduced).delay(60)}
+        style={[styles.header, { paddingTop: insets.top + SPACE.md }]}
+      >
+        <Text accessibilityRole="header" style={styles.headerTitle}>
           {!deckEmpty
             ? `${Math.min(currentIndex + 1, visibleScreenshots.length)} / ${visibleScreenshots.length}`
             : 'Screenshots'}
         </Text>
-        <Text style={styles.headerSubtitle}>Swipe right to import</Text>
-      </View>
+        <Text style={styles.headerSubtitle}>Swipe or use the buttons below</Text>
+      </Animated.View>
 
       {/* Filter chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        // flexGrow: 0 is load-bearing: a horizontal ScrollView in a column
-        // flex layout otherwise claims ALL remaining vertical space, shoving
-        // the card deck off the bottom of the screen.
-        style={styles.filterScroller}
-        contentContainerStyle={styles.filterStrip}
-      >
-        {FILTERS.map((f) => {
-          const active = activeFilter === f.key;
-          return (
-            <PressableScale
-              key={f.key}
-              haptic="selection"
-              onPress={() => setActiveFilter(f.key)}
-              style={[styles.chip, active && styles.chipActive]}
-            >
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                {f.label}
-              </Text>
-            </PressableScale>
-          );
-        })}
-      </ScrollView>
+      <Animated.View entering={enterList(0, reduced).delay(140)} style={styles.filterScroller}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterStrip}
+        >
+          {FILTERS.map((f) => {
+            const active = activeFilter === f.key;
+            return (
+              <PressableScale
+                key={f.key}
+                haptic="selection"
+                selected={active}
+                accessibilityLabel={`${f.label} screenshots`}
+                onPress={() => setActiveFilter(f.key)}
+                style={[styles.chip, active && styles.chipActive]}
+              >
+                <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                  {f.label}
+                </Text>
+              </PressableScale>
+            );
+          })}
+        </ScrollView>
+      </Animated.View>
 
       {/* Deck */}
-      {loading && currentIndex === 0 ? (
-        <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 100 }]}>
-          {/* Skeleton stack — mirrors the peek-card layout while loading. */}
-          <Skeleton
-            width={CARD_WIDTH * 0.9}
-            height={CARD_HEIGHT}
-            radius={24}
-            style={[styles.peekCard, { transform: [{ translateY: 28 }], opacity: 0.7 }]}
-          />
-          <Skeleton
-            width={CARD_WIDTH * 0.95}
-            height={CARD_HEIGHT}
-            radius={24}
-            style={[styles.peekCard, { transform: [{ translateY: 14 }], opacity: 0.85 }]}
-          />
-          <Skeleton width={CARD_WIDTH} height={CARD_HEIGHT} radius={24} />
+      <Animated.View
+        entering={enterList(0, reduced).delay(220)}
+        style={[styles.deckArea, { paddingBottom: insets.bottom + TAB_BAR_INSET }]}
+      >
+        <View
+          style={styles.deck}
+          onLayout={(e) => setDeckHeight(Math.round(e.nativeEvent.layout.height))}
+        >
+          {renderDeck()}
         </View>
-      ) : screenshots.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="images-outline" size={64} color={BRAND[300]} />
-          <Text style={styles.emptyText}>No screenshots found</Text>
-          <Text style={styles.emptySubtext}>
-            Take screenshots to import them here
-          </Text>
-        </View>
-      ) : deckEmpty ? (
-        <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 100 }]}>
-          {renderCaughtUp()}
-        </View>
-      ) : (
-        <View style={[styles.cardContainer, { paddingBottom: insets.bottom + 100 }]}>
-          {/* Peek cards render BEHIND the top card (deeper depth first). */}
-          {renderPeekCard(2)}
-          {renderPeekCard(1)}
-          {renderTopCard()}
-        </View>
-      )}
+        {showActions && renderActions()}
+      </Animated.View>
 
       {/* Undo snackbar */}
       {lastAction && (
-        <View pointerEvents="box-none" style={[styles.snackbarWrap, { bottom: insets.bottom + 90 }]}>
-          <GlassCard tint="dark" intensity={60} radius={RADIUS.pill}>
+        <Animated.View
+          pointerEvents="box-none"
+          entering={enterFromBottom(0, reduced)}
+          exiting={exitToBottom(reduced)}
+          // Rides above the Skip / Save row so Undo never covers the buttons.
+          style={[
+            styles.snackbarWrap,
+            { bottom: insets.bottom + TAB_BAR_INSET + ACTION_SIZE + SPACE.lg },
+          ]}
+        >
+          <GlassCard tint="dark" intensity={60} radius={RADIUS.lg}>
             <View style={styles.snackbarInner}>
-              <Ionicons
-                name={lastAction.kind === 'imported' ? 'checkmark-circle' : 'close-circle'}
-                size={18}
-                color="#fff"
-              />
-              <Text style={styles.snackbarText}>
-                {lastAction.kind === 'imported' ? 'Imported' : 'Skipped'}
-              </Text>
-              <PressableScale haptic="light" onPress={undoLast}>
-                <Text style={styles.snackbarUndo}>Undo</Text>
-              </PressableScale>
+              <Ionicons name={snackbarIcon(lastAction)} size={18} color={TEXT.inverse} />
+              <Text style={styles.snackbarText}>{snackbarLabel(lastAction)}</Text>
+              <View style={styles.snackbarActions}>
+                {!!lastAction.suggestion && !lastAction.scheduleResult && (
+                  <PressableScale
+                    haptic="light"
+                    onPress={scheduleFromSnackbar}
+                    accessibilityLabel={`Schedule for ${lastAction.suggestion.date} at ${lastAction.suggestion.time}`}
+                  >
+                    <Text style={styles.snackbarAction}>Schedule</Text>
+                  </PressableScale>
+                )}
+                {lastAction.kind !== 'failed' && !lastAction.scheduleResult && (
+                  <PressableScale
+                    haptic="light"
+                    onPress={undoLast}
+                    accessibilityLabel="Undo last action"
+                  >
+                    <Text style={styles.snackbarAction}>Undo</Text>
+                  </PressableScale>
+                )}
+              </View>
+            </View>
+            {/* The undo window drains visibly instead of expiring by surprise. */}
+            <View style={styles.snackbarExpiryTrack}>
+              <Animated.View style={[styles.snackbarExpiryFill, expiryStyle]} />
             </View>
           </GlassCard>
-        </View>
+        </Animated.View>
       )}
     </View>
   );
@@ -574,32 +898,31 @@ const styles = StyleSheet.create({
   // adjacent tabs mounted; without this the previous tab's content shows
   // through any gap in our own layout (especially while system dialogs are up).
   container: { flex: 1, backgroundColor: '#FAF5FF' },
-  header: { backgroundColor: 'transparent', padding: 16, alignItems: 'center' },
-  headerTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5, color: INK[900] },
-  headerSubtitle: { fontSize: 14, color: INK[500], marginTop: 4 },
-  filterScroller: {
-    flexGrow: 0,
-    flexShrink: 0,
-  },
+  header: { backgroundColor: 'transparent', padding: SPACE.base, alignItems: 'center' },
+  headerTitle: { ...TYPE.title2, color: TEXT.primary },
+  headerSubtitle: { ...TYPE.subhead, fontWeight: '500', color: TEXT.tertiary, marginTop: SPACE.xs },
+  // flexGrow: 0 is load-bearing: a horizontal ScrollView in a column flex
+  // layout otherwise claims ALL remaining vertical space, shoving the card
+  // deck off the bottom of the screen.
+  filterScroller: { flexGrow: 0, flexShrink: 0 },
   filterStrip: {
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    gap: 8,
+    paddingHorizontal: SPACE.base,
+    paddingBottom: SPACE.sm,
+    gap: SPACE.sm,
   },
   chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: '#fff',
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+    backgroundColor: SURFACE.card,
     borderWidth: 1,
     borderColor: HAIRLINE,
   },
   chipActive: { backgroundColor: BRAND[600], borderColor: BRAND[600] },
-  chipText: { fontSize: 13, fontWeight: '600', color: INK[700] },
-  chipTextActive: { color: '#fff' },
-  cardContainer: {
+  chipText: { ...TYPE.footnote, fontWeight: '600', color: TEXT.secondary },
+  chipTextActive: { color: TEXT.inverse },
+  deckArea: {
     flex: 1,
-    justifyContent: 'flex-start',
     alignItems: 'center',
     paddingHorizontal: 10,
     paddingTop: 10,
@@ -608,72 +931,112 @@ const styles = StyleSheet.create({
     // transparent region lets the adjacent (Stacks) tab composite through.
     backgroundColor: '#FAF5FF',
   },
+  /** Sized by flex so the action row below always fits, on any device. */
+  deck: { width: CARD_WIDTH, flex: 1 },
   card: {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
-    borderRadius: 24,
-    backgroundColor: '#fff',
-    shadowColor: BRAND[400],
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 12,
     position: 'absolute',
     top: 0,
-    overflow: 'hidden',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: RADIUS.xl,
+    backgroundColor: SURFACE.card,
+    // No `overflow: hidden` here — it would mask the shadow away. The children
+    // carry the same radius instead.
+    ...SHADOW.brandFloating,
   },
-  peekCard: {
-    shadowOpacity: 0.15,
-  },
+  peekCard: SHADOW.brandCard,
+  // Absolute children honour the parent's alignItems, so the three placeholder
+  // cards overlay each other centred instead of stacking down the page.
+  skeletonStack: { ...StyleSheet.absoluteFillObject, alignItems: 'center' },
+  skeletonCard: { position: 'absolute', top: 0 },
   cardImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 24,
+    borderRadius: RADIUS.xl,
     backgroundColor: INK[100],
   },
   swipeOverlay: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: 24,
+    borderRadius: RADIUS.xl,
     justifyContent: 'center',
     alignItems: 'center',
   },
   swipeIndicator: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
   importIndicator: {
     top: 60,
-    left: 20,
+    left: SPACE.lg,
     borderWidth: 4,
-    borderColor: '#fff',
-    borderRadius: 12,
-    padding: 8,
+    borderColor: TEXT.inverse,
+    borderRadius: RADIUS.md,
+    padding: SPACE.sm,
     transform: [{ rotate: '-15deg' }],
   },
   skipIndicator: {
     top: 60,
-    right: 20,
+    right: SPACE.lg,
     borderWidth: 4,
-    borderColor: '#fff',
-    borderRadius: 12,
-    padding: 8,
+    borderColor: TEXT.inverse,
+    borderRadius: RADIUS.md,
+    padding: SPACE.sm,
     transform: [{ rotate: '15deg' }],
   },
   swipeText: {
-    fontSize: 28,
+    ...TYPE.title1,
     fontWeight: '900',
-    color: '#fff',
-    marginTop: 4,
+    color: TEXT.inverse,
+    marginTop: SPACE.xs,
     letterSpacing: 2,
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 6,
   },
-  caughtUpWrap: {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
+  analyzingPill: {
+    position: 'absolute',
+    bottom: SPACE.base,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE.sm,
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+    backgroundColor: SURFACE.card,
+    ...SHADOW.card,
+  },
+  analyzingText: { ...TYPE.footnote, color: TEXT.secondary },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE.xxl,
+    marginTop: SPACE.base,
+  },
+  actionCircle: {
+    width: ACTION_SIZE,
+    height: ACTION_SIZE,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 32,
-    position: 'absolute',
-    top: 0,
+  },
+  skipCircle: {
+    backgroundColor: SURFACE.card,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    ...SHADOW.card,
+  },
+  // Opaque + rounded so iOS can derive the shadow path from the bounds rather
+  // than rasterising the gradient's alpha every frame.
+  saveCircleShadow: {
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND[600],
+    ...SHADOW.brandCard,
+  },
+  actionDisabled: { opacity: 0.4 },
+  caughtUpWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: SPACE.xxl,
   },
   caughtUpOrb: {
     width: 160,
@@ -681,44 +1044,49 @@ const styles = StyleSheet.create({
     borderRadius: 80,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: BRAND[500],
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.35,
-    shadowRadius: 32,
     marginBottom: 28,
+    ...SHADOW.brandFloating,
   },
-  caughtUpTitle: { fontSize: 28, fontWeight: '800', letterSpacing: -0.5, color: INK[900] },
-  caughtUpSub: { fontSize: 15, color: INK[500], marginTop: 8 },
-  reloadBtn: {
+  caughtUpTitle: { ...TYPE.title1, color: TEXT.primary },
+  caughtUpSub: { ...TYPE.callout, color: TEXT.tertiary, marginTop: SPACE.sm },
+  reloadBtn: { borderRadius: RADIUS.pill, overflow: 'hidden' },
+  reloadFill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: SPACE.sm,
     paddingHorizontal: 22,
     paddingVertical: 14,
-    borderRadius: 999,
   },
-  reloadText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-  },
-  emptyText: { fontSize: 20, fontWeight: '600', color: INK[900], marginTop: 16 },
-  emptySubtext: { fontSize: 14, color: INK[500], marginTop: 8, textAlign: 'center' },
+  reloadText: { ...TYPE.callout, fontWeight: '700', color: TEXT.inverse },
   snackbarWrap: {
     position: 'absolute',
-    left: 16,
-    right: 16,
+    left: SPACE.base,
+    right: SPACE.base,
     alignItems: 'center',
   },
   snackbarInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: SPACE.md,
     paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingTop: SPACE.md,
+    paddingBottom: SPACE.sm,
   },
-  snackbarText: { color: '#fff', fontWeight: '600', fontSize: 14 },
-  snackbarUndo: { color: BRAND[300], fontWeight: '800', fontSize: 14, marginLeft: 6 },
+  snackbarText: { ...TYPE.subhead, color: TEXT.inverse, flexShrink: 1 },
+  snackbarActions: { flexDirection: 'row', alignItems: 'center', gap: SPACE.base },
+  snackbarAction: { ...TYPE.subhead, fontWeight: '800', color: BRAND[300] },
+  snackbarExpiryTrack: {
+    height: 2,
+    marginHorizontal: 18,
+    marginBottom: SPACE.md,
+    borderRadius: RADIUS.pill,
+    backgroundColor: HAIRLINE_DARK,
+    overflow: 'hidden',
+  },
+  snackbarExpiryFill: {
+    width: '100%',
+    height: 2,
+    backgroundColor: BRAND[300],
+    transformOrigin: 'left',
+  },
 });

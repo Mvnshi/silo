@@ -1,35 +1,12 @@
 /*
- * Popup styles. Brand tokens (BRAND/INK/RADIUS) are mirrored as CSS custom
- * properties on :root so JSX can lean on a small surface area and stay close
- * to the phone app's look. Updating the palette here is a 1:1 swap of
- * `lib/theme.ts` values.
+ * Popup styles.
+ *
+ * The palette is NOT declared here. Every `var(--…)` below comes from the one
+ * token block emitted by `lib/theme.ts` and installed by `popup/main.tsx`
+ * before the first render (see that file's comment). Semantic roles
+ * (`--text-*`, `--surface-*`) are what flip in dark mode; raw `--brand-*` /
+ * `--ink-*` steps are fixed in both schemes.
  */
-
-:root {
-  --brand-50: #f5f3ff;
-  --brand-100: #ede9fe;
-  --brand-200: #ddd6fe;
-  --brand-300: #c4b5fd;
-  --brand-400: #a78bfa;
-  --brand-500: #8b5cf6;
-  --brand-600: #7c3aed;
-  --brand-700: #6d28d9;
-  --brand-800: #5b21b6;
-
-  --ink-50: #f8fafc;
-  --ink-100: #f1f5f9;
-  --ink-200: #e2e8f0;
-  --ink-300: #cbd5e1;
-  --ink-400: #94a3b8;
-  --ink-500: #64748b;
-  --ink-600: #475569;
-  --ink-700: #334155;
-  --ink-800: #1e293b;
-  --ink-900: #0f172a;
-
-  --hairline: rgba(15, 23, 42, 0.08);
-  --brand-shadow: 0 10px 24px -12px rgba(124, 58, 237, 0.35);
-}
 
 * {
   box-sizing: border-box;
@@ -39,17 +16,31 @@ html,
 body {
   margin: 0;
   padding: 0;
+  /* Literal, with the token as an override: this paints in the very first
+     frame, before the token <style> is installed. */
   background: #ffffff;
+  background: var(--surface-card, #ffffff);
+}
+
+body {
   font-family:
     -apple-system,
     BlinkMacSystemFont,
     'Segoe UI',
     system-ui,
     sans-serif;
-  color: var(--ink-900);
+  color: var(--text-primary);
   font-size: 14px;
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  html,
+  body {
+    background: #171b29;
+    background: var(--surface-card, #171b29);
+  }
 }
 
 button {
@@ -73,7 +64,7 @@ textarea {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--surface-card);
 }
 
 .header {
@@ -83,25 +74,34 @@ textarea {
   padding: 14px 16px 10px;
 }
 
+.headerActions {
+  display: flex;
+  gap: 4px;
+}
+
 .wordmark {
   font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.01em;
-  color: var(--brand-600);
+  color: var(--text-brand);
 }
 
 .closeBtn {
   width: 28px;
   height: 28px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   display: grid;
   place-items: center;
-  color: var(--ink-500);
+  color: var(--text-tertiary);
   transition: background 120ms ease, color 120ms ease;
 }
 .closeBtn:hover {
-  background: var(--ink-100);
-  color: var(--ink-800);
+  background: var(--surface-field);
+  color: var(--text-primary);
+}
+.closeBtn:focus-visible {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
 }
 
 .scroll {
@@ -117,28 +117,28 @@ textarea {
   display: flex;
   gap: 12px;
   padding: 12px;
-  border-radius: 20px;
-  background: var(--brand-50);
+  border-radius: var(--radius-lg);
+  background: var(--surface-brand-soft);
   border: 1px solid var(--hairline);
 }
 .previewThumb {
   width: 56px;
   height: 56px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   object-fit: cover;
   flex-shrink: 0;
-  background: var(--ink-100);
+  background: var(--surface-field);
   display: block;
 }
 .previewThumbPlaceholder {
   width: 56px;
   height: 56px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   flex-shrink: 0;
-  background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+  background: linear-gradient(135deg, var(--brand-100), var(--brand-200));
   display: grid;
   place-items: center;
-  color: var(--brand-600);
+  color: var(--brand-700);
   font-weight: 700;
 }
 .previewBody {
@@ -157,13 +157,13 @@ textarea {
 .favicon {
   width: 16px;
   height: 16px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
 }
 .previewTitle {
   font-size: 13px;
   font-weight: 600;
-  color: var(--ink-900);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -171,32 +171,42 @@ textarea {
 }
 .previewUrl {
   font-size: 11px;
-  color: var(--ink-400);
+  /* tertiary, not ink-400: this is text, and ink-400 is ~2.6:1 on white. */
+  color: var(--text-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .previewDesc {
   font-size: 12px;
-  color: var(--ink-600);
+  color: var(--text-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-top: 2px;
+  margin-bottom: 0;
+}
+/* Same block as .previewDesc, one step quieter — this is a status line, not
+   content the user asked for. */
+.previewDescMuted {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+  margin-bottom: 0;
 }
 
 /* Shimmer used while extractLink is in-flight. */
 .shimmer {
   height: 12px;
   width: 60%;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   margin-top: 4px;
   background: linear-gradient(
     90deg,
-    var(--ink-100) 0%,
+    var(--surface-field) 0%,
     var(--ink-200) 50%,
-    var(--ink-100) 100%
+    var(--surface-field) 100%
   );
   background-size: 200% 100%;
   animation: shimmer 1.2s ease-in-out infinite;
@@ -216,17 +226,25 @@ textarea {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--ink-500);
+  color: var(--text-tertiary);
   margin-bottom: 6px;
 }
 
-/* Classification pills row. */
+/* Classification pills row.
+   Twelve pills is ~730px of content in a 388px row, and the scrollbar is
+   hidden — without an affordance the row reads as "these are all the options"
+   and a selected pill parked off-screen reads as "classification failed".
+   The mask fades the right edge so there is always a visible more-to-come cue;
+   ClassificationPills scrolls the active pill into view on change. */
 .pillsRow {
   display: flex;
   gap: 6px;
   overflow-x: auto;
   scrollbar-width: none;
   padding: 2px 0 4px;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent 100%);
+  scroll-padding-inline: 32px;
 }
 .pillsRow::-webkit-scrollbar {
   display: none;
@@ -234,19 +252,23 @@ textarea {
 .pill {
   flex-shrink: 0;
   padding: 6px 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
-  background: #ffffff;
-  color: var(--ink-700);
+  background: var(--surface-card);
+  color: var(--text-secondary);
   border: 1px solid var(--hairline);
   transition: transform 120ms ease, background 120ms ease, color 120ms ease;
 }
 .pill:hover {
-  background: var(--ink-50);
+  background: var(--surface-sunken);
 }
 .pill:active {
   transform: scale(0.97);
+}
+.pill:focus-visible {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
 }
 .pillActive {
   background: var(--brand-600);
@@ -263,9 +285,9 @@ textarea {
   flex-wrap: wrap;
   gap: 6px;
   padding: 8px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--hairline);
-  background: #ffffff;
+  background: var(--surface-card);
   min-height: 40px;
 }
 .tagBox:focus-within {
@@ -277,21 +299,22 @@ textarea {
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--brand-50);
-  color: var(--brand-700);
+  border-radius: var(--radius-pill);
+  background: var(--surface-brand-soft);
+  color: var(--text-brand);
   font-size: 12px;
   font-weight: 600;
-  border: 1px solid var(--brand-100);
+  border: 1px solid var(--border-brand-soft);
 }
 .tagChipRemove {
-  color: var(--brand-500);
+  color: var(--text-brand);
   font-size: 14px;
   line-height: 1;
   padding: 0 2px;
+  opacity: 0.75;
 }
 .tagChipRemove:hover {
-  color: var(--brand-700);
+  opacity: 1;
 }
 .tagInput {
   flex: 1;
@@ -300,11 +323,11 @@ textarea {
   outline: 0;
   background: transparent;
   font-size: 13px;
-  color: var(--ink-900);
+  color: var(--text-primary);
   padding: 4px 2px;
 }
 .tagInput::placeholder {
-  color: var(--ink-400);
+  color: var(--text-placeholder);
 }
 .suggestRow {
   display: flex;
@@ -314,18 +337,18 @@ textarea {
 }
 .suggestChip {
   padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--ink-50);
-  color: var(--ink-600);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 500;
-  border: 1px dashed var(--ink-200);
+  border: 1px dashed var(--ink-300);
   transition: background 120ms ease, color 120ms ease;
 }
 .suggestChip:hover {
-  background: var(--brand-50);
-  color: var(--brand-700);
-  border-color: var(--brand-200);
+  background: var(--surface-brand-soft);
+  color: var(--text-brand);
+  border-color: var(--border-brand-soft);
   border-style: solid;
 }
 
@@ -334,11 +357,11 @@ textarea {
   width: 100%;
   resize: none;
   border: 1px solid var(--hairline);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   font-size: 13px;
-  background: #ffffff;
-  color: var(--ink-900);
+  background: var(--surface-card);
+  color: var(--text-primary);
   outline: 0;
   min-height: 56px;
   transition: border-color 120ms ease, box-shadow 120ms ease;
@@ -348,7 +371,7 @@ textarea {
   box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
 }
 .note::placeholder {
-  color: var(--ink-400);
+  color: var(--text-placeholder);
 }
 
 /* CTA + footer. */
@@ -358,25 +381,29 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: #ffffff;
+  background: var(--surface-card);
 }
 .cta {
   width: 100%;
   padding: 12px 16px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #8b5cf6, #6366f1);
+  border-radius: var(--radius-pill);
+  background: var(--gradient-brand);
   color: #ffffff;
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.01em;
-  box-shadow: var(--brand-shadow);
+  box-shadow: var(--shadow-brand);
   transition: transform 100ms ease, box-shadow 120ms ease, opacity 120ms ease;
 }
 .cta:hover:not(:disabled) {
-  box-shadow: 0 14px 28px -12px rgba(124, 58, 237, 0.5);
+  box-shadow: var(--shadow-brand-strong);
 }
 .cta:active:not(:disabled) {
   transform: scale(0.97);
+}
+.cta:focus-visible {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
 }
 .cta:disabled {
   opacity: 0.6;
@@ -388,24 +415,49 @@ textarea {
   box-shadow: 0 10px 24px -12px rgba(22, 163, 74, 0.45);
 }
 
+.footerError {
+  margin: 0;
+  font-size: 11px;
+  color: var(--status-danger);
+}
+
 .dupBadge {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
-  border-radius: 12px;
-  background: var(--brand-50);
-  border: 1px solid var(--brand-100);
-  color: var(--brand-700);
+  border-radius: var(--radius-md);
+  background: var(--surface-brand-soft);
+  border: 1px solid var(--border-brand-soft);
+  color: var(--text-brand);
   font-size: 12px;
   font-weight: 600;
   transition: background 120ms ease;
 }
 .dupBadge:hover {
-  background: var(--brand-100);
+  filter: brightness(0.97);
 }
 .dupBadgeMeta {
-  color: var(--brand-500);
+  color: var(--text-brand);
   font-weight: 500;
+  opacity: 0.75;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer {
+    animation: none;
+  }
+  .closeBtn,
+  .pill,
+  .cta,
+  .note,
+  .suggestChip,
+  .dupBadge {
+    transition-duration: 1ms;
+  }
+  .cta:active:not(:disabled),
+  .pill:active {
+    transform: none;
+  }
 }

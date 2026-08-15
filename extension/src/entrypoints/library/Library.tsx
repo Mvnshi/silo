@@ -6,16 +6,26 @@
  * per-card open/delete. All data is the extension-origin IndexedDB; nothing
  * leaves the machine.
  *
+ * Two behaviours worth knowing before you edit:
+ *  - DELETE IS OPTIMISTIC + UNDOABLE. A delete here writes a tombstone that
+ *    propagates to the phone, so it is not a local-only action. The card leaves
+ *    immediately and the real `deleteItem` only fires when the 6s undo window
+ *    closes — until then nothing has been written and Undo is a pure re-read.
+ *  - SEARCH RESULTS ARE A SEPARATE LIST. `visible` is `results ?? items`, so
+ *    any mutation must touch BOTH or the deleted card lingers in a filtered view.
+ *
  * URL contract:
  *   library.html?q=<query>     — pre-filled search (omnibox fallback)
  *   library.html#item=<id>     — scrolls the item into view + highlights it
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { Classification, Item } from '@/lib/types';
 import type { SyncState } from '@/lib/store';
 import { getItems, deleteItem, getSyncState, setSyncState } from '@/lib/store';
 import { DEFAULT_SERVER_URL, generateSpaceKey } from '@/lib/sync';
 import { searchItems } from '@/lib/search';
+import { classConfig } from '@/lib/theme';
 import styles from './Library.module.css';
 
 /** Background SW's reply to 'silo:sync-now' (see lib/background/messages.ts). */
@@ -26,21 +36,25 @@ interface SyncNowResponse {
   error?: string;
 }
 
-/** Gradient pairs per classification — mirrors the phone's classConfig vibe. */
-const CLASS_GRADIENTS: Record<Classification, [string, string]> = {
-  article: ['#6366f1', '#8b5cf6'],
-  video: ['#ec4899', '#f472b6'],
-  recipe: ['#f59e0b', '#f97316'],
-  product: ['#06b6d4', '#22d3ee'],
-  event: ['#8b5cf6', '#d946ef'],
-  place: ['#10b981', '#34d399'],
-  idea: ['#f59e0b', '#fbbf24'],
-  fitness: ['#ef4444', '#f87171'],
-  food: ['#f97316', '#fb923c'],
-  career: ['#0ea5e9', '#38bdf8'],
-  academia: ['#6366f1', '#818cf8'],
-  other: ['#64748b', '#94a3b8'],
-};
+/** Grace period before a delete is actually written. Long enough to read the toast. */
+const UNDO_MS = 6000;
+/** Past this, "Synced • 3d" is a lie of omission — surface it as stale instead. */
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+/**
+ * First-paint placeholders. Varied heights so the masonry columns settle at
+ * roughly their real proportions and don't jump when the data lands.
+ */
+const SKELETON_HEIGHTS = [180, 120, 220, 160, 140, 200, 120, 180];
+
+/**
+ * What the sync chip is actually telling the user.
+ * `unpaired` — no space code / no server, sync has never been set up.
+ * `syncing`  — a round-trip is in flight.
+ * `ok`       — the last round-trip succeeded, recently.
+ * `stale`    — paired and last attempt didn't fail, but the data is old.
+ * `error`    — the last round-trip rejected. Actionable, so it says so.
+ */
+type SyncStatus = 'unpaired' | 'syncing' | 'ok' | 'stale' | 'error';
 
 function relativeDate(iso: string): string {
   const then = new Date(iso).getTime();
@@ -65,6 +79,9 @@ function relativeSync(iso: string): string {
 
 export function Library() {
   const [items, setItems] = useState<Item[]>([]);
+  // Distinct from `items.length === 0`: without it, every user's first paint is
+  // the "Nothing saved yet" hero, including users with 400 items.
+  const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState(
     () => new URLSearchParams(window.location.search).get('q') ?? ''
   );
@@ -76,9 +93,22 @@ export function Library() {
 
   const [sync, setSync] = useState<SyncState | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [syncPhase, setSyncPhase] = useState<'idle' | 'syncing' | 'error'>('idle');
+
+  // Search re-runs when this bumps — used by Undo, which restores from the DB
+  // (the row is still there; the delete hasn't been written).
+  const [dataVersion, setDataVersion] = useState(0);
+
+  const undoItemRef = useRef<Item | null>(null);
+  const undoTimerRef = useRef<number | null>(null);
+  const [undoItem, setUndoItem] = useState<Item | null>(null);
 
   const reload = useCallback(async () => {
-    setItems(await getItems());
+    try {
+      setItems(await getItems());
+    } finally {
+      setLoaded(true);
+    }
   }, []);
 
   const refreshSync = useCallback(async () => {
@@ -91,23 +121,28 @@ export function Library() {
   }, [reload, refreshSync]);
 
   // Sync in the background on open; refresh the grid + chip when it lands.
-  // Guarded so a plain-browser dev tab (no chrome.runtime) still renders.
+  // A rejection here used to vanish into an empty catch while the chip happily
+  // kept reading "Synced • 3d" off a stale lastSyncAt — so failures now land in
+  // syncPhase and the chip says so.
   useEffect(() => {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return; // plain dev tab
     let cancelled = false;
-    try {
-      void chrome.runtime
-        .sendMessage({ type: 'silo:sync-now' })
-        .then((res: SyncNowResponse | undefined) => {
-          if (cancelled || !res?.ok) return;
-          void reload();
-          void refreshSync();
-        })
-        .catch(() => {
-          /* SW unreachable or sync failed — the library is local-first */
-        });
-    } catch {
-      /* chrome.runtime missing outside the extension context */
-    }
+    setSyncPhase('syncing');
+    chrome.runtime
+      .sendMessage({ type: 'silo:sync-now' })
+      .then((res: SyncNowResponse | undefined) => {
+        if (cancelled) return;
+        if (!res?.ok) {
+          setSyncPhase('error');
+          return;
+        }
+        setSyncPhase('idle');
+        void reload();
+        void refreshSync();
+      })
+      .catch(() => {
+        if (!cancelled) setSyncPhase('error');
+      });
     return () => {
       cancelled = true;
     };
@@ -124,7 +159,7 @@ export function Library() {
       void searchItems(q, 200).then(setResults);
     }, 150);
     return () => window.clearTimeout(t);
-  }, [query]);
+  }, [query, dataVersion]);
 
   // Scroll the deep-linked item into view once, then drop the highlight.
   useEffect(() => {
@@ -152,13 +187,80 @@ export function Library() {
       : base.filter((i) => i.classification === activeClass);
   }, [items, results, activeClass]);
 
+  /** Write the pending delete for real, closing the undo window. */
+  const commitDelete = useCallback(() => {
+    if (undoTimerRef.current !== null) {
+      window.clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    const item = undoItemRef.current;
+    undoItemRef.current = null;
+    setUndoItem(null);
+    if (!item) return;
+    void deleteItem(item.id).catch(() => {
+      // The card is already gone from the UI; put it back if the write failed.
+      void reload();
+    });
+  }, [reload]);
+
   const onDelete = useCallback(
-    async (id: string) => {
-      await deleteItem(id);
-      await reload();
+    (item: Item) => {
+      // A second delete during someone else's undo window commits the first.
+      commitDelete();
+      // Optimistic removal from BOTH lists — `visible` is `results ?? items`,
+      // so filtering only `items` leaves a ghost card in a filtered view that
+      // throws on the next click.
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      setResults((prev) => (prev ? prev.filter((i) => i.id !== item.id) : prev));
+      undoItemRef.current = item;
+      setUndoItem(item);
+      undoTimerRef.current = window.setTimeout(commitDelete, UNDO_MS);
     },
-    [reload]
+    [commitDelete]
   );
+
+  const undoDelete = useCallback(() => {
+    if (undoTimerRef.current !== null) {
+      window.clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    undoItemRef.current = null;
+    setUndoItem(null);
+    // Nothing was written, so the row is still in Dexie — re-read rather than
+    // splicing it back at a guessed index.
+    void reload();
+    setDataVersion((v) => v + 1);
+  }, [reload]);
+
+  // Never leave a delete half-applied: if the tab closes mid-window, flush it.
+  useEffect(() => {
+    function flush() {
+      const item = undoItemRef.current;
+      undoItemRef.current = null;
+      if (item) void deleteItem(item.id);
+    }
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, []);
+
+  const syncStatus = useMemo<SyncStatus>(() => {
+    const configured = !!sync?.spaceKey && !!(sync.serverUrl ?? DEFAULT_SERVER_URL);
+    // Checked first: "no server configured" is a setup gap, not a failure.
+    if (!configured) return 'unpaired';
+    if (syncPhase === 'syncing') return 'syncing';
+    if (syncPhase === 'error') return 'error';
+    if (!sync?.lastSyncAt) return 'stale';
+    return Date.now() - Date.parse(sync.lastSyncAt) > STALE_AFTER_MS ? 'stale' : 'ok';
+  }, [sync, syncPhase]);
+
+  const syncChipClass = [
+    styles.syncChip,
+    syncStatus === 'ok' ? styles.syncChipPaired : '',
+    syncStatus === 'error' ? styles.syncChipError : '',
+    syncStatus === 'stale' ? styles.syncChipStale : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <div className={styles.page}>
@@ -166,7 +268,9 @@ export function Library() {
         <div>
           <h1 className={styles.title}>Your Silo</h1>
           <p className={styles.subtitle}>
-            {items.length} saved · {sync?.lastSyncAt ? 'synced across devices' : 'all on this device'}
+            {loaded
+              ? `${items.length} saved · ${sync?.lastSyncAt ? 'synced across devices' : 'all on this device'}`
+              : 'Opening your library…'}
           </p>
         </div>
         <input
@@ -179,12 +283,20 @@ export function Library() {
         />
         <button
           type="button"
-          className={`${styles.syncChip} ${sync?.lastSyncAt ? styles.syncChipPaired : ''}`}
+          className={syncChipClass}
           onClick={() => setSyncOpen(true)}
-          title="Sync across devices"
+          title={syncStatus === 'error' ? 'Sync failed — open sync settings' : 'Sync across devices'}
         >
-          <CloudIcon />
-          {sync?.lastSyncAt ? `Synced • ${relativeSync(sync.lastSyncAt)}` : 'Set up sync'}
+          {syncStatus === 'syncing' ? <span className={styles.spinner} aria-hidden /> : <CloudIcon />}
+          {syncStatus === 'unpaired'
+            ? 'Set up sync'
+            : syncStatus === 'syncing'
+              ? 'Syncing…'
+              : syncStatus === 'error'
+                ? 'Sync failed — tap to fix'
+                : syncStatus === 'stale'
+                  ? `Sync stale${sync?.lastSyncAt ? ` • ${relativeSync(sync.lastSyncAt)}` : ''}`
+                  : `Synced • ${sync?.lastSyncAt ? relativeSync(sync.lastSyncAt) : 'now'}`}
         </button>
       </header>
 
@@ -203,12 +315,25 @@ export function Library() {
             className={`${styles.chip} ${activeClass === c ? styles.chipActive : ''}`}
             onClick={() => setActiveClass(c)}
           >
-            {c.charAt(0).toUpperCase() + c.slice(1)}
+            {classConfig(c).label}
           </button>
         ))}
       </div>
 
-      {visible.length === 0 ? (
+      {!loaded ? (
+        <div className={styles.grid} aria-busy="true" aria-label="Loading your saves">
+          {SKELETON_HEIGHTS.map((h, i) => (
+            <div key={i} className={styles.skeletonCard} aria-hidden>
+              <div className={styles.skeletonBlock} style={{ height: h }} />
+              <div className={styles.skeletonBody}>
+                <div className={styles.skeletonLine} style={{ width: '38%' }} />
+                <div className={styles.skeletonLine} style={{ width: '85%' }} />
+                <div className={styles.skeletonLine} style={{ width: '62%' }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : visible.length === 0 ? (
         <div className={styles.empty}>
           <div className={styles.emptyOrb}>✦</div>
           <h2>{items.length === 0 ? 'Nothing saved yet' : 'No matches'}</h2>
@@ -221,7 +346,7 @@ export function Library() {
       ) : (
         <div className={styles.grid}>
           {visible.map((item) => {
-            const [from, to] = CLASS_GRADIENTS[item.classification] ?? CLASS_GRADIENTS.other;
+            const cfg = classConfig(item.classification);
             return (
               <article key={item.id} id={`item-${item.id}`} className={styles.card}>
                 {item.imageUri ? (
@@ -229,13 +354,28 @@ export function Library() {
                 ) : (
                   <div
                     className={styles.cardTile}
-                    style={{ background: `linear-gradient(135deg, ${from}, ${to})` }}
+                    style={{ background: `linear-gradient(135deg, ${cfg.from}, ${cfg.to})` }}
                   >
                     {item.title.slice(0, 1).toUpperCase()}
                   </div>
                 )}
                 <div className={styles.cardBody}>
-                  <span className={styles.cardClass}>{item.classification}</span>
+                  {/* The pill text sits on a 10% wash of its own hue. On white
+                      that needs `deep` (`from` lands around 2:1); on a dark card
+                      `deep` is the one that vanishes, so the stylesheet swaps in
+                      a lifted `to` under prefers-color-scheme: dark. */}
+                  <span
+                    className={styles.cardClass}
+                    style={
+                      {
+                        '--pill-deep': cfg.deep,
+                        '--pill-to': cfg.to,
+                        background: `${cfg.from}1A`,
+                      } as CSSProperties
+                    }
+                  >
+                    {cfg.label}
+                  </span>
                   <h3 className={styles.cardTitle}>{item.title}</h3>
                   {item.quote ? (
                     <blockquote className={styles.cardQuote}>“{item.quote}”</blockquote>
@@ -259,6 +399,7 @@ export function Library() {
                           type="button"
                           className={styles.actionBtn}
                           title="Open original"
+                          aria-label={`Open original for ${item.title}`}
                           onClick={() => window.open(item.url, '_blank')}
                         >
                           ↗
@@ -268,7 +409,8 @@ export function Library() {
                         type="button"
                         className={`${styles.actionBtn} ${styles.actionDanger}`}
                         title="Delete"
-                        onClick={() => void onDelete(item.id)}
+                        aria-label={`Delete ${item.title}`}
+                        onClick={() => onDelete(item)}
                       >
                         ✕
                       </button>
@@ -281,11 +423,21 @@ export function Library() {
         </div>
       )}
 
+      {undoItem ? (
+        <div className={styles.toast} role="status">
+          <span className={styles.toastMsg}>Deleted “{undoItem.title}”</span>
+          <button type="button" className={styles.toastAction} onClick={undoDelete}>
+            Undo
+          </button>
+        </div>
+      ) : null}
+
       {syncOpen && sync ? (
         <SyncModal
           initial={sync}
           onClose={() => setSyncOpen(false)}
           onSynced={() => {
+            setSyncPhase('idle');
             void reload();
             void refreshSync();
           }}

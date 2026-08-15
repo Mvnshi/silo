@@ -1,36 +1,43 @@
 /**
  * Stack Detail Screen
- * 
+ *
  * Displays all items within a specific stack (collection). Users can
  * view, organize, and manage items in the stack.
- * 
+ *
  * Features:
- * - List of all items in the stack
- * - Stack metadata (name, description, color)
- * - Edit stack details
- * - Remove items from stack
- * - Delete stack
- * 
+ * - List of all items in the stack (rendered with ItemCardPro, so a save looks
+ *   identical here and in the Stacks feed)
+ * - Stack metadata (name, description, colour) in the shared ScreenHeader
+ * - Rename or delete the stack
+ * - Swipe an item to mark it done / not done
+ *
  * Dependencies:
  * - expo-router: Navigation
  */
 
 import React, { useState, useCallback } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  Alert,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, StyleSheet, FlatList, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import ItemCard from '@/components/ItemCard';
+import ItemCardPro from '@/components/ItemCardPro';
 import PressableScale from '@/components/ui/PressableScale';
-import { BRAND, INK, HAIRLINE } from '@/lib/theme';
+import ScreenHeader from '@/components/ui/ScreenHeader';
+import EmptyState from '@/components/ui/EmptyState';
+import Skeleton from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
+import {
+  BRAND,
+  HAIRLINE,
+  RADIUS,
+  SHADOW,
+  SPACE,
+  STATUS,
+  SURFACE,
+  TEXT,
+  TYPE,
+} from '@/lib/theme';
 import { Stack, Item } from '@/lib/types';
 import { getStackById, getItems, updateStack, deleteStack, updateItem } from '@/lib/storage';
 import { celebrationHaptic } from '@/lib/haptics';
@@ -39,6 +46,7 @@ export default function StackDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const toast = useToast();
   const [stack, setStack] = useState<Stack | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +77,7 @@ export default function StackDetailScreen() {
       }
     } catch (error) {
       console.error('Failed to load stack:', error);
-      Alert.alert('Error', 'Failed to load stack');
+      toast.show({ tone: 'danger', message: "We couldn't open that stack." });
     } finally {
       setLoading(false);
     }
@@ -87,7 +95,7 @@ export default function StackDetailScreen() {
    */
   function handleItemPress(itemId: string) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push(`/item/${itemId}?from=stacks`);
+    router.push(`/item/${itemId}`);
   }
 
   /**
@@ -97,14 +105,14 @@ export default function StackDetailScreen() {
     try {
       const item = items.find(i => i.id === itemId);
       if (!item || item.viewed) return; // Already done
-      
+
       await updateItem(itemId, { viewed: true });
       await loadData();
       // Celebration haptic for completion
       celebrationHaptic();
     } catch (error) {
       console.error('Failed to mark item as done:', error);
-      Alert.alert('Error', 'Failed to mark item as done');
+      toast.show({ tone: 'danger', message: "Couldn't mark that done." });
     }
   }
 
@@ -115,34 +123,35 @@ export default function StackDetailScreen() {
     try {
       const item = items.find(i => i.id === itemId);
       if (!item || !item.viewed) return; // Not done
-      
+
       await updateItem(itemId, { viewed: false });
       await loadData();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (error) {
       console.error('Failed to unmark item as done:', error);
-      Alert.alert('Error', 'Failed to unmark item as done');
+      toast.show({ tone: 'danger', message: "Couldn't undo that." });
     }
   }
 
   /**
-   * Edit stack details
+   * Rename the stack. Alert.prompt is iOS-only, which matches the app's target.
    */
   function handleEditStack() {
     if (!stack) return;
 
     Alert.prompt(
-      'Edit Stack',
-      'Enter a new name for this stack',
+      'Rename stack',
+      'What should this collection be called?',
       async (name) => {
         if (!name || !name.trim()) return;
 
         try {
           await updateStack(id, { name: name.trim() });
           setStack({ ...stack, name: name.trim() });
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } catch (error) {
           console.error('Failed to update stack:', error);
-          Alert.alert('Error', 'Failed to update stack');
+          toast.show({ tone: 'danger', message: "Couldn't rename that stack." });
         }
       },
       'plain-text',
@@ -151,90 +160,109 @@ export default function StackDetailScreen() {
   }
 
   /**
-   * Delete stack
+   * Delete the stack. Still a confirm rather than an undoable toast: this
+   * unfiles every item in one move, and the screen it happens on disappears.
    */
   function handleDeleteStack() {
-    Alert.alert(
-      'Delete Stack',
-      'Delete this stack? Items will not be deleted.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteStack(id);
-              router.back();
-            } catch (error) {
-              console.error('Failed to delete stack:', error);
-              Alert.alert('Error', 'Failed to delete stack');
-            }
-          },
+    Alert.alert('Delete this stack?', 'Your saves stay put — only the stack goes.', [
+      { text: 'Keep it', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteStack(id);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            if (router.canGoBack()) router.back();
+            else router.replace('/(tabs)' as never);
+          } catch (error) {
+            console.error('Failed to delete stack:', error);
+            toast.show({ tone: 'danger', message: "Couldn't delete that stack." });
+          }
         },
-      ]
-    );
+      },
+    ]);
   }
 
   if (loading) {
+    // Card-shaped placeholders in the list's own rhythm, so nothing shifts
+    // when the items land.
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={BRAND[600]} />
+      <View style={styles.container}>
+        <ScreenHeader />
+        <View style={styles.listContent} accessible accessibilityLabel="Loading stack">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} width="100%" height={92} radius={RADIUS.xl} style={styles.skeletonRow} />
+          ))}
+        </View>
       </View>
     );
   }
 
   if (!stack) {
     return (
-      <View style={styles.errorContainer}>
-        <Ionicons name="alert-circle-outline" size={64} color={INK[300]} />
-        <Text style={styles.errorText}>Stack not found</Text>
+      <View style={styles.container}>
+        <ScreenHeader />
+        <EmptyState
+          icon="alert-circle-outline"
+          title="We couldn't find that stack"
+          subtitle="It may have been deleted on another device."
+          cta={{ label: 'Back to your stacks', onPress: () => router.replace('/(tabs)' as never) }}
+        />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      {/* Stack Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <View style={styles.headerContent}>
-          <Text style={styles.stackName}>{stack.name}</Text>
-          {stack.description && (
-            <Text style={styles.stackDescription}>{stack.description}</Text>
-          )}
-          <View style={styles.countRow}>
-            <View style={[styles.stackDot, { backgroundColor: stack.color }]} />
-            <Text style={styles.itemCount}>
-              {items.length} {items.length === 1 ? 'item' : 'items'}
-            </Text>
+      <ScreenHeader
+        title={stack.name}
+        right={
+          // Overhangs the header's 44pt right slot; a long stack name truncates
+          // before it reaches these.
+          <View style={styles.headerActions}>
+            <PressableScale
+              haptic="light"
+              style={styles.headerButton}
+              onPress={handleEditStack}
+              accessibilityLabel="Rename this stack"
+            >
+              <Ionicons name="pencil" size={17} color={BRAND[600]} />
+            </PressableScale>
+
+            <PressableScale
+              haptic="light"
+              style={styles.headerButton}
+              onPress={handleDeleteStack}
+              accessibilityLabel="Delete this stack"
+            >
+              <Ionicons name="trash" size={17} color={STATUS.danger} />
+            </PressableScale>
           </View>
-        </View>
+        }
+      />
 
-        <View style={styles.headerActions}>
-          <PressableScale
-            haptic="light"
-            style={styles.headerButton}
-            onPress={handleEditStack}
-          >
-            <Ionicons name="pencil" size={18} color={BRAND[600]} />
-          </PressableScale>
-
-          <PressableScale
-            haptic="light"
-            style={styles.headerButton}
-            onPress={handleDeleteStack}
-          >
-            <Ionicons name="trash" size={18} color="#ef4444" />
-          </PressableScale>
+      {/* Stack meta — the name itself lives in the header, so this is just the
+          things the header can't carry. */}
+      <View style={styles.meta}>
+        <View style={styles.countRow}>
+          <View style={[styles.stackDot, { backgroundColor: stack.color }]} />
+          <Text style={styles.itemCount}>
+            {items.length} {items.length === 1 ? 'item' : 'items'}
+          </Text>
         </View>
+        {stack.description ? (
+          <Text style={styles.stackDescription}>{stack.description}</Text>
+        ) : null}
       </View>
 
       {/* Items List */}
       <FlatList
         data={items}
-        renderItem={({ item }) => (
-          <ItemCard 
-            item={item} 
+        renderItem={({ item, index }) => (
+          <ItemCardPro
+            item={item}
+            index={index}
             onPress={handleItemPress}
             onSwipeLeft={handleSwipeLeft}
             onSwipeRight={handleSwipeRight}
@@ -243,17 +271,17 @@ export default function StackDetailScreen() {
         keyExtractor={item => item.id}
         contentContainerStyle={[
           styles.listContent,
-          { paddingBottom: insets.bottom + 120 }
+          items.length === 0 && styles.listContentEmpty,
+          { paddingBottom: insets.bottom + 120 },
         ]}
         contentInsetAdjustmentBehavior="automatic"
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Ionicons name="folder-open-outline" size={64} color={INK[300]} />
-            <Text style={styles.emptyText}>No items in this stack</Text>
-            <Text style={styles.emptySubtext}>
-              Add items from the feed or add screen
-            </Text>
-          </View>
+          <EmptyState
+            icon="folder-open-outline"
+            title="This stack is empty"
+            subtitle="Anything you save into it will show up here."
+            cta={{ label: 'Save something', onPress: () => router.push('/(tabs)/add' as never) }}
+          />
         }
       />
     </View>
@@ -265,40 +293,34 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: BRAND[50],
   },
-  loadingContainer: {
-    flex: 1,
+  headerActions: {
+    // Explicit width so the two buttons keep their size instead of being
+    // squeezed into the header's fixed-width slot.
+    width: 78,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: SPACE.sm,
+  },
+  headerButton: {
+    width: 35,
+    height: 35,
+    borderRadius: RADIUS.pill,
+    backgroundColor: SURFACE.card,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: BRAND[50],
+    ...SHADOW.hairline,
   },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: BRAND[50],
-  },
-  errorText: {
-    fontSize: 18,
-    color: INK[500],
-    marginTop: 16,
-  },
-  header: {
-    padding: 20,
-  },
-  headerContent: {
-    marginBottom: 16,
-  },
-  stackName: {
-    fontSize: 32,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-    color: INK[900],
-    marginBottom: 8,
+  meta: {
+    paddingHorizontal: SPACE.base,
+    paddingTop: SPACE.md,
+    gap: SPACE.xs,
   },
   stackDescription: {
-    fontSize: 16,
-    color: INK[500],
-    marginBottom: 8,
+    ...TYPE.footnote,
+    color: TEXT.secondary,
   },
   countRow: {
     flexDirection: 'row',
@@ -307,52 +329,20 @@ const styles = StyleSheet.create({
   stackDot: {
     width: 8,
     height: 8,
-    borderRadius: 4,
-    marginRight: 6,
+    borderRadius: RADIUS.pill,
+    marginRight: SPACE.sm - 2,
   },
   itemCount: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: INK[400],
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  headerButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: HAIRLINE,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: INK[900],
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    elevation: 2,
+    ...TYPE.caption,
+    color: TEXT.tertiary,
   },
   listContent: {
-    padding: 16,
+    padding: SPACE.base,
   },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
+  listContentEmpty: {
+    flexGrow: 1,
   },
-  emptyText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: INK[700],
-    marginTop: 16,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: INK[400],
-    marginTop: 8,
-    textAlign: 'center',
+  skeletonRow: {
+    marginBottom: SPACE.md,
   },
 });
-

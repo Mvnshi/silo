@@ -1,44 +1,54 @@
 /**
- * Calendar & Map Screen
- * 
- * Full-featured calendar view with month grid, drag-to-reschedule,
- * and map view with location-based pins.
- * 
- * Features:
- * - Full month calendar grid view
- * - Drag events up/down to change time
- * - Add events directly from calendar
- * - Map view with current location and saved places
- * 
+ * Silo tab — Today, Calendar, Map, Bucket List.
+ *
+ * Four panes behind one segmented control:
+ * - Today (default): the recommendation surface (components/TodayView).
+ * - Calendar: a day/week strip plus the merged list of Silo items and native
+ *   calendar events for the selected date. Silo's own mirrored "Review: …"
+ *   events are filtered out so a scheduled item appears exactly once.
+ * - Map: pins for saved places (addresses are geocoded lazily, paced so
+ *   CLGeocoder doesn't rate-limit us) with an in-context location prompt.
+ * - Bucket List: things to do when the circumstances are right, incomplete
+ *   first, with a progress track.
+ *
+ * Location is only ever requested from the Map pane or an explicit tap on
+ * Today's "Near you" row — never on tab open.
+ *
  * Dependencies:
- * - react-native-maps: Map display
- * - react-native-gesture-handler: Drag and drop
- * - expo-location: Current location
- * - date-fns: Date formatting and manipulation
+ * - react-native-maps: map + markers
+ * - expo-calendar / expo-location: native calendar reads, geocoding, position
+ * - date-fns: date formatting and manipulation
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
-  TouchableOpacity,
   Alert,
   ScrollView,
   Dimensions,
   Modal,
   Platform,
+  Pressable,
   TextInput,
+  Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 // Platform-default map provider: Apple Maps on iOS (no SDK pod, no API key,
 // native look). Forcing PROVIDER_GOOGLE without the Google Maps SDK renders a
 // blank map + red error on iOS; revisit only if Android ships (it needs a key).
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, Region } from 'react-native-maps';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import Animated, {
+  FadeIn,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 import {
   format,
   addDays,
@@ -52,18 +62,45 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import ItemCard from '@/components/ItemCard';
 import PressableScale from '@/components/ui/PressableScale';
 import GlassCard from '@/components/ui/GlassCard';
-import TodayView, { TodayEvent } from '@/components/TodayView';
-import { BRAND, ACCENT, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
+import EmptyState from '@/components/ui/EmptyState';
+import Skeleton from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
+import TodayView, { LocationStatus, TodayEvent } from '@/components/TodayView';
+import {
+  ACCENT,
+  BRAND,
+  DURATION,
+  GRADIENTS,
+  HAIRLINE,
+  INK,
+  RADIUS,
+  SHADOW,
+  SPACE,
+  SPRING,
+  STATUS,
+  TEXT,
+  TYPE,
+} from '@/lib/theme';
 import { Item, ScheduledEvent } from '@/lib/types';
 import { getItems, getItemById, updateItem, addItem, getEvents, touchSeen } from '@/lib/storage';
 import { buildReview, ReviewOutcome } from '@/lib/resurface';
 import { createItem } from '@/lib/items';
-import { requestCalendarPermissions, scheduleItemReview } from '@/lib/scheduler';
+import { requestCalendarPermissions, scheduleItemReview, REVIEW_PREFIX } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
 import { parseLocalDate, toLocalDateString } from '@/lib/datetime';
-import { classConfig } from '@/lib/classification';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+/** Map camera zoom used for "centre on me" and the initial region. */
+const REGION_DELTA = { latitudeDelta: 0.0922, longitudeDelta: 0.0421 };
+
+/**
+ * Addresses that geocoding has already failed on, remembered for the session.
+ * Failed lookups never gain coordinates, so without this they get re-selected
+ * and re-geocoded on every `allItems` change — which is exactly the burst that
+ * trips CLGeocoder's rate limiter and makes ALL lookups start failing.
+ */
+const geocodeFailed = new Set<string>();
 
 // 'today' was added as the FIRST option (and default) so the Silo tab opens
 // onto a recommendation-first surface; the legacy calendar/map/bucket views are
@@ -71,8 +108,16 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 type ViewMode = 'today' | 'calendar' | 'map' | 'bucketlist';
 type CalendarViewMode = 'day' | 'week';
 
+const MODES: { key: ViewMode; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'today', label: 'Today', icon: 'sparkles' },
+  { key: 'calendar', label: 'Calendar', icon: 'calendar-outline' },
+  { key: 'map', label: 'Map', icon: 'map-outline' },
+  { key: 'bucketlist', label: 'Bucket List', icon: 'list-outline' },
+];
+
 interface CalendarEvent {
   id: string;
+  /** Already stripped of REVIEW_PREFIX — never render "Review: …" at the user. */
   title: string;
   startDate: Date;
   endDate: Date;
@@ -80,12 +125,24 @@ interface CalendarEvent {
   itemId?: string;
 }
 
+/**
+ * One sort key for both row kinds. The old comparator returned 0 for every
+ * Item↔Event pair and `Array.sort` is stable, so a 9pm item listed above an 8am
+ * meeting.
+ */
+function startKey(row: Item | CalendarEvent): number {
+  return 'startDate' in row
+    ? row.startDate.getTime()
+    : parseLocalDate(row.scheduled_date!, row.scheduled_time ?? '09:00').getTime();
+}
 
 export default function CalendarScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const toast = useToast();
   const [viewMode, setViewMode] = useState<ViewMode>('today');
   const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>('day');
+  const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<Item[]>([]);
   const [allItems, setAllItems] = useState<Item[]>([]);
   const [bucketlistItems, setBucketlistItems] = useState<Item[]>([]);
@@ -99,55 +156,67 @@ export default function CalendarScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [mapRegion, setMapRegion] = useState({
+  const [locationStatus, setLocationStatus] = useState<LocationStatus>('idle');
+  const mapRef = useRef<MapView | null>(null);
+  const [mapRegion, setMapRegion] = useState<Region>({
     latitude: 37.7749,
     longitude: -122.4194,
-    latitudeDelta: 0.0922,
-    longitudeDelta: 0.0421,
+    ...REGION_DELTA,
   });
 
   /**
-   * Get current location — requested when the user is on a screen that uses it
-   * (Today shows a "Near you" card, Map shows the map). Asking in context reads
-   * as natural; a cold-start dialog is hostile UX and an App Review flag.
+   * Ask for foreground location. Only ever called from the Map pane or an
+   * explicit tap on Today's "Near you" row — a cold-start dialog is hostile UX
+   * and an App Review flag. Once denied, iOS won't re-prompt, so we hand the
+   * user off to Settings instead of firing a request that silently no-ops.
    */
-  useEffect(() => {
-    if (viewMode !== 'map' && viewMode !== 'today') return;
-    async function getLocation() {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') {
-          return;
-        }
-
-        const location = await Location.getCurrentPositionAsync({});
-        setCurrentLocation({
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-        });
-        
-        // Center map on current location
-        setMapRegion({
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-          latitudeDelta: 0.0922,
-          longitudeDelta: 0.0421,
-        });
-      } catch (error) {
-        console.error('Failed to get location:', error);
-      }
+  const requestLocation = useCallback(async () => {
+    if (locationStatus === 'denied') {
+      Linking.openSettings().catch(() => {});
+      return;
     }
-    getLocation();
-  }, [viewMode]);
+    setLocationStatus('requesting');
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationStatus('denied');
+        return;
+      }
+      setLocationStatus('granted');
+      const location = await Location.getCurrentPositionAsync({});
+      const coords = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+      setCurrentLocation(coords);
+      setMapRegion({ ...coords, ...REGION_DELTA });
+    } catch (error) {
+      console.error('Failed to get location:', error);
+      setLocationStatus('idle');
+    }
+  }, [locationStatus]);
+
+  // Map pane asks on open (the map is meaningless without it); Today never does.
+  useEffect(() => {
+    if (viewMode !== 'map' || locationStatus !== 'idle') return;
+    void requestLocation();
+  }, [viewMode, locationStatus, requestLocation]);
+
+  // The map mounts with `initialRegion`, so a position that resolves after the
+  // first frame would never move the camera. Drive it imperatively instead.
+  useEffect(() => {
+    if (viewMode !== 'map' || !currentLocation) return;
+    mapRef.current?.animateToRegion({ ...currentLocation, ...REGION_DELTA }, 600);
+  }, [viewMode, currentLocation]);
 
   /**
    * Load all items from storage and calendar events
    */
-  async function loadItems() {
+  const loadItems = useCallback(async () => {
     try {
       const loadedItems = await getItems();
       setAllItems(loadedItems.filter(item => !item.archived));
-      
+
       // Filter items that have scheduled dates for calendar view
       const scheduledItems = loadedItems.filter(
         item => item.scheduled_date && !item.archived
@@ -162,7 +231,7 @@ export default function CalendarScreen() {
 
       // Load calendar events (after items are set)
       await loadCalendarEvents();
-      
+
       // Match calendar events with Silo items
       setCalendarEvents(prevEvents => {
         return prevEvents.map(event => {
@@ -175,19 +244,18 @@ export default function CalendarScreen() {
 
           // If no match by time, try matching by title (for Silo events)
           if (!matchingItem && event.isSiloEvent) {
-            const itemTitle = event.title.replace('Review: ', '').trim();
             matchingItem = scheduledItems.find(
               i => {
-                const titleMatch = i.title === itemTitle ||
-                                 itemTitle.includes(i.title) ||
-                                 i.title.includes(itemTitle);
+                const titleMatch = i.title === event.title ||
+                                 event.title.includes(i.title) ||
+                                 i.title.includes(event.title);
                 const dateMatch = i.scheduled_date &&
                                 format(parseLocalDate(i.scheduled_date), 'yyyy-MM-dd') === format(event.startDate, 'yyyy-MM-dd');
                 return titleMatch && dateMatch;
               }
             );
           }
-          
+
           if (matchingItem) {
             return { ...event, itemId: matchingItem.id };
           }
@@ -196,12 +264,17 @@ export default function CalendarScreen() {
       });
     } catch (error) {
       console.error('Failed to load items:', error);
-      Alert.alert('Error', 'Failed to load items');
+      toast.show({ message: "Couldn't load your saves", tone: 'danger' });
+    } finally {
+      setLoading(false);
     }
-  }
+  }, [toast]);
 
   /**
-   * Load events from phone calendar
+   * Load events from the phone calendar.
+   *
+   * The window reaches BACK 30 days as well as forward — with a `now` start,
+   * every past date read "No events scheduled" no matter what was on it.
    */
   async function loadCalendarEvents() {
     try {
@@ -212,29 +285,36 @@ export default function CalendarScreen() {
 
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
       const now = new Date();
-      const thirtyDaysFromNow = addDays(now, 30);
+      const windowStart = addDays(now, -30);
+      const windowEnd = addDays(now, 60);
 
       const allEvents: CalendarEvent[] = [];
-      
+
       for (const calendar of calendars) {
         try {
           const events = await Calendar.getEventsAsync(
             [calendar.id],
-            now,
-            thirtyDaysFromNow
+            windowStart,
+            windowEnd
           );
 
-          // Import ALL calendar events, not just Silo ones
-          const calendarEvents = events.map((event: Calendar.Event) => ({
-            id: event.id,
-            title: event.title || 'Untitled Event',
-            startDate: new Date(event.startDate),
-            endDate: new Date(event.endDate),
-            isSiloEvent: event.title?.startsWith('Review:') || false,
-            itemId: undefined, // Will be set if we find a matching Silo item
-          }));
+          // Import ALL calendar events, not just Silo ones. Strip REVIEW_PREFIX
+          // at the boundary so no surface downstream ever shows "Review: Sushi
+          // Bar" — the Today hero in particular reads titles verbatim.
+          const imported = events.map((event: Calendar.Event) => {
+            const raw = event.title || 'Untitled Event';
+            const isSiloEvent = raw.startsWith(REVIEW_PREFIX);
+            return {
+              id: event.id,
+              title: isSiloEvent ? raw.slice(REVIEW_PREFIX.length).trim() : raw,
+              startDate: new Date(event.startDate),
+              endDate: new Date(event.endDate),
+              isSiloEvent,
+              itemId: undefined, // Will be set if we find a matching Silo item
+            };
+          });
 
-          allEvents.push(...calendarEvents);
+          allEvents.push(...imported);
         } catch (error) {
           console.error(`Failed to get events from calendar ${calendar.id}:`, error);
         }
@@ -246,75 +326,80 @@ export default function CalendarScreen() {
     }
   }
 
-  // Load items when screen comes into focus
+  // Load items when screen comes into focus. (No haptic here — the tab bar owns
+  // the tab-change feedback; firing a second one reads as a stutter.)
   useFocusEffect(
     useCallback(() => {
       loadItems();
-      // Haptic feedback when tab is focused
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }, [])
+    }, [loadItems])
   );
 
   /**
-   * Get items with location data for map view
-   * Also geocode items that have addresses but no coordinates
+   * Items with location data for the map, plus lazy geocoding of items that
+   * have an address but no coordinates.
    */
   const [itemsWithLocations, setItemsWithLocations] = useState<Item[]>([]);
 
-  // Geocode items with addresses but no coordinates
   useEffect(() => {
-    async function geocodeItems() {
-      const itemsToGeocode = allItems.filter(
-        item => (item.place_name || item.place_address) && !item.place_latitude && !item.place_longitude
+    let alive = true;
+
+    const withCoords = (list: Item[]) =>
+      list.filter(
+        item =>
+          (item.place_name || item.place_address) &&
+          item.place_latitude != null &&
+          item.place_longitude != null
       );
 
-      if (itemsToGeocode.length === 0) {
-        // No items to geocode, just set the locations list
-        const itemsWithCoords = allItems.filter(
-          item => (item.place_name || item.place_address) && item.place_latitude && item.place_longitude
-        );
-        setItemsWithLocations(itemsWithCoords);
-        return;
-      }
+    (async () => {
+      setItemsWithLocations(withCoords(allItems));
 
-      // Geocode items that need coordinates
+      const itemsToGeocode = allItems.filter(
+        item =>
+          (item.place_name || item.place_address) &&
+          item.place_latitude == null &&
+          item.place_longitude == null &&
+          !geocodeFailed.has(item.id)
+      );
+      if (itemsToGeocode.length === 0) return;
+
       let geocodedCount = 0;
       for (const item of itemsToGeocode) {
+        if (!alive) return;
+        const addressToGeocode = item.place_address || item.place_name || '';
+        if (!addressToGeocode) {
+          geocodeFailed.add(item.id);
+          continue;
+        }
         try {
-          const addressToGeocode = item.place_address || item.place_name || '';
-          if (addressToGeocode) {
-            const geocoded = await Location.geocodeAsync(addressToGeocode);
-            if (geocoded && geocoded.length > 0) {
-              const { latitude, longitude } = geocoded[0];
-              await updateItem(item.id, {
-                place_latitude: latitude,
-                place_longitude: longitude,
-              });
-              geocodedCount++;
-            }
+          const geocoded = await Location.geocodeAsync(addressToGeocode);
+          if (geocoded && geocoded.length > 0) {
+            const { latitude, longitude } = geocoded[0];
+            await updateItem(item.id, { place_latitude: latitude, place_longitude: longitude });
+            geocodedCount++;
+          } else {
+            geocodeFailed.add(item.id);
           }
         } catch (error) {
+          geocodeFailed.add(item.id);
           console.warn(`Failed to geocode ${item.title}:`, error);
         }
+        // Pace the queue — a tight loop is what trips CLGeocoder's limiter.
+        await new Promise(resolve => setTimeout(resolve, 250));
       }
 
-      // Reload items if we geocoded any
-      if (geocodedCount > 0) {
-        const reloadedItems = await getItems();
-        setAllItems(reloadedItems.filter(item => !item.archived));
-      }
+      // Re-read once, at the end: setAllItems re-runs this effect, and the
+      // items we just resolved now carry coordinates so they drop out of the
+      // work queue instead of being geocoded all over again.
+      if (!alive || geocodedCount === 0) return;
+      const reloadedItems = await getItems();
+      if (!alive) return;
+      setAllItems(reloadedItems.filter(item => !item.archived));
+    })();
 
-      // Update items with locations (now includes newly geocoded items)
-      const reloadedItems = geocodedCount > 0 ? await getItems() : allItems;
-      const itemsWithCoords = reloadedItems.filter(
-        item => (item.place_name || item.place_address) && item.place_latitude && item.place_longitude
-      );
-      setItemsWithLocations(itemsWithCoords);
-    }
-
-    if (allItems.length > 0) {
-      geocodeItems();
-    }
+    return () => {
+      alive = false;
+    };
   }, [allItems]);
 
   /**
@@ -330,21 +415,26 @@ export default function CalendarScreen() {
   }
 
   /**
-   * Get calendar events for a specific date
+   * Native calendar events for a date, minus Silo's own mirrored review events
+   * — those already render as the Item row, and showing both listed every
+   * scheduled save twice.
    */
-  function getCalendarEventsForDate(date: Date): CalendarEvent[] {
+  function getCalendarEventsForDate(date: Date, dateItems: Item[]): CalendarEvent[] {
+    const siloIds = new Set(dateItems.map(i => i.id));
+    const siloTitles = new Set(dateItems.map(i => i.title.trim().toLowerCase()));
     return calendarEvents.filter(event => {
-      return isSameDay(event.startDate, date);
+      if (!isSameDay(event.startDate, date)) return false;
+      if (!event.isSiloEvent) return true;
+      if (event.itemId) return !siloIds.has(event.itemId);
+      return !siloTitles.has(event.title.trim().toLowerCase());
     });
   }
 
-  /**
-   * Get all events (items + calendar events) for a specific date
-   */
+  /** Merged, time-ordered rows for a date: Silo items + native events. */
   function getAllEventsForDate(date: Date): (Item | CalendarEvent)[] {
     const dateItems = getItemsForDate(date);
-    const dateEvents = getCalendarEventsForDate(date);
-    return [...dateItems, ...dateEvents];
+    const dateEvents = getCalendarEventsForDate(date, dateItems);
+    return [...dateItems, ...dateEvents].sort((a, b) => startKey(a) - startKey(b));
   }
 
   /**
@@ -358,13 +448,12 @@ export default function CalendarScreen() {
     return days;
   }
 
-
   /**
    * Create new event
    */
   async function handleCreateEvent() {
     if (!newEventTitle.trim()) {
-      Alert.alert('Error', 'Please enter a title');
+      toast.show({ message: 'Give the event a title first', tone: 'danger' });
       return;
     }
 
@@ -387,10 +476,10 @@ export default function CalendarScreen() {
       await loadItems();
       setShowAddEventModal(false);
       setNewEventTitle('');
-      Alert.alert('Success', 'Event created!');
+      toast.show({ message: 'Event created', tone: 'success' });
     } catch (error) {
       console.error('Failed to create event:', error);
-      Alert.alert('Error', 'Failed to create event');
+      toast.show({ message: "Couldn't create that event", tone: 'danger' });
     }
   }
 
@@ -402,25 +491,42 @@ export default function CalendarScreen() {
   }
 
   /**
-   * Toggle bucket list status for an item
+   * Toggle bucket list status for an item. Applied optimistically with an Undo
+   * toast — removing something you long-pressed by accident shouldn't need a
+   * confirm dialog, and shouldn't be unrecoverable either.
    */
   async function handleToggleBucketlist(itemId: string) {
-    try {
-      const item = allItems.find(i => i.id === itemId);
-      if (!item) return;
+    const item = allItems.find(i => i.id === itemId);
+    if (!item) return;
+    const newBucketlistStatus = !item.bucketlist;
 
-      const newBucketlistStatus = !item.bucketlist;
+    if (!newBucketlistStatus) {
+      setBucketlistItems(prev => prev.filter(i => i.id !== itemId));
+    }
+    Haptics.notificationAsync(
+      newBucketlistStatus
+        ? Haptics.NotificationFeedbackType.Success
+        : Haptics.NotificationFeedbackType.Warning
+    );
+
+    try {
       await updateItem(itemId, { bucketlist: newBucketlistStatus });
+      toast.show({
+        message: newBucketlistStatus ? 'Added to bucket list' : 'Removed from bucket list',
+        tone: newBucketlistStatus ? 'success' : 'neutral',
+        action: {
+          label: 'Undo',
+          onPress: async () => {
+            await updateItem(itemId, { bucketlist: !newBucketlistStatus });
+            await loadItems();
+          },
+        },
+      });
       await loadItems();
-      
-      Haptics.notificationAsync(
-        newBucketlistStatus 
-          ? Haptics.NotificationFeedbackType.Success 
-          : Haptics.NotificationFeedbackType.Warning
-      );
     } catch (error) {
       console.error('Failed to toggle bucket list:', error);
-      Alert.alert('Error', 'Failed to update bucket list');
+      toast.show({ message: "Couldn't update the bucket list", tone: 'danger' });
+      await loadItems();
     }
   }
 
@@ -435,7 +541,7 @@ export default function CalendarScreen() {
       const newCompletedStatus = !item.bucketlist_completed;
       await updateItem(itemId, { bucketlist_completed: newCompletedStatus });
       await loadItems();
-      
+
       if (newCompletedStatus) {
         // Celebration haptic for completion
         await celebrationHaptic();
@@ -444,11 +550,67 @@ export default function CalendarScreen() {
       }
     } catch (error) {
       console.error('Failed to toggle bucket list completion:', error);
-      Alert.alert('Error', 'Failed to update completion status');
+      toast.show({ message: "Couldn't update that item", tone: 'danger' });
     }
   }
 
   const weekDays = getWeekDays();
+
+  // Bucket list: incomplete first (raw storage order interleaved done and
+  // undone), and the header counts progress instead of a total that only grows.
+  const sortedBucketlist = useMemo(
+    () =>
+      [...bucketlistItems].sort(
+        (a, b) => Number(!!a.bucketlist_completed) - Number(!!b.bucketlist_completed)
+      ),
+    [bucketlistItems]
+  );
+  const bucketDone = useMemo(
+    () => bucketlistItems.filter(i => i.bucketlist_completed).length,
+    [bucketlistItems]
+  );
+  const bucketProgress = useSharedValue(0);
+  useEffect(() => {
+    bucketProgress.value = withSpring(
+      bucketlistItems.length ? bucketDone / bucketlistItems.length : 0,
+      SPRING.settle
+    );
+  }, [bucketDone, bucketlistItems.length, bucketProgress]);
+  const bucketFillStyle = useAnimatedStyle(() => ({
+    width: `${Math.max(0, Math.min(1, bucketProgress.value)) * 100}%` as `${number}%`,
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Segmented control: a spring-driven pill behind the labels, and the active
+  // segment scrolled into view (four segments overflow a 4"-wide phone).
+  // ---------------------------------------------------------------------------
+  const segScrollRef = useRef<ScrollView | null>(null);
+  const [segLayouts, setSegLayouts] = useState<Record<string, { x: number; width: number }>>({});
+  const [segViewWidth, setSegViewWidth] = useState(0);
+  const [segContentWidth, setSegContentWidth] = useState(0);
+  const pillX = useSharedValue(0);
+  const pillWidth = useSharedValue(0);
+  const pillPlaced = useRef(false);
+
+  useEffect(() => {
+    const layout = segLayouts[viewMode];
+    if (!layout) return;
+    if (pillPlaced.current) {
+      pillX.value = withSpring(layout.x, SPRING.snappy);
+      pillWidth.value = withSpring(layout.width, SPRING.snappy);
+    } else {
+      // First measurement: place it, don't animate in from x=0.
+      pillX.value = layout.x;
+      pillWidth.value = layout.width;
+      pillPlaced.current = true;
+    }
+    segScrollRef.current?.scrollTo({ x: Math.max(0, layout.x - SPACE.xl), animated: true });
+  }, [viewMode, segLayouts, pillX, pillWidth]);
+
+  const pillStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: pillX.value }],
+    width: pillWidth.value,
+  }));
 
   // ---------------------------------------------------------------------------
   // Today-view glue: storage events for today + a few small handlers that wire
@@ -479,6 +641,31 @@ export default function CalendarScreen() {
     };
   }, [viewMode, items]);
 
+  /**
+   * Today's event feed. A Silo-scheduled item exists twice — as our stored
+   * event and as the mirrored native calendar entry — so dedupe on
+   * start-time + title. The stored copy goes first because it carries the
+   * item id the hero's open button needs.
+   */
+  const todayFeed = useMemo<TodayEvent[]>(() => {
+    const merged: TodayEvent[] = [
+      ...todayScheduledEvents,
+      ...calendarEvents.map(e => ({
+        title: e.title,
+        startDate: e.startDate,
+        endDate: e.endDate,
+        itemId: e.itemId,
+      })),
+    ];
+    const seen = new Set<string>();
+    return merged.filter(e => {
+      const key = `${e.startDate.getTime()}|${e.title}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [todayScheduledEvents, calendarEvents]);
+
   /** Open an item detail screen. */
   const openItem = useCallback(
     (itemId: string) => {
@@ -497,29 +684,48 @@ export default function CalendarScreen() {
     [router]
   );
 
-  /** Mark a Today recommendation done; celebrate + reload. */
+  /**
+   * Mark a Today recommendation done. This routes through buildReview so a
+   * check-off records what "done" actually means — status, completed_at,
+   * times_done, last_done_at. Setting `viewed` alone left computeStatus at
+   * 'saved', so the app went on nudging "Still want this?" three weeks later
+   * and the repeatables lane never saw the completion.
+   */
   const markItemDone = useCallback(async (itemId: string) => {
     try {
-      await updateItem(itemId, { viewed: true });
+      const item = await getItemById(itemId);
+      if (!item) return;
+      await updateItem(itemId, buildReview(item, 'good'));
       celebrationHaptic();
       await loadItems();
     } catch (err) {
       console.error('mark done failed', err);
     }
-  }, []);
+  }, [loadItems]);
 
-  /** Snooze a Today recommendation to tomorrow (sets scheduled_date only). */
+  /**
+   * Snooze a Today recommendation to tomorrow. Writes the time and duration
+   * too: the native event it creates is pinned to 09:00, and an item with a
+   * date but no time rendered as " (15 min)" with no clock and could never be
+   * matched back to its calendar entry.
+   */
   const snoozeItemToTomorrow = useCallback(async (itemId: string) => {
     try {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
+      const dateStr = toLocalDateString(tomorrow);
       const item = await getItemById(itemId);
-      await updateItem(itemId, { scheduled_date: toLocalDateString(tomorrow) });
+      const duration = item?.duration || 15;
+      await updateItem(itemId, {
+        scheduled_date: dateStr,
+        scheduled_time: '09:00',
+        duration,
+      });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // Best-effort calendar entry so the snooze actually shows up tomorrow.
       if (item) {
         try {
-          await scheduleItemReview(item, toLocalDateString(tomorrow), '09:00', item.duration || 15);
+          await scheduleItemReview(item, dateStr, '09:00', duration);
         } catch {
           // Calendar permission may be denied; the snooze still persists.
         }
@@ -528,7 +734,7 @@ export default function CalendarScreen() {
     } catch (err) {
       console.error('snooze failed', err);
     }
-  }, []);
+  }, [loadItems]);
 
   /** After-event report verdict from the Today check-in zone (lib/resurface). */
   const reviewItem = useCallback(async (item: Item, outcome: ReviewOutcome) => {
@@ -540,7 +746,7 @@ export default function CalendarScreen() {
     } catch (err) {
       console.error('review failed', err);
     }
-  }, []);
+  }, [loadItems]);
 
   /** Keep a stale item: reset its seen-clock (local, unsynced) so it stops nudging. */
   const keepStaleItem = useCallback(async (id: string) => {
@@ -551,7 +757,7 @@ export default function CalendarScreen() {
     } catch (err) {
       console.error('keep stale failed', err);
     }
-  }, []);
+  }, [loadItems]);
 
   /** Archive a stale item from the nudge. */
   const archiveStaleItem = useCallback(async (id: string) => {
@@ -562,6 +768,12 @@ export default function CalendarScreen() {
     } catch (err) {
       console.error('archive stale failed', err);
     }
+  }, [loadItems]);
+
+  const closeAddEventModal = useCallback(() => {
+    setShowAddEventModal(false);
+    setShowDatePicker(false);
+    setShowTimePicker(false);
   }, []);
 
   return (
@@ -571,140 +783,103 @@ export default function CalendarScreen() {
         colors={GRADIENTS.page}
         style={StyleSheet.absoluteFill}
       />
+
       {/* Header with Segmented Control */}
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          // flexGrow: 0 keeps a horizontal ScrollView from claiming vertical
-          // flex space (it silently expands inside column layouts otherwise).
-          style={{ flexGrow: 0, flexShrink: 0 }}
-          contentContainerStyle={styles.segmentedControl}
-        >
-          {/* Today segment — first + default, the recommendation home. */}
-          <View style={styles.segmentWrap}>
-            <PressableScale
-              haptic="selection"
-              style={[
-                styles.segment,
-                viewMode === 'today' && styles.segmentActive,
-              ]}
-              onPress={() => setViewMode('today')}
+      <View style={[styles.header, { paddingTop: insets.top + SPACE.md }]}>
+        <View style={styles.segmentShadow}>
+          <View style={styles.segmentClip}>
+            <ScrollView
+              ref={segScrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              // flexGrow: 0 keeps a horizontal ScrollView from claiming vertical
+              // flex space (it silently expands inside column layouts otherwise).
+              style={{ flexGrow: 0, flexShrink: 0 }}
+              contentContainerStyle={styles.segmentedControl}
+              onLayout={e => setSegViewWidth(e.nativeEvent.layout.width)}
+              onContentSizeChange={w => setSegContentWidth(w)}
             >
-              <Ionicons
-                name="sparkles"
-                size={18}
-                color={viewMode === 'today' ? '#fff' : INK[500]}
-              />
-              <Text
-                style={[
-                  styles.segmentText,
-                  viewMode === 'today' && styles.segmentTextActive,
-                ]}
-              >
-                Today
-              </Text>
-            </PressableScale>
-          </View>
+              <View style={styles.segmentRow}>
+                {/* Rendered first so it sits behind the labels. */}
+                <Animated.View style={[styles.segmentPill, pillStyle]} pointerEvents="none" />
+                {MODES.map(mode => {
+                  const active = viewMode === mode.key;
+                  return (
+                    <View
+                      key={mode.key}
+                      onLayout={e => {
+                        const { x, width } = e.nativeEvent.layout;
+                        setSegLayouts(prev =>
+                          prev[mode.key]?.x === x && prev[mode.key]?.width === width
+                            ? prev
+                            : { ...prev, [mode.key]: { x, width } }
+                        );
+                      }}
+                    >
+                      <PressableScale
+                        haptic="selection"
+                        selected={active}
+                        style={styles.segment}
+                        onPress={() => setViewMode(mode.key)}
+                        accessibilityLabel={mode.label}
+                      >
+                        <Ionicons
+                          name={mode.icon}
+                          size={18}
+                          color={active ? '#fff' : INK[500]}
+                        />
+                        <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                          {mode.label}
+                        </Text>
+                      </PressableScale>
+                    </View>
+                  );
+                })}
+              </View>
+            </ScrollView>
 
-          {/* PressableScale fires the selection haptic on press-in */}
-          <View style={styles.segmentWrap}>
-            <PressableScale
-              haptic="selection"
-              style={[
-                styles.segment,
-                viewMode === 'calendar' && styles.segmentActive,
-              ]}
-              onPress={() => setViewMode('calendar')}
-            >
-              <Ionicons
-                name="calendar-outline"
-                size={18}
-                color={viewMode === 'calendar' ? '#fff' : INK[500]}
+            {/* Right-edge fade: the honest hint that the control scrolls. */}
+            {segContentWidth > segViewWidth + 1 && (
+              <LinearGradient
+                colors={['rgba(255,255,255,0)', '#ffffff']}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={styles.segmentFade}
+                pointerEvents="none"
               />
-              <Text
-                style={[
-                  styles.segmentText,
-                  viewMode === 'calendar' && styles.segmentTextActive,
-                ]}
-              >
-                Calendar
-              </Text>
-            </PressableScale>
+            )}
           </View>
-
-          <View style={styles.segmentWrap}>
-            <PressableScale
-              haptic="selection"
-              style={[
-                styles.segment,
-                viewMode === 'map' && styles.segmentActive,
-              ]}
-              onPress={() => setViewMode('map')}
-            >
-              <Ionicons
-                name="map-outline"
-                size={18}
-                color={viewMode === 'map' ? '#fff' : INK[500]}
-              />
-              <Text
-                style={[
-                  styles.segmentText,
-                  viewMode === 'map' && styles.segmentTextActive,
-                ]}
-              >
-                Map
-              </Text>
-            </PressableScale>
-          </View>
-
-          <View style={styles.segmentWrap}>
-            <PressableScale
-              haptic="selection"
-              style={[
-                styles.segment,
-                viewMode === 'bucketlist' && styles.segmentActive,
-              ]}
-              onPress={() => setViewMode('bucketlist')}
-            >
-              <Ionicons
-                name="list-outline"
-                size={18}
-                color={viewMode === 'bucketlist' ? '#fff' : INK[500]}
-              />
-              <Text
-                style={[
-                  styles.segmentText,
-                  viewMode === 'bucketlist' && styles.segmentTextActive,
-                ]}
-              >
-                Bucket List
-              </Text>
-            </PressableScale>
-          </View>
-        </ScrollView>
+        </View>
       </View>
 
       {viewMode === 'today' && (
-        <TodayView
-          allItems={allItems}
-          events={[...calendarEvents, ...todayScheduledEvents]}
-          currentLocation={currentLocation}
-          onScheduleItem={openScheduleForItem}
-          onDoneItem={markItemDone}
-          onSnoozeItem={snoozeItemToTomorrow}
-          onReview={reviewItem}
-          onKeepStale={keepStaleItem}
-          onArchiveStale={archiveStaleItem}
-          onOpenItem={openItem}
-        />
+        <Animated.View style={styles.pane} entering={FadeIn.duration(DURATION.fast)}>
+          <TodayView
+            allItems={allItems}
+            events={todayFeed}
+            currentLocation={currentLocation}
+            loading={loading}
+            locationStatus={locationStatus}
+            onRequestLocation={requestLocation}
+            onScheduleItem={openScheduleForItem}
+            onDoneItem={markItemDone}
+            onSnoozeItem={snoozeItemToTomorrow}
+            onReview={reviewItem}
+            onKeepStale={keepStaleItem}
+            onArchiveStale={archiveStaleItem}
+            onOpenItem={openItem}
+          />
+        </Animated.View>
       )}
 
       {viewMode === 'calendar' && (
-        <View style={styles.calendarContainer}>
+        <Animated.View style={styles.calendarContainer} entering={FadeIn.duration(DURATION.fast)}>
           {/* View Mode Toggle (Day/Week) */}
           <View style={styles.viewModeToggle}>
-            <TouchableOpacity
+            <PressableScale
+              haptic="selection"
+              selected={calendarViewMode === 'day'}
+              containerStyle={{ flex: 1 }}
               style={[
                 styles.viewModeButton,
                 calendarViewMode === 'day' && styles.viewModeButtonActive,
@@ -722,8 +897,11 @@ export default function CalendarScreen() {
               >
                 Day
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </PressableScale>
+            <PressableScale
+              haptic="selection"
+              selected={calendarViewMode === 'week'}
+              containerStyle={{ flex: 1 }}
               style={[
                 styles.viewModeButton,
                 calendarViewMode === 'week' && styles.viewModeButtonActive,
@@ -741,7 +919,7 @@ export default function CalendarScreen() {
               >
                 Week
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
 
           {calendarViewMode === 'day' ? (
@@ -749,35 +927,35 @@ export default function CalendarScreen() {
             <View style={styles.dayViewContainer}>
               {/* Day Navigation */}
               <View style={styles.dayHeader}>
-                <TouchableOpacity
-                  onPress={() => {
-                    const prevDay = addDays(selectedDate, -1);
-                    setSelectedDate(prevDay);
-                  }}
+                <PressableScale
+                  haptic="light"
+                  onPress={() => setSelectedDate(addDays(selectedDate, -1))}
                   style={styles.dayNavButton}
+                  accessibilityLabel="Previous day"
                 >
                   <Ionicons name="chevron-back" size={24} color={INK[700]} />
-                </TouchableOpacity>
+                </PressableScale>
                 <View style={styles.dayTitleContainer}>
                   <Text style={styles.dayTitle}>
                     {format(selectedDate, 'EEEE, MMMM d')}
                   </Text>
-                  <TouchableOpacity
+                  <PressableScale
+                    haptic="selection"
                     onPress={() => setSelectedDate(new Date())}
                     style={styles.todayButton}
+                    accessibilityLabel="Jump to today"
                   >
                     <Text style={styles.todayButtonText}>Today</Text>
-                  </TouchableOpacity>
+                  </PressableScale>
                 </View>
-                <TouchableOpacity
-                  onPress={() => {
-                    const nextDay = addDays(selectedDate, 1);
-                    setSelectedDate(nextDay);
-                  }}
+                <PressableScale
+                  haptic="light"
+                  onPress={() => setSelectedDate(addDays(selectedDate, 1))}
                   style={styles.dayNavButton}
+                  accessibilityLabel="Next day"
                 >
                   <Ionicons name="chevron-forward" size={24} color={INK[700]} />
-                </TouchableOpacity>
+                </PressableScale>
               </View>
             </View>
           ) : (
@@ -785,41 +963,47 @@ export default function CalendarScreen() {
             <View style={styles.weekViewContainer}>
               {/* Week Navigation */}
               <View style={styles.weekViewHeader}>
-                <TouchableOpacity
+                <PressableScale
+                  haptic="light"
                   onPress={() => {
                     const prevWeek = addDays(currentWeekStart, -7);
                     setCurrentWeekStart(prevWeek);
                     setSelectedDate(prevWeek);
                   }}
                   style={styles.weekNavButton}
+                  accessibilityLabel="Previous week"
                 >
                   <Ionicons name="chevron-back" size={24} color={INK[700]} />
-                </TouchableOpacity>
+                </PressableScale>
                 <View style={styles.weekTitleContainer}>
                   <Text style={styles.weekTitle}>
                     {format(currentWeekStart, 'MMM d')} - {format(addDays(currentWeekStart, 6), 'MMM d, yyyy')}
                   </Text>
-                  <TouchableOpacity
+                  <PressableScale
+                    haptic="selection"
                     onPress={() => {
                       const today = new Date();
                       setCurrentWeekStart(startOfWeek(today, { weekStartsOn: 0 }));
                       setSelectedDate(today);
                     }}
                     style={styles.todayButton}
+                    accessibilityLabel="Jump to this week"
                   >
                     <Text style={styles.todayButtonText}>Today</Text>
-                  </TouchableOpacity>
+                  </PressableScale>
                 </View>
-                <TouchableOpacity
+                <PressableScale
+                  haptic="light"
                   onPress={() => {
                     const nextWeek = addDays(currentWeekStart, 7);
                     setCurrentWeekStart(nextWeek);
                     setSelectedDate(nextWeek);
                   }}
                   style={styles.weekNavButton}
+                  accessibilityLabel="Next week"
                 >
                   <Ionicons name="chevron-forward" size={24} color={INK[700]} />
-                </TouchableOpacity>
+                </PressableScale>
               </View>
 
               {/* Week Days */}
@@ -831,14 +1015,17 @@ export default function CalendarScreen() {
                     const eventCount = getAllEventsForDate(date).length;
 
                     return (
-                      <TouchableOpacity
+                      <PressableScale
                         key={index}
+                        haptic="selection"
+                        selected={isSelected}
                         style={[
                           styles.weekDayCell,
                           isToday && styles.weekDayCellToday,
                           isSelected && styles.weekDayCellSelected,
                         ]}
                         onPress={() => setSelectedDate(date)}
+                        accessibilityLabel={format(date, 'EEEE, MMMM d')}
                       >
                         <Text style={styles.weekDayName}>
                           {format(date, 'EEE')}
@@ -853,9 +1040,14 @@ export default function CalendarScreen() {
                           {format(date, 'd')}
                         </Text>
                         {eventCount > 0 && (
-                          <View style={styles.weekEventIndicator} />
+                          <View
+                            style={[
+                              styles.weekEventIndicator,
+                              isSelected && styles.weekEventIndicatorSelected,
+                            ]}
+                          />
                         )}
-                      </TouchableOpacity>
+                      </PressableScale>
                     );
                   })}
                 </View>
@@ -876,6 +1068,7 @@ export default function CalendarScreen() {
                   setNewEventDate(selectedDate);
                   setShowAddEventModal(true);
                 }}
+                accessibilityLabel="Add event"
               >
                 <LinearGradient
                   colors={GRADIENTS.brand}
@@ -889,175 +1082,184 @@ export default function CalendarScreen() {
             </View>
 
             {(() => {
-              const dateItems = getItemsForDate(selectedDate);
-              const dateEvents = getCalendarEventsForDate(selectedDate);
-              const allEvents = [...dateItems, ...dateEvents].sort((a, b) => {
-                if ('startDate' in a && 'startDate' in b) {
-                  return a.startDate.getTime() - b.startDate.getTime();
-                }
-                if ('scheduled_time' in a && 'scheduled_time' in b) {
-                  return (a.scheduled_time || '').localeCompare(b.scheduled_time || '');
-                }
-                return 0;
-              });
+              const allEvents = getAllEventsForDate(selectedDate);
 
-              if (allEvents.length > 0) {
+              if (loading && allEvents.length === 0) {
                 return (
-                  <FlatList
-                    data={allEvents}
-                    renderItem={({ item }) => {
-                      if ('startDate' in item) {
-                        const event = item as CalendarEvent;
-                        return (
-                          <PressableScale
-                            style={styles.eventCard}
-                            onPress={() => {
-                              // If it's a Silo event (starts with "Review:"), try to find the matching item
-                              if (event.isSiloEvent) {
-                                // Try to find the item by matching the event title and date/time
-                                const matchingItem = items.find(
-                                  i => i.scheduled_date &&
-                                  format(parseLocalDate(i.scheduled_date), 'yyyy-MM-dd') === format(event.startDate, 'yyyy-MM-dd') &&
-                                  i.scheduled_time === format(event.startDate, 'HH:mm') &&
-                                  (i.title === event.title.replace('Review: ', '') || event.title.includes(i.title))
-                                );
-                                
-                                if (matchingItem) {
-                                  handleItemPress(matchingItem.id);
-                                  return;
-                                }
-                                
-                                // If itemId is set, use it
-                                if (event.itemId) {
-                                  handleItemPress(event.itemId);
-                                  return;
-                                }
-                              }
-                              
-                              // If it's linked to a Silo item via itemId, navigate to it
-                              if (event.itemId) {
-                                handleItemPress(event.itemId);
-                                return;
-                              }
-                              
-                              // Otherwise, show event details
-                              Alert.alert(
-                                event.title,
-                                `${format(event.startDate, 'EEEE, MMMM d, yyyy')}\n${format(event.startDate, 'h:mm a')} - ${format(event.endDate, 'h:mm a')}`,
-                                [
-                                  { text: 'OK', style: 'default' },
-                                  ...(event.isSiloEvent ? [] : [{
-                                    text: 'Create Item',
-                                    style: 'default' as const,
-                                    onPress: () => {
-                                      // Create a new Silo item from this calendar event
-                                      const dateStr = format(event.startDate, 'yyyy-MM-dd');
-                                      const timeStr = format(event.startDate, 'HH:mm');
-                                      const duration = Math.round((event.endDate.getTime() - event.startDate.getTime()) / (1000 * 60));
-
-                                      // createItem fills id/created_at/updated_at/status + defaults.
-                                      const newItem = createItem({
-                                        type: 'note',
-                                        classification: 'event',
-                                        title: event.title.replace('Review: ', ''),
-                                        scheduled_date: dateStr,
-                                        scheduled_time: timeStr,
-                                        duration: duration || 15,
-                                      });
-
-                                      addItem(newItem).then(() => {
-                                        scheduleItemReview(newItem, dateStr, timeStr, duration || 15);
-                                        loadItems();
-                                        Alert.alert('Success', 'Event imported to Silo!');
-                                      }).catch((error) => {
-                                        console.error('Failed to create item:', error);
-                                        Alert.alert('Error', 'Failed to import event');
-                                      });
-                                    }
-                                  }])
-                                ]
-                              );
-                            }}
-                          >
-                            <View style={styles.eventCardIcon}>
-                              <Ionicons
-                                name={event.isSiloEvent ? "checkmark-circle" : "calendar-outline"}
-                                size={20}
-                                color={event.isSiloEvent ? "#22c55e" : BRAND[600]}
-                              />
-                            </View>
-                            <View style={styles.eventCardContent}>
-                              <Text style={styles.eventCardTitle}>
-                                {event.title.replace('Review: ', '')}
-                              </Text>
-                              <Text style={styles.eventCardTime}>
-                                {format(event.startDate, 'h:mm a')} - {format(event.endDate, 'h:mm a')}
-                                {event.isSiloEvent && ' • Silo'}
-                              </Text>
-                            </View>
-                            <Ionicons name="chevron-forward" size={20} color={INK[300]} />
-                          </PressableScale>
-                        );
-                      } else {
-                        return (
-                          <PressableScale
-                            style={styles.eventCard}
-                            onPress={() => handleItemPress((item as Item).id)}
-                          >
-                            <View style={styles.eventCardIcon}>
-                              <Ionicons name="time" size={20} color={BRAND[600]} />
-                            </View>
-                            <View style={styles.eventCardContent}>
-                              <Text style={styles.eventCardTitle}>
-                                {(item as Item).title}
-                              </Text>
-                              <Text style={styles.eventCardTime}>
-                                {(item as Item).scheduled_time} ({(item as Item).duration || 15} min)
-                              </Text>
-                            </View>
-                            <Ionicons name="chevron-forward" size={20} color={INK[300]} />
-                          </PressableScale>
-                        );
-                      }
-                    }}
-                    keyExtractor={(item, index) => {
-                      if ('startDate' in item) {
-                        return `event-${(item as CalendarEvent).id}`;
-                      }
-                      return (item as Item).id;
-                    }}
-                    contentContainerStyle={[
-                      styles.eventsList,
-                      { paddingBottom: insets.bottom + 120 }
-                    ]}
-                    contentInsetAdjustmentBehavior="automatic"
-                  />
-                );
-              } else {
-                return (
-                  <View style={styles.emptyEventsContainer}>
-                    <Ionicons name="calendar-outline" size={48} color={INK[300]} />
-                    <Text style={styles.emptyEventsText}>No events scheduled</Text>
-                    <Text style={styles.emptyEventsSubtext}>
-                      Tap the + button to add an event
-                    </Text>
+                  <View style={styles.eventsList}>
+                    {[0, 1, 2].map(i => (
+                      <Skeleton
+                        key={i}
+                        height={64}
+                        radius={RADIUS.lg}
+                        style={{ marginBottom: SPACE.md }}
+                      />
+                    ))}
                   </View>
                 );
               }
+
+              if (allEvents.length === 0) {
+                return (
+                  <EmptyState
+                    icon="calendar-outline"
+                    title="Nothing on this day"
+                    subtitle="Tap + to put something in the calendar."
+                    cta={{
+                      label: 'Add an event',
+                      onPress: () => {
+                        setNewEventDate(selectedDate);
+                        setShowAddEventModal(true);
+                      },
+                    }}
+                  />
+                );
+              }
+
+              return (
+                <FlatList
+                  data={allEvents}
+                  renderItem={({ item }) => {
+                    if ('startDate' in item) {
+                      const event = item as CalendarEvent;
+                      return (
+                        <PressableScale
+                          style={styles.eventCard}
+                          scaleTo={0.985}
+                          onPress={() => {
+                            // Silo events link back to their item where we can
+                            // resolve one; everything else opens a detail sheet.
+                            if (event.itemId) {
+                              handleItemPress(event.itemId);
+                              return;
+                            }
+                            if (event.isSiloEvent) {
+                              const matchingItem = items.find(
+                                i => i.scheduled_date &&
+                                format(parseLocalDate(i.scheduled_date), 'yyyy-MM-dd') === format(event.startDate, 'yyyy-MM-dd') &&
+                                (i.title === event.title || event.title.includes(i.title))
+                              );
+                              if (matchingItem) {
+                                handleItemPress(matchingItem.id);
+                                return;
+                              }
+                            }
+
+                            Alert.alert(
+                              event.title,
+                              `${format(event.startDate, 'EEEE, MMMM d, yyyy')}\n${format(event.startDate, 'h:mm a')} - ${format(event.endDate, 'h:mm a')}`,
+                              [
+                                { text: 'OK', style: 'default' },
+                                ...(event.isSiloEvent ? [] : [{
+                                  text: 'Create Item',
+                                  style: 'default' as const,
+                                  onPress: () => {
+                                    // Create a new Silo item from this calendar event
+                                    const dateStr = format(event.startDate, 'yyyy-MM-dd');
+                                    const timeStr = format(event.startDate, 'HH:mm');
+                                    const duration = Math.round((event.endDate.getTime() - event.startDate.getTime()) / (1000 * 60));
+
+                                    // createItem fills id/created_at/updated_at/status + defaults.
+                                    const newItem = createItem({
+                                      type: 'note',
+                                      classification: 'event',
+                                      title: event.title,
+                                      scheduled_date: dateStr,
+                                      scheduled_time: timeStr,
+                                      duration: duration || 15,
+                                    });
+
+                                    addItem(newItem).then(() => {
+                                      scheduleItemReview(newItem, dateStr, timeStr, duration || 15);
+                                      loadItems();
+                                      toast.show({ message: 'Imported to Silo', tone: 'success' });
+                                    }).catch((error) => {
+                                      console.error('Failed to create item:', error);
+                                      toast.show({ message: "Couldn't import that event", tone: 'danger' });
+                                    });
+                                  }
+                                }])
+                              ]
+                            );
+                          }}
+                        >
+                          <View style={styles.eventCardIcon}>
+                            <Ionicons
+                              name={event.isSiloEvent ? 'checkmark-circle' : 'calendar-outline'}
+                              size={20}
+                              color={event.isSiloEvent ? STATUS.success : BRAND[600]}
+                            />
+                          </View>
+                          <View style={styles.eventCardContent}>
+                            <Text style={styles.eventCardTitle} numberOfLines={1}>
+                              {event.title}
+                            </Text>
+                            <Text style={styles.eventCardTime}>
+                              {format(event.startDate, 'h:mm a')} - {format(event.endDate, 'h:mm a')}
+                              {event.isSiloEvent && ' • Silo'}
+                            </Text>
+                          </View>
+                          <Ionicons name="chevron-forward" size={20} color={INK[400]} />
+                        </PressableScale>
+                      );
+                    }
+
+                    const row = item as Item;
+                    return (
+                      <PressableScale
+                        style={styles.eventCard}
+                        scaleTo={0.985}
+                        onPress={() => handleItemPress(row.id)}
+                      >
+                        <View style={styles.eventCardIcon}>
+                          <Ionicons name="time" size={20} color={BRAND[600]} />
+                        </View>
+                        <View style={styles.eventCardContent}>
+                          <Text style={styles.eventCardTitle} numberOfLines={1}>
+                            {row.title}
+                          </Text>
+                          <Text style={styles.eventCardTime}>
+                            {format(
+                              parseLocalDate(row.scheduled_date!, row.scheduled_time ?? '09:00'),
+                              'h:mm a'
+                            )}
+                            {` · ${row.duration || 15} min`}
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={20} color={INK[400]} />
+                      </PressableScale>
+                    );
+                  }}
+                  keyExtractor={(item) => {
+                    if ('startDate' in item) {
+                      return `event-${(item as CalendarEvent).id}`;
+                    }
+                    return (item as Item).id;
+                  }}
+                  contentContainerStyle={[
+                    styles.eventsList,
+                    { paddingBottom: insets.bottom + 120 }
+                  ]}
+                  contentInsetAdjustmentBehavior="automatic"
+                />
+              );
             })()}
           </View>
-        </View>
+        </Animated.View>
       )}
 
       {viewMode === 'map' && (
         /* Map View */
-        <View style={styles.mapContainer}>
+        <Animated.View style={styles.mapContainer} entering={FadeIn.duration(DURATION.fast)}>
           <MapView
+            ref={mapRef}
             style={styles.map}
             initialRegion={mapRegion}
+            showsUserLocation={locationStatus === 'granted'}
+            showsMyLocationButton={locationStatus === 'granted'}
             onRegionChangeComplete={(region) => {
               // Only update if user manually changed region (not on initial load)
-              if (Math.abs(region.latitude - mapRegion.latitude) > 0.001 || 
+              if (Math.abs(region.latitude - mapRegion.latitude) > 0.001 ||
                   Math.abs(region.longitude - mapRegion.longitude) > 0.001) {
                 setMapRegion(region);
               }
@@ -1067,19 +1269,6 @@ export default function CalendarScreen() {
             pitchEnabled={false}
             rotateEnabled={false}
           >
-            {/* Current location marker */}
-            {currentLocation && (
-              <Marker
-                coordinate={currentLocation}
-                title="Your Location"
-                pinColor={BRAND[600]}
-              >
-                <View style={styles.currentLocationMarker}>
-                  <Ionicons name="location" size={32} color={BRAND[600]} />
-                </View>
-              </Marker>
-            )}
-
             {/* Item location markers */}
             {itemsWithLocations.map((item) => (
               <Marker
@@ -1099,8 +1288,31 @@ export default function CalendarScreen() {
             ))}
           </MapView>
 
+          {/* Location refused: say so, and offer the only route back. */}
+          {locationStatus === 'denied' && (
+            <GlassCard tint="light" intensity={60} radius={RADIUS.lg} style={styles.locationNotice}>
+              <View style={styles.locationNoticeInner}>
+                <Ionicons name="navigate-circle-outline" size={22} color={BRAND[600]} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.locationNoticeTitle}>Location is off</Text>
+                  <Text style={styles.locationNoticeSub}>
+                    Silo can still map your saved places — it just can&apos;t centre on you.
+                  </Text>
+                </View>
+                <PressableScale
+                  haptic="light"
+                  style={styles.locationNoticeBtn}
+                  onPress={() => Linking.openSettings().catch(() => {})}
+                  accessibilityLabel="Open location settings"
+                >
+                  <Text style={styles.locationNoticeBtnText}>Settings</Text>
+                </PressableScale>
+              </View>
+            </GlassCard>
+          )}
+
           {/* Map Items List */}
-          {itemsWithLocations.length > 0 && (
+          {itemsWithLocations.length > 0 ? (
             <View style={styles.mapItemsList}>
               <Text style={styles.mapSectionTitle}>
                 Saved Places ({itemsWithLocations.length})
@@ -1108,8 +1320,9 @@ export default function CalendarScreen() {
               <FlatList
                 data={itemsWithLocations}
                 renderItem={({ item }) => (
-                  <TouchableOpacity
+                  <PressableScale
                     style={styles.mapItemCard}
+                    scaleTo={0.985}
                     onPress={() => handleItemPress(item.id)}
                   >
                     <Ionicons name="location" size={20} color={BRAND[600]} />
@@ -1121,8 +1334,8 @@ export default function CalendarScreen() {
                         {item.place_name || item.place_address || 'Location'}
                       </Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={20} color={INK[300]} />
-                  </TouchableOpacity>
+                    <Ionicons name="chevron-forward" size={20} color={INK[400]} />
+                  </PressableScale>
                 )}
                 keyExtractor={item => item.id}
                 contentContainerStyle={[
@@ -1131,44 +1344,65 @@ export default function CalendarScreen() {
                 contentInsetAdjustmentBehavior="automatic"
               />
             </View>
+          ) : (
+            <View style={[styles.mapItemsList, styles.mapEmptyPanel]}>
+              <EmptyState
+                icon="location-outline"
+                title="No places pinned yet"
+                subtitle="Save something with an address and it lands on this map."
+              />
+            </View>
           )}
-        </View>
+        </Animated.View>
       )}
 
       {viewMode === 'bucketlist' && (
-        <View style={styles.bucketlistContainer}>
+        <Animated.View style={styles.bucketlistContainer} entering={FadeIn.duration(DURATION.fast)}>
           <View style={styles.bucketlistHeader}>
             <Text style={styles.bucketlistTitle}>
-              Bucket List ({bucketlistItems.length})
+              {bucketlistItems.length > 0
+                ? `${bucketDone} of ${bucketlistItems.length} done`
+                : 'Bucket List'}
             </Text>
             <Text style={styles.bucketlistSubtitle}>
               Things you want to do when the circumstances are right
             </Text>
+            {bucketlistItems.length > 0 && (
+              <View style={styles.progressTrack}>
+                <Animated.View style={[styles.progressFill, bucketFillStyle]} />
+              </View>
+            )}
           </View>
 
           {bucketlistItems.length === 0 ? (
             <View style={styles.emptyContainer}>
-              <Ionicons name="list-outline" size={64} color={INK[300]} />
-              <Text style={styles.emptyText}>No bucket list items yet</Text>
-              <Text style={styles.emptySubtext}>
-                Hold down on any card to add it to your bucket list
-              </Text>
+              <EmptyState
+                icon="list-outline"
+                title="No bucket list items yet"
+                subtitle="Hold down on any card to add it to your bucket list."
+              />
             </View>
           ) : (
             <FlatList
-              data={bucketlistItems}
+              data={sortedBucketlist}
               renderItem={({ item }) => (
                 <View style={styles.bucketlistItemWrapper}>
-                  <TouchableOpacity
+                  <PressableScale
+                    haptic="selection"
                     style={styles.bucketlistCheckbox}
                     onPress={() => handleToggleBucketlistComplete(item.id)}
+                    accessibilityLabel={
+                      item.bucketlist_completed
+                        ? `Mark ${item.title} not done`
+                        : `Mark ${item.title} done`
+                    }
                   >
                     <Ionicons
                       name={item.bucketlist_completed ? 'checkbox' : 'checkbox-outline'}
                       size={24}
-                      color={item.bucketlist_completed ? '#22c55e' : INK[300]}
+                      color={item.bucketlist_completed ? STATUS.success : INK[500]}
                     />
-                  </TouchableOpacity>
+                  </PressableScale>
                   <View style={styles.bucketlistItemContent}>
                     <ItemCard
                       item={item}
@@ -1186,7 +1420,7 @@ export default function CalendarScreen() {
               contentInsetAdjustmentBehavior="automatic"
             />
           )}
-        </View>
+        </Animated.View>
       )}
 
       {/* Add Event Modal */}
@@ -1194,21 +1428,38 @@ export default function CalendarScreen() {
         visible={showAddEventModal}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => setShowAddEventModal(false)}
+        onRequestClose={closeAddEventModal}
       >
         <View style={styles.modalOverlay}>
+          {/* Tap-outside-to-dismiss. A plain Pressable, not PressableScale —
+              scaling the scrim on touch would look like a glitch. */}
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeAddEventModal}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss"
+          />
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>New Event</Text>
-              <TouchableOpacity
-                onPress={() => setShowAddEventModal(false)}
+              <PressableScale
+                haptic="light"
+                onPress={closeAddEventModal}
                 style={styles.modalCloseButton}
+                accessibilityLabel="Close"
               >
                 <Ionicons name="close" size={24} color={INK[700]} />
-              </TouchableOpacity>
+              </PressableScale>
             </View>
 
-            <View style={styles.modalBody}>
+            {/* Scrollable: two open 200pt spinners used to push "Create Event"
+                off the bottom of an 80%-height sheet with no way to reach it. */}
+            <ScrollView
+              style={styles.modalBody}
+              contentContainerStyle={styles.modalBodyContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
               <TextInput
                 style={styles.input}
                 placeholder="Event title"
@@ -1217,9 +1468,16 @@ export default function CalendarScreen() {
                 placeholderTextColor={INK[400]}
               />
 
-              <TouchableOpacity
+              <PressableScale
+                haptic="light"
                 style={styles.pickerButton}
-                onPress={() => setShowDatePicker(true)}
+                // Mutually exclusive with the time picker — two open spinners
+                // don't fit the sheet.
+                onPress={() => {
+                  setShowTimePicker(false);
+                  setShowDatePicker(v => !v);
+                }}
+                accessibilityLabel="Choose date"
               >
                 <Ionicons name="calendar-outline" size={24} color={BRAND[600]} />
                 <View style={styles.pickerContent}>
@@ -1228,20 +1486,12 @@ export default function CalendarScreen() {
                     {format(newEventDate, 'MMMM d, yyyy')}
                   </Text>
                 </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.pickerButton}
-                onPress={() => setShowTimePicker(true)}
-              >
-                <Ionicons name="time-outline" size={24} color={BRAND[600]} />
-                <View style={styles.pickerContent}>
-                  <Text style={styles.pickerLabel}>Time</Text>
-                  <Text style={styles.pickerValue}>
-                    {format(newEventTime, 'h:mm a')}
-                  </Text>
-                </View>
-              </TouchableOpacity>
+                <Ionicons
+                  name={showDatePicker ? 'chevron-up' : 'chevron-down'}
+                  size={18}
+                  color={INK[400]}
+                />
+              </PressableScale>
 
               {showDatePicker && (
                 <View style={styles.pickerContainer}>
@@ -1256,25 +1506,46 @@ export default function CalendarScreen() {
                       }
                       if (selectedDate) {
                         setNewEventDate(selectedDate);
-                        if (Platform.OS === 'ios') {
-                          // On iOS, keep picker open but allow closing
-                        }
                       }
                     }}
                     minimumDate={new Date()}
                     style={Platform.OS === 'ios' ? styles.iosPicker : undefined}
-                    textColor={Platform.OS === 'ios' ? '#000000' : undefined}
+                    textColor={Platform.OS === 'ios' ? INK[900] : undefined}
                   />
                   {Platform.OS === 'ios' && (
-                    <TouchableOpacity
+                    <PressableScale
+                      haptic="light"
                       style={styles.pickerDoneButton}
                       onPress={() => setShowDatePicker(false)}
                     >
                       <Text style={styles.pickerDoneText}>Done</Text>
-                    </TouchableOpacity>
+                    </PressableScale>
                   )}
                 </View>
               )}
+
+              <PressableScale
+                haptic="light"
+                style={styles.pickerButton}
+                onPress={() => {
+                  setShowDatePicker(false);
+                  setShowTimePicker(v => !v);
+                }}
+                accessibilityLabel="Choose time"
+              >
+                <Ionicons name="time-outline" size={24} color={BRAND[600]} />
+                <View style={styles.pickerContent}>
+                  <Text style={styles.pickerLabel}>Time</Text>
+                  <Text style={styles.pickerValue}>
+                    {format(newEventTime, 'h:mm a')}
+                  </Text>
+                </View>
+                <Ionicons
+                  name={showTimePicker ? 'chevron-up' : 'chevron-down'}
+                  size={18}
+                  color={INK[400]}
+                />
+              </PressableScale>
 
               {showTimePicker && (
                 <View style={styles.pickerContainer}>
@@ -1292,15 +1563,16 @@ export default function CalendarScreen() {
                       }
                     }}
                     style={Platform.OS === 'ios' ? styles.iosPicker : undefined}
-                    textColor={Platform.OS === 'ios' ? '#000000' : undefined}
+                    textColor={Platform.OS === 'ios' ? INK[900] : undefined}
                   />
                   {Platform.OS === 'ios' && (
-                    <TouchableOpacity
+                    <PressableScale
+                      haptic="light"
                       style={styles.pickerDoneButton}
                       onPress={() => setShowTimePicker(false)}
                     >
                       <Text style={styles.pickerDoneText}>Done</Text>
-                    </TouchableOpacity>
+                    </PressableScale>
                   )}
                 </View>
               )}
@@ -1309,6 +1581,7 @@ export default function CalendarScreen() {
                 haptic="light"
                 style={styles.saveButton}
                 onPress={handleCreateEvent}
+                accessibilityLabel="Create event"
               >
                 <LinearGradient
                   colors={GRADIENTS.brand}
@@ -1319,7 +1592,7 @@ export default function CalendarScreen() {
                   <Text style={styles.saveButtonText}>Create Event</Text>
                 </LinearGradient>
               </PressableScale>
-            </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1327,79 +1600,67 @@ export default function CalendarScreen() {
   );
 }
 
-
 const styles = StyleSheet.create({
-  pickerContainer: {
-    marginVertical: 16,
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  iosPicker: {
-    height: 200,
-    width: '100%',
-  },
-  pickerDoneButton: {
-    marginTop: 8,
-    paddingVertical: 12,
-    backgroundColor: BRAND[600],
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  pickerDoneText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
   container: {
     flex: 1,
     backgroundColor: INK[50],
   },
+  pane: { flex: 1 },
   header: {
     backgroundColor: 'transparent',
-    paddingBottom: 12,
-    paddingHorizontal: 16,
+    paddingBottom: SPACE.md,
+    paddingHorizontal: SPACE.base,
   },
-  segmentedControl: {
-    flexDirection: 'row',
-    backgroundColor: '#ffffff',
+  // Shadow and clipping have to be separate views: `overflow: hidden` (needed
+  // for the scroll fade + pill) clips an iOS shadow off the same node.
+  segmentShadow: {
     borderRadius: RADIUS.pill,
-    padding: 4,
+    backgroundColor: '#ffffff',
+    ...SHADOW.card,
+  },
+  segmentClip: {
+    borderRadius: RADIUS.pill,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: HAIRLINE,
-    shadowColor: INK[900],
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 3,
   },
-  segmentWrap: {
-    flex: 1,
+  segmentedControl: {
+    padding: SPACE.xs,
+  },
+  segmentRow: {
+    flexDirection: 'row',
+    position: 'relative',
+  },
+  segmentPill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND[600],
+  },
+  segmentFade: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 28,
   },
   segment: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: SPACE.sm,
+    paddingHorizontal: 14,
     borderRadius: RADIUS.pill,
     gap: 6,
   },
-  segmentActive: {
-    backgroundColor: BRAND[600],
-  },
   segmentText: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...TYPE.subhead,
     color: INK[500],
   },
   segmentTextActive: {
-    color: '#fff',
+    color: TEXT.inverse,
   },
   calendarContainer: {
     flex: 1,
@@ -1408,16 +1669,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#ffffff',
     borderRadius: RADIUS.pill,
-    padding: 4,
-    margin: 12,
-    marginBottom: 8,
+    padding: SPACE.xs,
+    margin: SPACE.md,
+    marginBottom: SPACE.sm,
     borderWidth: 1,
     borderColor: HAIRLINE,
   },
   viewModeButton: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: SPACE.sm,
+    paddingHorizontal: SPACE.base,
     borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1426,104 +1686,90 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND[600],
   },
   viewModeText: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...TYPE.subhead,
     color: INK[500],
   },
   viewModeTextActive: {
-    color: '#fff',
+    color: TEXT.inverse,
   },
   dayViewContainer: {
     backgroundColor: '#ffffff',
     borderRadius: RADIUS.lg,
-    margin: 12,
-    marginTop: 8,
+    margin: SPACE.md,
+    marginTop: SPACE.sm,
     borderWidth: 1,
     borderColor: HAIRLINE,
-    shadowColor: INK[900],
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    elevation: 3,
+    ...SHADOW.card,
   },
   dayHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: HAIRLINE,
+    padding: SPACE.base,
   },
   dayNavButton: {
-    padding: 8,
+    padding: SPACE.sm,
   },
   dayTitleContainer: {
     flex: 1,
     alignItems: 'center',
   },
   dayTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: INK[900],
-    marginBottom: 4,
+    ...TYPE.title3,
+    color: TEXT.primary,
+    marginBottom: SPACE.xs,
   },
   todayButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingHorizontal: SPACE.md,
+    paddingVertical: SPACE.xs,
     backgroundColor: BRAND[600],
     borderRadius: RADIUS.pill,
   },
   todayButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#fff',
+    ...TYPE.caption,
+    color: TEXT.inverse,
   },
   weekViewContainer: {
     backgroundColor: '#ffffff',
     borderRadius: RADIUS.lg,
-    margin: 12,
-    marginTop: 8,
+    margin: SPACE.md,
+    marginTop: SPACE.sm,
     borderWidth: 1,
     borderColor: HAIRLINE,
-    shadowColor: INK[900],
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    elevation: 3,
+    ...SHADOW.card,
   },
   weekViewHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
+    padding: SPACE.base,
     borderBottomWidth: 1,
     borderBottomColor: HAIRLINE,
   },
   weekNavButton: {
-    padding: 8,
+    padding: SPACE.sm,
   },
   weekTitleContainer: {
     flex: 1,
     alignItems: 'center',
   },
   weekTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: INK[900],
-    marginBottom: 4,
+    ...TYPE.headline,
+    color: TEXT.primary,
+    marginBottom: SPACE.xs,
   },
   weekDaysContainer: {
     flexDirection: 'row',
-    paddingHorizontal: 8,
-    paddingVertical: 12,
+    paddingHorizontal: SPACE.sm,
+    paddingVertical: SPACE.md,
   },
   weekDayCell: {
     width: (SCREEN_WIDTH - 32) / 7,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginHorizontal: 2,
+    paddingVertical: SPACE.md,
+    borderRadius: RADIUS.sm,
+    marginHorizontal: SPACE.xxs,
   },
   weekDayCellToday: {
     backgroundColor: BRAND[100],
@@ -1532,30 +1778,31 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND[600],
   },
   weekDayName: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: INK[400],
-    marginBottom: 4,
+    ...TYPE.overline,
+    letterSpacing: 0.2,
+    color: TEXT.tertiary,
+    marginBottom: SPACE.xs,
   },
   weekDayNumber: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: INK[900],
+    ...TYPE.title3,
+    color: TEXT.primary,
   },
   weekDayNumberToday: {
     color: BRAND[700],
-    fontWeight: '700',
   },
   weekDayNumberSelected: {
-    color: '#fff',
+    color: TEXT.inverse,
   },
   weekEventIndicator: {
     position: 'absolute',
-    bottom: 4,
+    bottom: SPACE.xs,
     width: 4,
     height: 4,
-    borderRadius: 2,
+    borderRadius: RADIUS.pill,
     backgroundColor: BRAND[600],
+  },
+  weekEventIndicatorSelected: {
+    backgroundColor: TEXT.inverse,
   },
   eventsContainer: {
     flex: 1,
@@ -1565,88 +1812,59 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    padding: SPACE.base,
     borderBottomWidth: 1,
     borderBottomColor: HAIRLINE,
   },
   timelineTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: INK[900],
+    ...TYPE.title3,
+    color: TEXT.primary,
   },
   addButton: {
     borderRadius: RADIUS.pill,
-    shadowColor: BRAND[600],
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    ...SHADOW.brandCard,
   },
   addButtonGradient: {
     width: 34,
     height: 34,
-    borderRadius: 17,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
   eventsList: {
-    padding: 16,
+    padding: SPACE.base,
   },
   eventCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ffffff',
-    padding: 12,
+    padding: SPACE.md,
     borderRadius: RADIUS.lg,
-    marginBottom: 12,
+    marginBottom: SPACE.md,
     borderWidth: 1,
     borderColor: HAIRLINE,
-    shadowColor: INK[900],
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    elevation: 2,
+    ...SHADOW.card,
   },
   eventCardIcon: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: RADIUS.pill,
     backgroundColor: BRAND[50],
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: SPACE.md,
   },
   eventCardContent: {
     flex: 1,
   },
   eventCardTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: INK[900],
-    marginBottom: 4,
+    ...TYPE.bodyStrong,
+    color: TEXT.primary,
+    marginBottom: SPACE.xs,
   },
   eventCardTime: {
-    fontSize: 14,
-    color: INK[400],
-  },
-  emptyEventsContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  emptyEventsText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: INK[600],
-    marginTop: 16,
-  },
-  emptyEventsSubtext: {
-    fontSize: 14,
-    color: INK[400],
-    marginTop: 8,
-    textAlign: 'center',
-    paddingHorizontal: 32,
+    ...TYPE.footnote,
+    color: TEXT.tertiary,
   },
   mapContainer: {
     flex: 1,
@@ -1654,13 +1872,45 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
-  currentLocationMarker: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   markerContainer: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // No shadow token here: GlassCard clips to its radius (overflow: hidden),
+  // which would swallow an iOS shadow drawn on the same node.
+  locationNotice: {
+    position: 'absolute',
+    top: SPACE.md,
+    left: SPACE.base,
+    right: SPACE.base,
+  },
+  locationNoticeInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE.md,
+    paddingHorizontal: 14,
+    paddingVertical: SPACE.md,
+  },
+  locationNoticeTitle: {
+    ...TYPE.subhead,
+    fontWeight: '700',
+    color: TEXT.primary,
+  },
+  locationNoticeSub: {
+    ...TYPE.caption,
+    fontWeight: '500',
+    color: TEXT.secondary,
+    marginTop: SPACE.xxs,
+  },
+  locationNoticeBtn: {
+    paddingHorizontal: SPACE.md,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND[600],
+  },
+  locationNoticeBtnText: {
+    ...TYPE.caption,
+    color: TEXT.inverse,
   },
   mapItemsList: {
     position: 'absolute',
@@ -1668,179 +1918,194 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     maxHeight: SCREEN_HEIGHT * 0.4,
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    borderTopLeftRadius: RADIUS.lg,
+    borderTopRightRadius: RADIUS.lg,
+    paddingTop: SPACE.base,
+    ...SHADOW.floating,
+  },
+  // EmptyState is `flex: 1`, which collapses to zero inside an auto-height
+  // parent — the panel needs a concrete height for it to lay out.
+  mapEmptyPanel: {
+    height: 300,
+    paddingTop: 0,
   },
   mapSectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: INK[900],
-    marginBottom: 12,
-    paddingHorizontal: 16,
+    ...TYPE.title3,
+    color: TEXT.primary,
+    marginBottom: SPACE.md,
+    paddingHorizontal: SPACE.base,
   },
   mapItemCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.md,
     borderBottomWidth: 1,
     borderBottomColor: HAIRLINE,
   },
   mapItemContent: {
     flex: 1,
-    marginLeft: 12,
+    marginLeft: SPACE.md,
   },
   mapItemTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: INK[900],
-    marginBottom: 4,
+    ...TYPE.bodyStrong,
+    color: TEXT.primary,
+    marginBottom: SPACE.xs,
   },
   mapItemLocation: {
-    fontSize: 14,
-    color: INK[400],
+    ...TYPE.footnote,
+    color: TEXT.tertiary,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: 32,
+    borderTopLeftRadius: RADIUS.lg,
+    borderTopRightRadius: RADIUS.lg,
+    paddingBottom: SPACE.xxl,
     maxHeight: '80%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    padding: SPACE.base,
     borderBottomWidth: 1,
     borderBottomColor: HAIRLINE,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: INK[900],
+    ...TYPE.title2,
+    color: TEXT.primary,
   },
   modalCloseButton: {
-    padding: 4,
+    padding: SPACE.xs,
   },
+  // flexShrink is not the RN default; without it the ScrollView refuses to
+  // shrink inside the sheet's maxHeight and never scrolls.
   modalBody: {
-    padding: 16,
+    flexShrink: 1,
+  },
+  modalBodyContent: {
+    padding: SPACE.base,
   },
   input: {
     backgroundColor: INK[100],
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: INK[900],
-    marginBottom: 12,
+    borderRadius: RADIUS.md,
+    padding: SPACE.base,
+    ...TYPE.body,
+    color: TEXT.primary,
+    marginBottom: SPACE.md,
   },
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: INK[100],
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
+    padding: SPACE.base,
+    borderRadius: RADIUS.md,
+    marginBottom: SPACE.md,
   },
   pickerContent: {
-    marginLeft: 12,
+    marginLeft: SPACE.md,
     flex: 1,
   },
   pickerLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: INK[400],
+    ...TYPE.overline,
     textTransform: 'uppercase',
-    marginBottom: 4,
+    color: TEXT.tertiary,
+    marginBottom: SPACE.xs,
   },
   pickerValue: {
-    fontSize: 16,
-    color: INK[900],
+    ...TYPE.body,
+    color: TEXT.primary,
+  },
+  pickerContainer: {
+    marginBottom: SPACE.base,
+    backgroundColor: '#ffffff',
+    borderRadius: RADIUS.md,
+    padding: SPACE.sm,
+    ...SHADOW.card,
+  },
+  iosPicker: {
+    height: 200,
+    width: '100%',
+  },
+  pickerDoneButton: {
+    marginTop: SPACE.sm,
+    paddingVertical: SPACE.md,
+    backgroundColor: BRAND[600],
+    borderRadius: RADIUS.sm,
+    alignItems: 'center',
+  },
+  pickerDoneText: {
+    ...TYPE.bodyStrong,
+    color: TEXT.inverse,
   },
   saveButton: {
     borderRadius: RADIUS.pill,
-    marginTop: 8,
-    shadowColor: BRAND[600],
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 4,
+    marginTop: SPACE.sm,
+    ...SHADOW.brandCard,
   },
   saveButtonGradient: {
-    padding: 16,
+    padding: SPACE.base,
     borderRadius: RADIUS.pill,
     alignItems: 'center',
     overflow: 'hidden',
   },
   saveButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    ...TYPE.bodyStrong,
+    color: TEXT.inverse,
   },
   bucketlistContainer: {
     flex: 1,
   },
   bucketlistHeader: {
-    padding: 16,
+    padding: SPACE.base,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: HAIRLINE,
   },
   bucketlistTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 4,
+    ...TYPE.title1,
+    color: TEXT.primary,
+    marginBottom: SPACE.xs,
   },
   bucketlistSubtitle: {
-    fontSize: 14,
-    color: '#666',
+    ...TYPE.footnote,
+    color: TEXT.secondary,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: RADIUS.pill,
+    backgroundColor: INK[100],
+    marginTop: SPACE.md,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND[600],
   },
   bucketlistContent: {
-    padding: 16,
+    padding: SPACE.base,
   },
   bucketlistItemWrapper: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: SPACE.md,
   },
   bucketlistCheckbox: {
-    marginRight: 12,
-    marginTop: 8,
-    padding: 4,
+    marginRight: SPACE.md,
+    marginTop: SPACE.sm,
+    padding: SPACE.xs,
   },
   bucketlistItemContent: {
     flex: 1,
   },
   emptyContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#666',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
   },
 });
-

@@ -10,6 +10,8 @@
  * capture path (popup, menus, spotlight, omnibox) inherits sync for free;
  * remote applies go through applyRemotePut/Delete which never mark dirty
  * (the anti-echo invariant).
+ * v3 indexes `url` — without it `getItemByUrl` threw `Schema(...)` on every
+ * call, which is why duplicate detection never once fired.
  */
 import Dexie, { type Table } from 'dexie';
 import type { Item, Stack } from './types';
@@ -58,6 +60,16 @@ class SiloDB extends Dexie {
       dirty: 'id',
       tombstones: 'id',
     });
+    // v3 adds the `url` index. Dexie re-reads the existing rows to build it;
+    // rows with no `url` are simply absent from the index (undefined keys are
+    // skipped), which is exactly what we want for notes and quotes.
+    this.version(3).stores({
+      items: 'id, created_at, classification, stack_id, archived, viewed, url',
+      stacks: 'id, name',
+      kv: 'key',
+      dirty: 'id',
+      tombstones: 'id',
+    });
   }
 }
 
@@ -92,8 +104,28 @@ export async function deleteItem(id: string): Promise<void> {
   });
 }
 
+/**
+ * Exact-match lookup on the `url` index. Callers must pass an ALREADY
+ * NORMALIZED url (`lib/url.ts` `normalizeUrl`) — every capture path stores the
+ * normalized form, so a raw address with utm noise on it will miss. Prefer
+ * `lib/dupes.ts` `checkDuplicate`, which normalizes and has a scan fallback for
+ * rows written before that rule existed.
+ */
 export async function getItemByUrl(url: string): Promise<Item | undefined> {
   return db.items.where('url').equals(url).first();
+}
+
+/**
+ * Fire `cb` after any local write to `items`. Dexie hooks are per-INSTANCE and
+ * in-process, so consumers (the search index) must subscribe to THIS db rather
+ * than opening a second `new Dexie('silo')` — a second instance would both
+ * fail to open (its declared version trails this one) and never observe the
+ * writes made through here.
+ */
+export function onItemsChanged(cb: () => void): void {
+  db.items.hook('creating', cb);
+  db.items.hook('updating', cb);
+  db.items.hook('deleting', cb);
 }
 
 // ---- Sync helpers (S2) ------------------------------------------------------

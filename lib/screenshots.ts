@@ -1,15 +1,18 @@
 /**
  * Screenshot Detection Module
- * 
- * This module monitors the device's photo library for new screenshots
- * and allows the user to import them into Silo for analysis and organization.
- * 
- * Features:
- * - Request media library permissions
- * - Detect new screenshots
- * - Get screenshot metadata
- * - Convert screenshots to base64 for AI analysis
- * 
+ *
+ * Reads the device photo library and surfaces *only screenshots* for the triage
+ * deck, plus the helpers that turn one into something the AI endpoint accepts.
+ *
+ * Two things callers must know:
+ * - Permission state is RETURNED, never swallowed. `queryRecentScreenshots`
+ *   reports `denied` / `undetermined` alongside an empty list so the UI can
+ *   prime before the OS dialog and route a hard denial to Settings, instead of
+ *   lying with "No screenshots found".
+ * - Detection is platform-specific. iOS tags real screenshots with a PhotoKit
+ *   media subtype; the filename heuristic is Android-only (on iOS `IMG_####`
+ *   is every camera photo, which turned the deck into the whole camera roll).
+ *
  * Dependencies:
  * - expo-media-library: Access to device photos
  */
@@ -31,93 +34,133 @@ export interface Screenshot {
 }
 
 /**
- * Request media library permissions
- * 
- * @returns true if permission granted, false otherwise
+ * Media-library access as the UI needs to reason about it.
+ *
+ * `limited` is iOS 14+ / Android 14+ "selected photos": queries succeed but
+ * only ever see the subset the user picked, so it deserves its own message.
  */
-export async function requestMediaLibraryPermissions(): Promise<boolean> {
+export type MediaPermissionStatus = 'granted' | 'limited' | 'denied' | 'undetermined';
+
+/** Result of a screenshot query — assets are empty whenever access isn't usable. */
+export interface ScreenshotQuery {
+  status: MediaPermissionStatus;
+  assets: Screenshot[];
+}
+
+function toPermissionStatus(response: MediaLibrary.PermissionResponse): MediaPermissionStatus {
+  if (response.status === MediaLibrary.PermissionStatus.GRANTED) {
+    return response.accessPrivileges === 'limited' ? 'limited' : 'granted';
+  }
+  if (response.status === MediaLibrary.PermissionStatus.DENIED) return 'denied';
+  return 'undetermined';
+}
+
+/** True while the library can actually be queried (full or partial access). */
+function isReadable(status: MediaPermissionStatus): boolean {
+  return status === 'granted' || status === 'limited';
+}
+
+/**
+ * Read the current permission WITHOUT showing the OS dialog.
+ *
+ * Lets a screen render its priming card first — the system prompt can only be
+ * shown once, so firing it unexplained on mount burns the single ask.
+ */
+export async function getMediaLibraryPermissionStatus(): Promise<MediaPermissionStatus> {
   try {
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    return status === 'granted';
+    return toPermissionStatus(await MediaLibrary.getPermissionsAsync());
+  } catch (error) {
+    console.error('Failed to read media library permissions:', error);
+    return 'undetermined';
+  }
+}
+
+/**
+ * Show the OS permission dialog.
+ *
+ * @returns the resulting status — `denied` means Settings is the only way back.
+ */
+export async function requestMediaLibraryPermissions(): Promise<MediaPermissionStatus> {
+  try {
+    return toPermissionStatus(await MediaLibrary.requestPermissionsAsync());
   } catch (error) {
     console.error('Failed to request media library permissions:', error);
-    return false;
+    return 'denied';
   }
 }
 
 /**
- * Detect if an asset is a screenshot based on filename patterns
- * 
- * @param filename - Asset filename
- * @returns true if filename matches screenshot pattern
+ * Android screenshot detection. Android exposes no media subtype, so the
+ * filename is all we have — and unlike iOS it is actually discriminating.
  */
-function isScreenshot(filename: string): boolean {
-  const lowerFilename = filename.toLowerCase();
-  
-  // iOS screenshot patterns
-  if (Platform.OS === 'ios') {
-    return lowerFilename.startsWith('img_') || 
-           lowerFilename.includes('screenshot');
-  }
-  
-  // Android screenshot patterns
-  if (Platform.OS === 'android') {
-    return lowerFilename.includes('screenshot') ||
-           lowerFilename.includes('screen_') ||
-           lowerFilename.startsWith('scr_');
-  }
-  
-  return false;
+function isAndroidScreenshot(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return (
+    lower.includes('screenshot') || lower.includes('screen_') || lower.startsWith('scr_')
+  );
 }
 
 /**
- * Get recent screenshots from the device
- * 
+ * Get recent screenshots from the device, along with the permission status.
+ *
+ * Never prompts — call `requestMediaLibraryPermissions()` from the priming UI
+ * and re-query. A failed query returns the status with an empty list rather
+ * than throwing, so the caller only has one shape to render.
+ *
  * @param limit - Maximum number of screenshots to retrieve (default: 20)
- * @returns Array of screenshot objects
  */
-export async function getRecentScreenshots(limit: number = 20): Promise<Screenshot[]> {
+export async function queryRecentScreenshots(limit: number = 20): Promise<ScreenshotQuery> {
+  const status = await getMediaLibraryPermissionStatus();
+  if (!isReadable(status)) return { status, assets: [] };
+
+  const isIOS = Platform.OS === 'ios';
+  const options: MediaLibrary.AssetsOptions = {
+    mediaType: 'photo',
+    sortBy: [[MediaLibrary.SortBy.creationTime, false]],
+    // iOS filters server-side by subtype, so `limit` is exact. Android has to
+    // over-fetch and filter by filename below.
+    first: isIOS ? limit : 100,
+  };
+  if (isIOS) options.mediaSubtypes = ['screenshot'];
+
   try {
-    // Check permissions
-    const hasPermission = await requestMediaLibraryPermissions();
-    if (!hasPermission) {
-      throw new Error('Media library permission not granted');
+    const page = await MediaLibrary.getAssetsAsync(options);
+    const assets: Screenshot[] = [];
+    for (const asset of page.assets) {
+      if (assets.length >= limit) break;
+      if (!isIOS && !isAndroidScreenshot(asset.filename)) continue;
+      assets.push({
+        id: asset.id,
+        uri: asset.uri,
+        filename: asset.filename,
+        creationTime: asset.creationTime,
+        width: asset.width,
+        height: asset.height,
+        mimeType: getMimeTypeFromFilename(asset.filename),
+      });
     }
-
-    // Get recent photos
-    const albumAssets = await MediaLibrary.getAssetsAsync({
-      mediaType: 'photo',
-      sortBy: [[MediaLibrary.SortBy.creationTime, false]],
-      first: 100, // Get more than needed to filter screenshots
-    });
-
-    // Filter screenshots
-    const screenshots: Screenshot[] = [];
-    
-    for (const asset of albumAssets.assets) {
-      if (isScreenshot(asset.filename) && screenshots.length < limit) {
-        screenshots.push({
-          id: asset.id,
-          uri: asset.uri,
-          filename: asset.filename,
-          creationTime: asset.creationTime,
-          width: asset.width,
-          height: asset.height,
-          mimeType: 'image/jpeg', // Default to JPEG
-        });
-      }
-    }
-
-    return screenshots;
+    return { status, assets };
   } catch (error) {
     console.error('Failed to get recent screenshots:', error);
-    return [];
+    return { status, assets: [] };
   }
+}
+
+/**
+ * Array-only convenience wrapper for callers with no permission UI of their own
+ * (the Add screen's recent-shots strip) — it owns the prompt, and cannot tell
+ * "no screenshots" from "denied". Prefer `queryRecentScreenshots`.
+ */
+export async function getRecentScreenshots(limit: number = 20): Promise<Screenshot[]> {
+  const first = await queryRecentScreenshots(limit);
+  if (first.status !== 'undetermined') return first.assets;
+  if (!isReadable(await requestMediaLibraryPermissions())) return [];
+  return (await queryRecentScreenshots(limit)).assets;
 }
 
 /**
  * Convert image URI to base64 string for API transmission
- * 
+ *
  * @param uri - Image URI
  * @returns Base64-encoded image data (without data URI prefix)
  */
@@ -125,12 +168,12 @@ export async function imageUriToBase64(uri: string): Promise<string> {
   try {
     // Handle different URI schemes
     let fileUri = uri;
-    
+
     // If it's a media library URI (ph:// or assets-library://), we need to get the actual file path
     if (uri.startsWith('ph://') || uri.startsWith('assets-library://')) {
       // Extract asset ID from URI
       const assetId = uri.replace(/^(ph:\/\/|assets-library:\/\/)/, '').split('/')[0];
-      
+
       // Get asset info to get the proper URI
       const asset = await MediaLibrary.getAssetInfoAsync(assetId);
       if (asset.localUri) {
@@ -139,17 +182,17 @@ export async function imageUriToBase64(uri: string): Promise<string> {
         fileUri = asset.uri;
       }
     }
-    
+
     // Use fetch to get the file as a blob, then convert to base64
     // This works for both file:// URIs and other URI schemes
     const response = await fetch(fileUri);
-    
+
     if (!response.ok) {
       throw new Error(`Failed to fetch image: ${response.statusText}`);
     }
-    
+
     const blob = await response.blob();
-    
+
     // Convert blob to base64 using FileReader
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -157,8 +200,8 @@ export async function imageUriToBase64(uri: string): Promise<string> {
         try {
           const base64String = reader.result as string;
           // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-          const base64 = base64String.includes(',') 
-            ? base64String.split(',')[1] 
+          const base64 = base64String.includes(',')
+            ? base64String.split(',')[1]
             : base64String;
           resolve(base64);
         } catch {
@@ -176,13 +219,13 @@ export async function imageUriToBase64(uri: string): Promise<string> {
 
 /**
  * Get MIME type from file extension
- * 
+ *
  * @param filename - Filename with extension
  * @returns MIME type string
  */
 export function getMimeTypeFromFilename(filename: string): string {
   const extension = filename.split('.').pop()?.toLowerCase();
-  
+
   switch (extension) {
     case 'jpg':
     case 'jpeg':
@@ -197,5 +240,3 @@ export function getMimeTypeFromFilename(filename: string): string {
       return 'image/jpeg'; // Default fallback
   }
 }
-
-

@@ -2,10 +2,15 @@
  * Thin client to the Silo Cloudflare Worker — the same Worker the iOS app
  * uses. See spec §4.4. KEEP IN SYNC with the app's `lib/api.ts` shape.
  *
- * Config: SILO_API_BASE_URL and SILO_CLIENT_TOKEN live in `.env.local`
- * (mirror of the app's EXPO_PUBLIC_* values).
+ * Config: `WXT_SILO_API_BASE_URL` and `WXT_SILO_CLIENT_TOKEN` in
+ * `extension/.env.local` (mirror of the app's EXPO_PUBLIC_* values). The
+ * `WXT_` prefix is load-bearing — WXT only injects prefixed vars into the
+ * bundle, so an unprefixed name silently yields `API_BASE = ''`. See
+ * `.env.example`.
  *
- * Stub for M0 — fill in extractLink + analyzeImage when wiring the popup.
+ * EVERY call is time-boxed: a cold Cloudflare start must never hold a capture
+ * hostage. Callers save what they already have and enrich when (if) the
+ * response lands.
  */
 
 /** Extract-task request shape. Index signature lets callWorker's
@@ -36,6 +41,13 @@ const env = (import.meta as unknown as { env: Record<string, string | undefined>
 const API_BASE = env.WXT_SILO_API_BASE_URL ?? '';
 const CLIENT_TOKEN = env.WXT_SILO_CLIENT_TOKEN ?? '';
 
+/**
+ * Hard ceiling on any Worker round-trip. A Cloudflare cold start is ~1-2s; past
+ * ~3.5s the user has already decided to save and is staring at a spinner, so we
+ * abort and let the capture path proceed with what it has.
+ */
+const WORKER_TIMEOUT_MS = 3500;
+
 async function callWorker<T>(task: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${API_BASE}/api/gemini`, {
     method: 'POST',
@@ -44,6 +56,7 @@ async function callWorker<T>(task: string, body: Record<string, unknown>): Promi
       ...(CLIENT_TOKEN ? { 'X-Silo-Client': CLIENT_TOKEN } : {}),
     },
     body: JSON.stringify({ task, ...body }),
+    signal: AbortSignal.timeout(WORKER_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Worker ${task} failed: ${res.status}`);
   return (await res.json()) as T;

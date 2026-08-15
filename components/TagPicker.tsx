@@ -1,29 +1,24 @@
 /**
  * TagPicker Component
- * 
+ *
  * A reusable component for selecting and managing tags.
  * Allows users to add custom tags or select from common suggestions.
- * 
+ * Chips animate in/out and reflow with a layout transition, so adding or
+ * removing a tag never snaps the surrounding form.
+ *
  * Props:
  * - selectedTags: Array of currently selected tags
  * - onTagsChange: Callback when tags are added or removed
  * - maxTags: Maximum number of tags allowed (default: 10)
- * 
- * Dependencies:
- * - React Native core components
  */
 
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-} from 'react-native';
+import { View, Text, StyleSheet, TextInput, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BRAND, INK } from '@/lib/theme';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import PressableScale from '@/components/ui/PressableScale';
+import { LAYOUT } from '@/lib/motion';
+import { BRAND, INK, RADIUS, SPACE, TEXT, TYPE } from '@/lib/theme';
 
 interface TagPickerProps {
   selectedTags: string[];
@@ -51,10 +46,10 @@ const SUGGESTED_TAGS = [
   'inspiration',
 ];
 
-export default function TagPicker({ 
-  selectedTags, 
-  onTagsChange, 
-  maxTags = 10 
+export default function TagPicker({
+  selectedTags,
+  onTagsChange,
+  maxTags = 10,
 }: TagPickerProps) {
   const [inputValue, setInputValue] = useState('');
 
@@ -63,12 +58,12 @@ export default function TagPicker({
    */
   function addTag(tag: string) {
     const trimmedTag = tag.trim().toLowerCase();
-    
+
     // Validate tag
     if (!trimmedTag) return;
     if (selectedTags.includes(trimmedTag)) return;
     if (selectedTags.length >= maxTags) return;
-    
+
     onTagsChange([...selectedTags, trimmedTag]);
     setInputValue('');
   }
@@ -77,7 +72,7 @@ export default function TagPicker({
    * Remove a tag from the selected list
    */
   function removeTag(tag: string) {
-    onTagsChange(selectedTags.filter(t => t !== tag));
+    onTagsChange(selectedTags.filter((t) => t !== tag));
   }
 
   /**
@@ -91,18 +86,18 @@ export default function TagPicker({
    * Get suggested tags that aren't already selected
    */
   const availableSuggestions = SUGGESTED_TAGS.filter(
-    tag => !selectedTags.includes(tag)
+    (tag) => !selectedTags.includes(tag)
   );
 
   return (
     <View style={styles.container}>
       {/* Input Field */}
       <View style={styles.inputContainer}>
-        <Ionicons name="pricetag-outline" size={20} color={INK[500]} />
+        <Ionicons name="pricetag-outline" size={20} color={INK[400]} />
         <TextInput
           style={styles.input}
           placeholder="Add a tag..."
-          placeholderTextColor={INK[400]}
+          placeholderTextColor={TEXT.placeholder}
           value={inputValue}
           onChangeText={setInputValue}
           onSubmitEditing={handleSubmit}
@@ -110,11 +105,16 @@ export default function TagPicker({
           autoCapitalize="none"
           autoCorrect={false}
           maxLength={30}
+          accessibilityLabel="Add a tag"
         />
         {inputValue.length > 0 && (
-          <TouchableOpacity onPress={handleSubmit}>
+          <PressableScale
+            haptic="light"
+            accessibilityLabel={`Add tag ${inputValue.trim().toLowerCase()}`}
+            onPress={handleSubmit}
+          >
             <Ionicons name="add-circle" size={24} color={BRAND[600]} />
-          </TouchableOpacity>
+          </PressableScale>
         )}
       </View>
 
@@ -124,14 +124,17 @@ export default function TagPicker({
           <Text style={styles.sectionTitle}>Selected Tags</Text>
           <View style={styles.tagsContainer}>
             {selectedTags.map((tag) => (
-              <TouchableOpacity
-                key={tag}
-                style={styles.selectedTag}
-                onPress={() => removeTag(tag)}
-              >
-                <Text style={styles.selectedTagText}>#{tag}</Text>
-                <Ionicons name="close-circle" size={16} color="#fff" />
-              </TouchableOpacity>
+              <Animated.View key={tag} entering={FadeIn} exiting={FadeOut} layout={LAYOUT}>
+                <PressableScale
+                  haptic="selection"
+                  accessibilityLabel={`Remove tag ${tag}`}
+                  style={styles.selectedTag}
+                  onPress={() => removeTag(tag)}
+                >
+                  <Text style={styles.selectedTagText}>#{tag}</Text>
+                  <Ionicons name="close-circle" size={16} color={TEXT.inverse} />
+                </PressableScale>
+              </Animated.View>
             ))}
           </View>
         </View>
@@ -141,20 +144,23 @@ export default function TagPicker({
       {availableSuggestions.length > 0 && selectedTags.length < maxTags && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Suggested Tags</Text>
-          <ScrollView 
-            horizontal 
+          <ScrollView
+            horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.suggestionsContainer}
           >
             {availableSuggestions.map((tag) => (
-              <TouchableOpacity
-                key={tag}
-                style={styles.suggestedTag}
-                onPress={() => addTag(tag)}
-              >
-                <Text style={styles.suggestedTagText}>#{tag}</Text>
-                <Ionicons name="add" size={16} color={BRAND[600]} />
-              </TouchableOpacity>
+              <Animated.View key={tag} entering={FadeIn} exiting={FadeOut} layout={LAYOUT}>
+                <PressableScale
+                  haptic="selection"
+                  accessibilityLabel={`Add tag ${tag}`}
+                  style={styles.suggestedTag}
+                  onPress={() => addTag(tag)}
+                >
+                  <Text style={styles.suggestedTagText}>#{tag}</Text>
+                  <Ionicons name="add" size={16} color={BRAND[600]} />
+                </PressableScale>
+              </Animated.View>
             ))}
           </ScrollView>
         </View>
@@ -162,9 +168,7 @@ export default function TagPicker({
 
       {/* Tag Limit Info */}
       {selectedTags.length >= maxTags && (
-        <Text style={styles.limitText}>
-          Maximum {maxTags} tags reached
-        </Text>
+        <Text style={styles.limitText}>Maximum {maxTags} tags reached</Text>
       )}
     </View>
   );
@@ -177,73 +181,70 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: SPACE.sm,
     backgroundColor: INK[100],
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 16,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACE.md,
+    paddingVertical: SPACE.sm,
+    marginBottom: SPACE.base,
   },
   input: {
     flex: 1,
-    fontSize: 16,
-    color: INK[800],
-    marginLeft: 8,
-    paddingVertical: 4,
+    ...TYPE.body,
+    color: TEXT.primary,
+    paddingVertical: SPACE.xs,
   },
   section: {
-    marginBottom: 16,
+    marginBottom: SPACE.base,
   },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: INK[500],
-    marginBottom: 8,
+    ...TYPE.subhead,
+    color: TEXT.secondary,
+    marginBottom: SPACE.sm,
   },
   tagsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: SPACE.sm,
   },
   selectedTag: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: SPACE.xs,
     backgroundColor: BRAND[600],
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginRight: 8,
-    marginBottom: 8,
+    paddingHorizontal: SPACE.md,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
   },
   selectedTagText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    marginRight: 4,
+    ...TYPE.subhead,
+    color: TEXT.inverse,
   },
   suggestionsContainer: {
-    paddingRight: 16,
+    flexDirection: 'row',
+    gap: SPACE.sm,
+    paddingRight: SPACE.base,
   },
   suggestedTag: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: SPACE.xs,
     backgroundColor: BRAND[50],
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginRight: 8,
+    paddingHorizontal: SPACE.md,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
     borderWidth: 1,
     borderColor: BRAND[200],
   },
   suggestedTagText: {
-    color: BRAND[600],
-    fontSize: 14,
-    fontWeight: '600',
-    marginRight: 4,
+    ...TYPE.subhead,
+    color: BRAND[700],
   },
   limitText: {
-    fontSize: 12,
-    color: INK[400],
+    ...TYPE.caption,
+    fontWeight: '500',
+    color: TEXT.tertiary,
     textAlign: 'center',
-    marginTop: 8,
+    marginTop: SPACE.sm,
   },
 });
-

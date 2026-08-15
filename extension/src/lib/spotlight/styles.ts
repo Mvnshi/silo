@@ -3,56 +3,59 @@
  * file) because the content-script bundle is loaded into every page — a
  * single template literal is the smallest, no-fetch path.
  *
- * Tokens mirror the phone app's `lib/theme.ts` (BRAND violet scale, INK slate
- * scale, RADIUS). DO NOT introduce stock #007AFF or ad-hoc grays here — those
- * are banned across the product per the design spec.
+ * The palette comes from `lib/theme.ts` via `tokensCss(':host')`. `:root`
+ * matches nothing inside a shadow root, so the tokens are declared on the host
+ * element instead; `all: initial` (which the spec exempts custom properties
+ * from) still shields us from the page's styles.
+ *
+ * Dark mode matters more here than anywhere else in the product: this overlay
+ * lands on top of someone ELSE's page, and a white slab dropped onto a dark
+ * site is the loudest possible way to look broken.
  */
-
-// Mirrors `app/lib/theme.ts` BRAND scale. Kept inline to avoid an import that
-// would force the workspace boundary; sync by hand when the phone palette moves.
-const BRAND = {
-  50: '#f5f3ff',
-  100: '#ede9fe',
-  200: '#ddd6fe',
-  500: '#8b5cf6',
-  600: '#7c3aed',
-  700: '#6d28d9',
-} as const;
-
-const INK = {
-  100: '#f1f5f9',
-  200: '#e2e8f0',
-  400: '#94a3b8',
-  500: '#64748b',
-  700: '#334155',
-  900: '#0f172a',
-} as const;
+import { tokensCss } from '@/lib/theme';
 
 export const SPOTLIGHT_CSS = `
 :host {
   all: initial;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  color: ${INK[900]};
   -webkit-font-smoothing: antialiased;
 }
 
+${tokensCss(':host')}
+
+:host {
+  color: var(--text-primary);
+}
+
+/* The backdrop swallows every click on the host page, so it has to LOOK like
+   it is doing that — a fully transparent full-viewport layer reads as a broken
+   page, not as a modal. */
 .backdrop {
   position: fixed;
   inset: 0;
   z-index: 2147483646;
   pointer-events: auto;
-  background: transparent;
+  background: rgba(15, 23, 42, 0);
+  transition: background 220ms ease, backdrop-filter 220ms ease;
+}
+
+.backdrop.open {
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
 }
 
 .overlay {
   position: fixed;
   top: 80px;
   left: 50%;
-  transform: translateX(-50%) translateY(0);
+  /* Base state = pre-entrance. The open state below is what animates. */
+  transform: translateX(-50%) translateY(-12px) scale(0.97);
   width: 540px;
   max-width: 90vw;
-  background: #ffffff;
-  border-radius: 18px;
+  background: var(--surface-card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
   /* Soft brand-tinted shadow — violet 600 at low alpha + a neutral lift. */
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
@@ -61,17 +64,18 @@ export const SPOTLIGHT_CSS = `
   z-index: 2147483647;
   padding: 16px 16px 14px 16px;
   opacity: 0;
-  transition: opacity 180ms ease, transform 220ms ease;
+  transition: opacity 200ms ease, transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1);
   box-sizing: border-box;
 }
 
 .overlay.open {
   opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
 }
 
 .overlay.closing {
   opacity: 0;
-  transform: translateX(-50%) translateY(-4px);
+  transform: translateX(-50%) translateY(-8px) scale(0.98);
 }
 
 .row {
@@ -84,7 +88,7 @@ export const SPOTLIGHT_CSS = `
   width: 22px;
   height: 22px;
   flex: 0 0 22px;
-  color: ${BRAND[600]};
+  color: var(--text-brand);
 }
 
 input.input {
@@ -95,12 +99,14 @@ input.input {
   line-height: 24px;
   padding: 8px 4px;
   background: transparent;
-  color: ${INK[900]};
+  color: var(--text-primary);
   font-weight: 500;
+  font-family: inherit;
+  min-width: 0;
 }
 
 input.input::placeholder {
-  color: ${INK[400]};
+  color: var(--text-placeholder);
   font-weight: 400;
 }
 
@@ -109,25 +115,38 @@ button.save {
   border: none;
   cursor: pointer;
   padding: 9px 18px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 14px;
   font-weight: 600;
+  font-family: inherit;
   color: #ffffff;
-  background: linear-gradient(135deg, ${BRAND[500]} 0%, ${BRAND[700]} 100%);
+  background: var(--gradient-brand);
   box-shadow: 0 4px 12px rgba(124, 58, 237, 0.32);
   transition: transform 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
   letter-spacing: 0.01em;
 }
 
 button.save:disabled {
-  background: ${INK[200]};
-  color: ${INK[500]};
+  background: var(--surface-field);
+  color: var(--text-tertiary);
   cursor: not-allowed;
   box-shadow: none;
 }
 
+button.save.saved {
+  background: linear-gradient(135deg, #16a34a, #15803d);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.32);
+}
+
 button.save:not(:disabled):active {
   transform: scale(0.97);
+}
+
+button.save:focus-visible,
+button.chip:focus-visible {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
 }
 
 .chips {
@@ -138,11 +157,11 @@ button.save:not(:disabled):active {
 }
 
 button.chip {
-  border: 1px solid ${INK[200]};
-  background: #ffffff;
-  color: ${INK[700]};
+  border: 1px solid var(--hairline);
+  background: var(--surface-card);
+  color: var(--text-secondary);
   padding: 5px 11px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -151,14 +170,14 @@ button.chip {
 }
 
 button.chip:hover {
-  border-color: ${BRAND[200]};
-  color: ${BRAND[700]};
+  border-color: var(--border-brand-soft);
+  color: var(--text-brand);
 }
 
 button.chip.active {
-  background: ${BRAND[50]};
-  border-color: ${BRAND[200]};
-  color: ${BRAND[700]};
+  background: var(--surface-brand-soft);
+  border-color: var(--border-brand-soft);
+  color: var(--text-brand);
 }
 
 button.chip:active {
@@ -171,24 +190,57 @@ button.chip:active {
 
 input.tagInput {
   width: 100%;
-  border: 1px solid ${INK[200]};
-  border-radius: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
   padding: 8px 12px;
   font-size: 13px;
   outline: none;
-  color: ${INK[700]};
+  color: var(--text-primary);
   font-family: inherit;
-  transition: border-color 120ms ease;
+  transition: border-color 120ms ease, background 120ms ease;
   box-sizing: border-box;
-  background: ${INK[100]};
+  background: var(--surface-field);
 }
 
 input.tagInput:focus {
-  border-color: ${BRAND[200]};
-  background: #ffffff;
+  border-color: var(--brand-400);
+  background: var(--surface-card);
 }
 
 input.tagInput::placeholder {
-  color: ${INK[400]};
+  color: var(--text-placeholder);
+}
+
+/* Inline save failure. The overlay STAYS OPEN when this shows — closing on a
+   failed save silently drops whatever the user typed. */
+.error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--status-danger);
+}
+
+.error[hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .backdrop,
+  button.save,
+  button.chip,
+  input.tagInput {
+    transition-duration: 1ms !important;
+  }
+  /* Keep the horizontal centring; drop the travel. */
+  .overlay,
+  .overlay.open,
+  .overlay.closing {
+    transform: translateX(-50%) !important;
+  }
+  button.save:not(:disabled):active,
+  button.chip:active {
+    transform: none;
+  }
 }
 `;

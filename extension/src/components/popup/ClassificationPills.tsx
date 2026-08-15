@@ -3,7 +3,14 @@
  * classification is the preferred default, but the user can re-pick. Keep
  * the order in lockstep with the union in `lib/types.ts` so this row reads
  * the same as the phone's classification chips.
+ *
+ * Twelve pills overflow the 388px row by roughly 2x and the scrollbar is
+ * hidden, so a selection the user didn't make by hand (the extractor's answer)
+ * can land entirely off-screen — the popup then shows zero selected pills and
+ * reads as "classification failed". Every value CHANGE therefore scrolls the
+ * active pill to the centre.
  */
+import { useEffect, useRef } from 'react';
 import type { Classification } from '@/lib/types';
 import styles from '@/entrypoints/popup/Popup.module.css';
 
@@ -48,6 +55,21 @@ export interface ClassificationPillsProps {
 }
 
 export function ClassificationPills({ value, onChange }: ClassificationPillsProps) {
+  const activeRef = useRef<HTMLButtonElement | null>(null);
+  // The popup mounts with the placeholder default ('other', the LAST pill)
+  // selected. Centring it on mount would scroll the row to its far end before
+  // the extractor has said anything — so only react to real changes.
+  const settled = useRef(false);
+
+  useEffect(() => {
+    if (!settled.current) {
+      settled.current = true;
+      return;
+    }
+    // block:'nearest' keeps this from also scrolling the popup body vertically.
+    activeRef.current?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }, [value]);
+
   return (
     <div className={styles.pillsRow} role="radiogroup" aria-label="Classification">
       {CLASSIFICATIONS.map((c) => {
@@ -55,6 +77,7 @@ export function ClassificationPills({ value, onChange }: ClassificationPillsProp
         return (
           <button
             key={c}
+            ref={active ? activeRef : undefined}
             type="button"
             role="radio"
             aria-checked={active}

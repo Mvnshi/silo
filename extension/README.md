@@ -4,14 +4,27 @@
 
 ## Status
 
-🌱 **Scaffold only.** Not implemented yet. M0 (popup capture into IndexedDB via the existing Cloudflare Worker) is the first milestone. See the spec.
+**Working, unpublished.** What ships today:
 
-## Quickstart (once M0 lands)
+| Surface | State |
+| --- | --- |
+| Popup capture (⌘⇧S) | Preview card, classification pills, tags, note, duplicate badge. Saves immediately and enriches from the Worker when extraction lands. |
+| Right-click menus | Save image / highlight / link. |
+| Spotlight overlay (⌘⇧K) | On-page capture with the page URL + og:image. |
+| Omnibox (`silo` + Space) | Instant local search over saved items. |
+| Library (`library.html`) | Masonry grid, live search, classification filter, undoable delete. |
+| Sync | Two-way with the phone via the Worker's `/api/sync` (see `../SYNC.md`). Opt-in: pair with a space code in the library's sync modal. |
+| Storage | IndexedDB via Dexie, extension origin only. Nothing leaves the machine except what sync explicitly pushes. |
+
+Not done yet: Firefox/Safari polish, import, snapshot, reader-mode UI.
+
+## Quickstart
 
 ```sh
 cd extension
 npm install
-npm run dev            # WXT dev server with HMR
+cp .env.example .env.local   # then fill in the two values
+npm run dev                  # WXT dev server with HMR
 ```
 
 Load it in Chrome:
@@ -20,17 +33,52 @@ Load it in Chrome:
 3. **Load unpacked** → select `extension/.output/chrome-mv3`
 4. Pin Silo to the toolbar
 
-Backend config: the extension uses the **same Cloudflare Worker** the iOS app does. Copy `EXPO_PUBLIC_API_BASE_URL` and `EXPO_PUBLIC_CLIENT_TOKEN` from the root `.env` into `extension/.env.local` as `SILO_API_BASE_URL` and `SILO_CLIENT_TOKEN`.
+`npm run build` produces the same directory for a production bundle; `npm run build:firefox` produces `.output/firefox-mv2`.
 
-## Layout (planned — see spec §5)
+### Backend config
+
+The extension uses the **same Cloudflare Worker** the iOS app does. Copy the values of `EXPO_PUBLIC_API_BASE_URL` and `EXPO_PUBLIC_CLIENT_TOKEN` from the repo-root `.env` into `extension/.env.local`:
+
+```
+WXT_SILO_API_BASE_URL=…
+WXT_SILO_CLIENT_TOKEN=…
+```
+
+**The `WXT_` prefix is required.** WXT only exposes prefixed variables through `import.meta.env`; an unprefixed name silently resolves to `''`, which surfaces as "Preview unavailable" on every page and "No sync server configured" in the sync modal. `.env.local` is gitignored — `.env.example` is the checked-in template.
+
+## Verification
+
+```sh
+npx tsc --noEmit     # types
+npx wxt build        # bundle
+node scripts/verify-e2e.mjs    # puppeteer: capture paths against a built extension
+node scripts/verify-sync.mjs   # puppeteer: phone ⇄ extension sync round-trip
+```
+
+## Layout
 
 ```
 src/
-├─ popup/        — popup UI (React), the toolbar action
-├─ background/   — service worker: menus, omnibox, commands
-├─ content/      — content scripts: spotlight overlay, reader mode, snapshot
-└─ lib/          — Dexie store, types (mirrors phone's lib/types.ts), API client
+├─ entrypoints/
+│  ├─ background.ts        — MV3 service worker (listeners at top level; see the file header)
+│  ├─ popup/               — toolbar popup (React)
+│  ├─ library/             — full-tab library page (React)
+│  ├─ spotlight.content.ts — ⌘⇧K overlay host
+│  └─ reader.content.ts    — Readability extraction on demand
+├─ components/popup/       — pills, tag picker
+└─ lib/
+   ├─ theme.ts             — THE design tokens; emits the CSS custom properties every surface uses
+   ├─ store.ts             — Dexie schema + all reads/writes (also owns the sync bookkeeping)
+   ├─ sync.ts, api.ts      — Worker clients
+   ├─ dupes.ts, url.ts     — duplicate detection + URL canonicalization
+   ├─ search.ts            — in-memory tokenized index (omnibox + library)
+   ├─ spotlight/           — the on-page overlay (pure DOM, closed shadow root)
+   └─ background/          — menus, omnibox, commands, message bridge, save actions
 ```
+
+### Design tokens
+
+`lib/theme.ts` is the only place a colour, radius or spacing step is written down. It mirrors the phone app's `lib/theme.ts` and `lib/classification.ts` byte-for-byte, and emits a CSS custom-property block that the popup and library install via `injectTokens()` and the spotlight embeds into its shadow root. **Do not re-declare a palette value in a `.css` file** — that is how desktop and mobile drifted into showing the same item in two different colours.
 
 ## What this is, in one paragraph
 

@@ -1,584 +1,722 @@
 /**
- * Floating ChatBot Component
- * 
- * A floating chatbot that uses RAG to answer questions about saved content
- * and can suggest calendar events.
+ * Floating assistant sheet.
+ *
+ * Grounded Q&A over the user's own saves. Retrieval runs on-device: the
+ * question is matched against the library with `aiSearch` and only the matching
+ * items are sent to the Gemini proxy to be phrased, so answers are about what
+ * the user actually saved rather than "the 30 newest things". Every answer
+ * renders its sources as chips that deep-link to the item.
+ *
+ * LAYOUT NOTE: the sheet anchors to the bottom of its parent and lifts itself
+ * with `useAnimatedKeyboard()`. It must NOT be wrapped in a
+ * KeyboardAvoidingView — the lift would be applied twice.
  */
 
-import React, { useState, useRef, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-  Animated,
-  Dimensions,
-  ActivityIndicator,
- Alert } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TextInput, ScrollView, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
-import { ragQuery } from '@/lib/api';
-import { getUserId, getItems , addItem } from '@/lib/storage';
-import { scheduleItemReview } from '@/lib/scheduler';
-import { createItem } from '@/lib/items';
-import { BRAND, INK, HAIRLINE } from '@/lib/theme';
-import { format } from 'date-fns';
+import { BlurView } from 'expo-blur';
+import { useRouter } from 'expo-router';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  FadeInRight,
+  FadeOut,
+  useAnimatedKeyboard,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { aiSearch, ragQuery } from '@/lib/api';
+import { getItems } from '@/lib/storage';
+import type { Item } from '@/lib/types';
+import PressableScale from '@/components/ui/PressableScale';
+import EmptyState from '@/components/ui/EmptyState';
+import { usePrefersReducedMotion } from '@/lib/motion';
+import {
+  BRAND,
+  DURATION,
+  HAIRLINE,
+  INK,
+  MIN_TAP,
+  RADIUS,
+  SHADOW,
+  SPACE,
+  SPRING,
+  STATUS,
+  SURFACE,
+  TEXT,
+  TYPE,
+} from '@/lib/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+/** Resting sheet height; shrinks to fit when the keyboard is up. */
+const SHEET_HEIGHT = Math.round(SCREEN_HEIGHT * 0.55);
+
+/** How many retrieved items we hand the model. Enough context, bounded cost. */
+const RETRIEVAL_LIMIT = 30;
+
+const GREETING =
+  "Hi — I'm Silo. Ask me anything about what you've saved and I'll answer from your own library.\n\nTry:\n• \"What fitness content do I have?\"\n• \"Find that pasta recipe\"\n• \"What did I save about design?\"";
+
+/** Monotonic message ids — `Date.now()` collides when two land in the same ms. */
+let messageSeq = 0;
+const nextId = () => `m${++messageSeq}`;
+
+interface ChatSource {
+  id: string;
+  title: string;
+}
 
 interface ChatMessage {
   id: string;
   text: string;
   isUser: boolean;
-  timestamp: Date;
-  suggestedEvent?: {
-    title: string;
-    date: string;
-    time: string;
-    description: string;
-  };
+  /** Saved items the answer was grounded on — rendered as deep-link chips. */
+  sources?: ChatSource[];
+  /** This bubble is a failure, not an answer: distinct styling + retryable. */
+  isError?: boolean;
+  /** The question to re-run when the user taps "Try again". */
+  retryQuery?: string;
 }
 
 interface ChatBotProps {
   onClose: () => void;
-  onEventSuggested?: (event: { title: string; date: string; time: string; description: string }) => void;
 }
 
-export default function ChatBot({ onClose, onEventSuggested }: ChatBotProps) {
+/**
+ * Question words that carry no retrieval signal. Without this, "what fitness
+ * content do I have?" would match every item containing "have".
+ */
+const STOP_WORDS = new Set([
+  'about', 'again', 'all', 'and', 'any', 'anything', 'are', 'been', 'can', 'content',
+  'could', 'did', 'does', 'find', 'for', 'from', 'get', 'give', 'got', 'had', 'has',
+  'have', 'how', 'into', 'item', 'items', 'like', 'me', 'more', 'my', 'need', 'please',
+  'save', 'saved', 'show', 'some', 'something', 'stuff', 'tell', 'that', 'the', 'their',
+  'them', 'there', 'these', 'they', 'thing', 'things', 'this', 'those', 'was', 'were',
+  'what', 'whats', 'when', 'where', 'which', 'who', 'why', 'with', 'would', 'you',
+  'your', 'yours',
+]);
+
+/**
+ * Rank the user's items against a question.
+ *
+ * `aiSearch` is a substring match over the WHOLE query string, so a
+ * natural-language question matches nothing. We run it once per content word
+ * instead and rank by how many words hit — cheap, on-device, and it is what
+ * makes the assistant grounded rather than answering off the newest 30 saves.
+ */
+async function retrieve(query: string, items: Item[]): Promise<Item[]> {
+  const words = Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .split(/\s+/)
+        .filter((word) => word.length > 2 && !STOP_WORDS.has(word))
+    )
+  );
+  if (words.length === 0) return [];
+
+  const hits = new Map<number, number>();
+  for (const word of words) {
+    for (const index of await aiSearch(word, items)) {
+      const i = Number(index);
+      hits.set(i, (hits.get(i) ?? 0) + 1);
+    }
+  }
+
+  return Array.from(hits.entries())
+    .sort((a, b) => b[1] - a[1] || a[0] - b[0]) // most words matched, then newest
+    .map(([index]) => items[index])
+    .filter(Boolean);
+}
+
+export default function ChatBot({ onClose }: ChatBotProps) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const reduced = usePrefersReducedMotion();
+  const keyboard = useAnimatedKeyboard();
+
   const [isExpanded, setIsExpanded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: '1',
-      text: "Hey! I'm Silo, your personal AI assistant. I can help you discover your saved content and suggest activities based on your interests! Try asking me:\n\n• \"I don't know what to do\" - I'll suggest activities\n• \"What fitness content do I have?\" - I'll show your saved workouts\n• \"Suggest something for this weekend\" - I'll recommend events to schedule\n\nWhat interests you? (fitness, food, tech, career, outdoor, places, etc.)",
-      isUser: false,
-      timestamp: new Date(),
-    },
+    { id: nextId(), text: GREETING, isUser: false },
   ]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
-  const scrollViewRef = useRef<ScrollView>(null);
-  const slideAnim = useRef(new Animated.Value(0)).current; // Scale from 0 to 1
-  const opacityAnim = useRef(new Animated.Value(0)).current; // Opacity animation
+  /** null until the library has been counted, so we don't flash the empty state. */
+  const [libraryEmpty, setLibraryEmpty] = useState<boolean | null>(null);
+
+  const scrollRef = useRef<ScrollView>(null);
+  const progress = useSharedValue(0);
 
   useEffect(() => {
-    if (isExpanded) {
-      Animated.parallel([
-        Animated.spring(slideAnim, {
-          toValue: 1,
-          useNativeDriver: true,
-          tension: 50,
-          friction: 7,
-        }),
-        Animated.spring(opacityAnim, {
-          toValue: 1,
-          useNativeDriver: true,
-          tension: 50,
-          friction: 7,
-        }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.spring(slideAnim, {
-          toValue: 0,
-          useNativeDriver: true,
-          tension: 50,
-          friction: 7,
-        }),
-        Animated.spring(opacityAnim, {
-          toValue: 0,
-          useNativeDriver: true,
-          tension: 50,
-          friction: 7,
-        }),
-      ]).start();
-    }
+    progress.value = withSpring(isExpanded ? 1 : 0, SPRING.settle);
+  }, [isExpanded, progress]);
+
+  // An empty library has nothing to ground an answer on — check on open so we
+  // can short-circuit the model entirely instead of paying for "you have none".
+  useEffect(() => {
+    if (!isExpanded) return;
+    let alive = true;
+    getItems()
+      .then((items) => {
+        if (alive) setLibraryEmpty(items.length === 0);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, [isExpanded]);
 
-  useEffect(() => {
-    if (messages.length === 0) return;
-    const timer = setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [messages]);
+  /** Bottom anchor: clears the home indicator without hugging the edge. */
+  const bottomGap = Math.max(insets.bottom, SPACE.md) + SPACE.sm;
 
-  /**
-   * Handle send message
-   */
-  async function handleSend() {
-    if (!inputText.trim() || loading) return;
-
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      text: inputText.trim(),
-      isUser: true,
-      timestamp: new Date(),
+  const sheetStyle = useAnimatedStyle(() => {
+    // The keyboard frame is measured from the screen edge, so it already
+    // contains the inset we reserve below the sheet.
+    const lift = Math.max(keyboard.height.value - bottomGap, 0);
+    const available = SCREEN_HEIGHT - insets.top - SPACE.base - bottomGap - lift;
+    return {
+      height: Math.min(SHEET_HEIGHT, available),
+      opacity: progress.value,
+      transform: [
+        { translateY: -lift + (1 - progress.value) * 24 },
+        { scale: 0.94 + progress.value * 0.06 },
+      ],
     };
+  });
 
-    setMessages(prev => [...prev, userMessage]);
-    setInputText('');
+  const closeChat = useCallback(() => {
+    setIsExpanded(false);
+    onClose();
+  }, [onClose]);
+
+  const openSource = useCallback(
+    (id: string) => {
+      closeChat();
+      router.push(`/item/${id}`);
+    },
+    [closeChat, router]
+  );
+
+  /** Retrieve → ask → append. Errors land as a retryable error bubble. */
+  const runQuery = useCallback(async (question: string) => {
     setLoading(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
     try {
-      const userId = await getUserId();
-      // Get all items for fallback when embeddings fail
       const allItems = await getItems();
-      
-      // Always suggest events - make chatbot proactive
+      // Nothing to ground on — never spend a model call to say "you have none".
+      if (allItems.length === 0) {
+        setLibraryEmpty(true);
+        return;
+      }
+
+      const matched = await retrieve(question, allItems);
+      // A keyword miss must not tell the model "nothing is saved" — fall back to
+      // the newest items so it can still answer from something real.
+      const grounding = (matched.length > 0 ? matched : allItems).slice(0, RETRIEVAL_LIMIT);
+
       const response = await ragQuery({
-        userId,
-        query: userMessage.text,
-        suggestEvent: true, // Always suggest events if relevant
-        items: allItems.slice(0, 30).map(item => ({
+        query: question,
+        items: grounding.map((item) => ({
           id: item.id,
           title: item.title,
           description: item.description,
           tags: item.tags,
-          classification: item.classification, // Include classification for better suggestions
-        })), // Send items for fallback
+          classification: item.classification,
+        })),
       });
 
-      const botMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        text: response.answer,
-        isUser: false,
-        timestamp: new Date(),
-        suggestedEvent: response.suggestedEvent,
-      };
-
-      setMessages(prev => [...prev, botMessage]);
-
-      // If event was suggested, notify parent
-      if (response.suggestedEvent && onEventSuggested) {
-        onEventSuggested(response.suggestedEvent);
+      // Only keep sources we actually sent, so every chip resolves to a real item.
+      const byId = new Map(grounding.map((item) => [item.id, item]));
+      const seen = new Set<string>();
+      const sources: ChatSource[] = [];
+      for (const source of response.sources) {
+        const item = byId.get(source.itemId);
+        if (!item || seen.has(item.id)) continue;
+        seen.add(item.id);
+        sources.push({ id: item.id, title: item.title });
       }
+
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), text: response.answer, isUser: false, sources },
+      ]);
     } catch (error) {
-      console.error('RAG query error:', error);
-      // Handle RAG errors gracefully
-      const errorMessage = error instanceof Error ? error.message : 'Failed to process query';
-      const botMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        text: errorMessage.includes('quota') || errorMessage.includes('unavailable')
-          ? "I'm temporarily unavailable due to API quota limits. Please try again later, or you can still use the app to save and organize your content!"
-          : "I'm having trouble processing that right now. Please try again or ask something else!",
-        isUser: false,
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, botMessage]);
+      console.error('Assistant query failed:', error);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          // Surface the real reason — the "add your Worker URL" case is the one
+          // error the user can actually fix, and generic copy hides it.
+          text: error instanceof Error ? error.message : 'Something went wrong.',
+          isUser: false,
+          isError: true,
+          retryQuery: question,
+        },
+      ]);
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  function handleSend() {
+    const question = inputText.trim();
+    if (!question || loading) return;
+    setMessages((prev) => [...prev, { id: nextId(), text: question, isUser: true }]);
+    setInputText('');
+    void runQuery(question);
   }
 
-  /**
-   * Handle event suggestion acceptance
-   */
-  async function handleAcceptEvent(event: { title: string; date: string; time: string; description: string }) {
-    try {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-      // Create item for the event — createItem fills id/created_at/updated_at;
-      // status derives to 'scheduled' from scheduled_date.
-      const eventItem = createItem({
-        type: 'note',
-        classification: 'event',
-        title: event.title,
-        description: event.description,
-        scheduled_date: event.date,
-        scheduled_time: event.time,
-        tags: ['ai-suggested', 'event'],
-      });
-
-      await addItem(eventItem);
-      await scheduleItemReview(eventItem, event.date, event.time, 30);
-
-      // Add confirmation message
-      const confirmMessage: ChatMessage = {
-        id: (Date.now() + 2).toString(),
-        text: `✅ Event "${event.title}" added to your calendar!`,
-        isUser: false,
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, confirmMessage]);
-    } catch (error) {
-      console.error('Failed to add event:', error);
-      Alert.alert('Error', 'Failed to add event to calendar');
-    }
+  /** Drop the failed bubble and ask the same question again. */
+  function handleRetry(messageId: string, question: string) {
+    setMessages((prev) => prev.filter((message) => message.id !== messageId));
+    void runQuery(question);
   }
+
+  const canSend = !!inputText.trim() && !loading;
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
-      {/* Floating Button */}
       {!isExpanded && (
-        <TouchableOpacity
-          style={styles.floatingButton}
-          onPress={() => {
-            setIsExpanded(true);
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          }}
-          activeOpacity={0.8}
+        <PressableScale
+          haptic="medium"
+          accessibilityLabel="Open assistant"
+          // Sits above the floating tab bar on every device.
+          containerStyle={[styles.fabContainer, { bottom: insets.bottom + 66 }]}
+          style={styles.fab}
+          onPress={() => setIsExpanded(true)}
         >
-          <Ionicons name="chatbubbles" size={28} color="#fff" />
-        </TouchableOpacity>
+          <Ionicons name="chatbubbles" size={26} color={TEXT.inverse} />
+        </PressableScale>
       )}
 
-      {/* Expanded Chat */}
       {isExpanded && (
-        <View style={styles.backdrop} pointerEvents="box-none">
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => {
-              setIsExpanded(false);
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
-          />
-        </View>
-      )}
-      <KeyboardAvoidingView
-        style={[styles.keyboardAvoidingContainer, { top: insets.top + 20 }]}
-        behavior={Platform.OS === 'ios' ? 'position' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? -SCREEN_HEIGHT * 0.2 : -100}
-        pointerEvents={isExpanded ? 'box-none' : 'none'}
-      >
         <Animated.View
-          style={[
-            styles.chatContainer,
-            {
-              transform: [
-                { scale: slideAnim },
-                { translateY: slideAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [20, 0], // Slight upward movement
-                })}
-              ],
-              opacity: opacityAnim,
-            },
-          ]}
-          pointerEvents={isExpanded ? 'auto' : 'none'}
+          style={StyleSheet.absoluteFill}
+          entering={FadeIn.duration(DURATION.base)}
+          exiting={FadeOut.duration(DURATION.fast)}
         >
-          {/* Header */}
+          <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+          <PressableScale
+            scaleTo={1}
+            haptic="light"
+            accessibilityLabel="Close assistant"
+            containerStyle={StyleSheet.absoluteFill}
+            style={styles.backdropTint}
+            onPress={closeChat}
+          />
+        </Animated.View>
+      )}
+
+      <Animated.View
+        style={[styles.sheet, { bottom: bottomGap }, sheetStyle]}
+        pointerEvents={isExpanded ? 'auto' : 'none'}
+        accessibilityElementsHidden={!isExpanded}
+        importantForAccessibility={isExpanded ? 'auto' : 'no-hide-descendants'}
+      >
+        <View style={styles.sheetInner}>
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.avatar}>
-                <Ionicons name="sparkles" size={24} color={BRAND[600]} />
+                <Ionicons name="sparkles" size={22} color={BRAND[600]} />
               </View>
               <View>
-                <Text style={styles.headerTitle}>AI Assistant</Text>
-                <Text style={styles.headerSubtitle}>Your personal RAG model</Text>
+                <Text style={styles.headerTitle}>Assistant</Text>
+                <Text style={styles.headerSubtitle}>Answers from your saves</Text>
               </View>
             </View>
-            <TouchableOpacity
+            <PressableScale
+              haptic="light"
+              accessibilityLabel="Close assistant"
               style={styles.closeButton}
-              onPress={() => {
-                setIsExpanded(false);
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                onClose();
-              }}
+              onPress={closeChat}
             >
-              <Ionicons name="close" size={24} color={INK[500]} />
-            </TouchableOpacity>
+              <Ionicons name="close" size={22} color={TEXT.secondary} />
+            </PressableScale>
           </View>
 
-          {/* Messages */}
-          <ScrollView
-            ref={scrollViewRef}
-            style={styles.messagesContainer}
-            contentContainerStyle={styles.messagesContent}
-            showsVerticalScrollIndicator={true}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
-            nestedScrollEnabled={true}
-          >
-            {messages.map((message) => (
-              <View key={message.id}>
-                <View
-                  style={[
-                    styles.message,
-                    message.isUser ? styles.userMessage : styles.botMessage,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.messageText,
-                      message.isUser ? styles.userMessageText : styles.botMessageText,
-                    ]}
-                  >
-                    {message.text}
-                  </Text>
-                </View>
-
-                {/* Event Suggestion */}
-                {message.suggestedEvent && (
-                  <View style={styles.eventSuggestion}>
-                    <View style={styles.eventSuggestionHeader}>
-                      <Ionicons name="calendar" size={20} color={BRAND[600]} />
-                      <Text style={styles.eventSuggestionTitle}>Suggested Event</Text>
-                    </View>
-                    <Text style={styles.eventSuggestionName}>{message.suggestedEvent.title}</Text>
-                    <Text style={styles.eventSuggestionDetails}>
-                      {format(new Date(message.suggestedEvent.date), 'MMM d, yyyy')} at {message.suggestedEvent.time}
-                    </Text>
-                    <Text style={styles.eventSuggestionDesc}>{message.suggestedEvent.description}</Text>
-                    <TouchableOpacity
-                      style={styles.acceptEventButton}
-                      onPress={() => handleAcceptEvent(message.suggestedEvent!)}
-                    >
-                      <Ionicons name="checkmark-circle" size={20} color="#fff" />
-                      <Text style={styles.acceptEventText}>Add to Calendar</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            ))}
-
-            {loading && (
-              <View style={styles.botMessage}>
-                <ActivityIndicator size="small" color={BRAND[600]} />
-              </View>
-            )}
-          </ScrollView>
-
-          {/* Input */}
-          <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 4) }]}>
-            <TextInput
-              style={styles.input}
-              placeholder="Ask about your saved content..."
-              placeholderTextColor={INK[400]}
-              value={inputText}
-              onChangeText={setInputText}
-              multiline
-              maxLength={500}
-              onSubmitEditing={handleSend}
-              returnKeyType="send"
-            />
-            <TouchableOpacity
-              style={[styles.sendButton, (!inputText.trim() || loading) && styles.sendButtonDisabled]}
-              onPress={handleSend}
-              disabled={!inputText.trim() || loading}
-            >
-              <Ionicons
-                name="send"
-                size={20}
-                color={inputText.trim() && !loading ? '#fff' : INK[400]}
+          {libraryEmpty ? (
+            // Scrolls rather than clips: the sheet is short on small devices.
+            <ScrollView contentContainerStyle={styles.emptyWrap}>
+              <EmptyState
+                icon="sparkles"
+                title="Nothing to ask about yet"
+                subtitle="Save a few links or notes and I'll answer questions about them."
+                cta={{ label: 'Start capturing', onPress: closeChat }}
               />
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-      </KeyboardAvoidingView>
+            </ScrollView>
+          ) : (
+            <>
+              <ScrollView
+                ref={scrollRef}
+                style={styles.messages}
+                contentContainerStyle={styles.messagesContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="interactive"
+                nestedScrollEnabled
+                onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+              >
+                {messages.map((message) => (
+                  <Animated.View
+                    key={message.id}
+                    entering={
+                      reduced
+                        ? FadeIn.duration(DURATION.fast)
+                        : message.isUser
+                          ? FadeInRight.duration(DURATION.base)
+                          : FadeInDown.duration(DURATION.base)
+                    }
+                  >
+                    <View
+                      style={[
+                        styles.bubble,
+                        message.isUser
+                          ? styles.userBubble
+                          : message.isError
+                            ? styles.errorBubble
+                            : styles.botBubble,
+                      ]}
+                    >
+                      {message.isError && (
+                        <View style={styles.errorHeader}>
+                          <Ionicons name="alert-circle" size={15} color={STATUS.danger} />
+                          <Text style={styles.errorLabel}>Couldn&apos;t answer</Text>
+                        </View>
+                      )}
+
+                      <Text
+                        style={[
+                          styles.bubbleText,
+                          message.isUser ? styles.userBubbleText : styles.botBubbleText,
+                        ]}
+                      >
+                        {message.text}
+                      </Text>
+
+                      {message.isError && !!message.retryQuery && (
+                        <PressableScale
+                          haptic="light"
+                          accessibilityLabel="Try again"
+                          style={styles.retryButton}
+                          onPress={() => handleRetry(message.id, message.retryQuery!)}
+                        >
+                          <Ionicons name="refresh" size={14} color={STATUS.danger} />
+                          <Text style={styles.retryText}>Try again</Text>
+                        </PressableScale>
+                      )}
+                    </View>
+
+                    {!!message.sources?.length && (
+                      <View style={styles.sourceRow}>
+                        {message.sources.map((source) => (
+                          <PressableScale
+                            key={source.id}
+                            haptic="selection"
+                            accessibilityLabel={`Open ${source.title}`}
+                            style={styles.sourceChip}
+                            onPress={() => openSource(source.id)}
+                          >
+                            <Ionicons name="link" size={12} color={BRAND[700]} />
+                            <Text style={styles.sourceChipText} numberOfLines={1}>
+                              {source.title}
+                            </Text>
+                          </PressableScale>
+                        ))}
+                      </View>
+                    )}
+                  </Animated.View>
+                ))}
+
+                {loading && (
+                  <Animated.View
+                    entering={FadeIn.duration(DURATION.fast)}
+                    style={[styles.bubble, styles.botBubble, styles.typingBubble]}
+                    accessibilityLabel="Thinking"
+                  >
+                    {[0, 1, 2].map((i) => (
+                      <TypingDot key={i} index={i} reduced={reduced} />
+                    ))}
+                  </Animated.View>
+                )}
+              </ScrollView>
+
+              <View style={styles.composer}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Ask about your saved content..."
+                  placeholderTextColor={TEXT.placeholder}
+                  value={inputText}
+                  onChangeText={setInputText}
+                  multiline
+                  maxLength={500}
+                  onSubmitEditing={handleSend}
+                  // iOS multiline never fires onSubmitEditing without this — the
+                  // return key would just insert a newline.
+                  submitBehavior="submit"
+                  returnKeyType="send"
+                  accessibilityLabel="Ask the assistant"
+                />
+                <PressableScale
+                  haptic="light"
+                  disabled={!canSend}
+                  accessibilityLabel="Send message"
+                  style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+                  onPress={handleSend}
+                >
+                  <Ionicons name="send" size={18} color={canSend ? TEXT.inverse : INK[400]} />
+                </PressableScale>
+              </View>
+            </>
+          )}
+        </View>
+      </Animated.View>
     </View>
   );
 }
 
+/** One dot of the three-dot "thinking" indicator, offset by `index`. */
+function TypingDot({ index, reduced }: { index: number; reduced: boolean }) {
+  const pulse = useSharedValue(0);
+
+  useEffect(() => {
+    if (reduced) return;
+    pulse.value = withDelay(
+      index * 140,
+      withRepeat(
+        withSequence(
+          withTiming(1, { duration: DURATION.base }),
+          withTiming(0, { duration: DURATION.base })
+        ),
+        -1,
+        false
+      )
+    );
+  }, [index, reduced, pulse]);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: 0.35 + pulse.value * 0.65,
+    transform: [{ translateY: -3 * pulse.value }],
+  }));
+
+  return <Animated.View style={[styles.typingDot, style]} />;
+}
+
 const styles = StyleSheet.create({
   wrapper: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 1000,
-    pointerEvents: 'box-none',
-  },
-  backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    zIndex: 998,
-  },
-  floatingButton: {
-    position: 'absolute',
-    bottom: 100,
-    right: 20,
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: BRAND[600],
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: BRAND[600],
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
     zIndex: 1000,
   },
-  keyboardAvoidingContainer: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    maxHeight: SCREEN_HEIGHT * 0.55, // Reduced to match container
-    zIndex: 999,
+  backdropTint: {
+    flex: 1,
+    backgroundColor: SURFACE.scrim,
   },
-  chatContainer: {
-    height: SCREEN_HEIGHT * 0.55, // Reduced height to be more compact
-    maxHeight: SCREEN_HEIGHT * 0.55, // Ensure it doesn't exceed
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 12,
+  fabContainer: {
+    position: 'absolute',
+    right: SPACE.lg,
+  },
+  fab: {
+    width: 60,
+    height: 60,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND[600],
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOW.brandFloating,
+  },
+  sheet: {
+    position: 'absolute',
+    left: SPACE.lg,
+    right: SPACE.lg,
+    borderRadius: RADIUS.xl,
+    ...SHADOW.floating,
+  },
+  // Clipping lives on an inner view: `overflow: hidden` on the shadow view
+  // would clip the shadow away on iOS.
+  sheetInner: {
+    flex: 1,
+    borderRadius: RADIUS.xl,
     overflow: 'hidden',
+    backgroundColor: SURFACE.card,
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
-    paddingBottom: 8,
+    justifyContent: 'space-between',
+    paddingLeft: SPACE.base,
+    paddingRight: SPACE.sm,
+    paddingVertical: SPACE.md,
     borderBottomWidth: 1,
     borderBottomColor: HAIRLINE,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: SPACE.md,
   },
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.pill,
     backgroundColor: BRAND[100],
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: INK[900],
+    ...TYPE.headline,
+    color: TEXT.primary,
   },
   headerSubtitle: {
-    fontSize: 12,
-    color: INK[500],
-    marginTop: 2,
+    ...TYPE.caption,
+    fontWeight: '500',
+    color: TEXT.tertiary,
+    marginTop: SPACE.xxs,
   },
   closeButton: {
-    padding: 8,
+    padding: SPACE.sm,
+    borderRadius: RADIUS.pill,
   },
-  messagesContainer: {
+  emptyWrap: {
+    flexGrow: 1,
+  },
+  messages: {
     flex: 1,
-    maxHeight: SCREEN_HEIGHT * 0.4, // Limit messages area height - leaves room for header and input
   },
   messagesContent: {
-    padding: 12,
-    paddingTop: 8,
-    paddingBottom: 4,
+    padding: SPACE.base,
+    paddingBottom: SPACE.sm,
+    gap: SPACE.sm,
   },
-  message: {
-    maxWidth: '80%',
-    padding: 10,
-    borderRadius: 16,
-    marginBottom: 8,
+  bubble: {
+    maxWidth: '88%',
+    paddingHorizontal: SPACE.md,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.lg,
   },
-  userMessage: {
+  userBubble: {
     alignSelf: 'flex-end',
     backgroundColor: BRAND[600],
+    borderBottomRightRadius: RADIUS.xs,
   },
-  botMessage: {
+  botBubble: {
     alignSelf: 'flex-start',
-    backgroundColor: INK[100],
+    backgroundColor: SURFACE.field,
+    borderBottomLeftRadius: RADIUS.xs,
   },
-  messageText: {
-    fontSize: 16,
-    lineHeight: 22,
+  errorBubble: {
+    alignSelf: 'flex-start',
+    backgroundColor: STATUS.dangerSoft,
+    borderWidth: 1,
+    borderColor: STATUS.danger,
+    borderBottomLeftRadius: RADIUS.xs,
   },
-  userMessageText: {
-    color: '#fff',
+  bubbleText: {
+    ...TYPE.body,
   },
-  botMessageText: {
-    color: INK[800],
+  userBubbleText: {
+    color: TEXT.inverse,
   },
-  eventSuggestion: {
+  botBubbleText: {
+    color: TEXT.primary,
+  },
+  errorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE.xs,
+    marginBottom: SPACE.xs,
+  },
+  errorLabel: {
+    ...TYPE.overline,
+    color: STATUS.danger,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: SPACE.xs,
+    marginTop: SPACE.sm,
+    paddingVertical: SPACE.xs,
+    paddingHorizontal: SPACE.md,
+    borderRadius: RADIUS.pill,
+    backgroundColor: SURFACE.card,
+    borderWidth: 1,
+    borderColor: STATUS.danger,
+  },
+  retryText: {
+    ...TYPE.footnote,
+    fontWeight: '700',
+    color: STATUS.danger,
+  },
+  sourceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACE.xs,
+    marginTop: SPACE.xs,
+  },
+  sourceChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE.xs,
+    maxWidth: 200,
+    paddingHorizontal: SPACE.sm,
+    paddingVertical: SPACE.xs,
+    borderRadius: RADIUS.pill,
     backgroundColor: BRAND[50],
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 6,
-    marginBottom: 8,
     borderWidth: 1,
     borderColor: BRAND[200],
   },
-  eventSuggestionHeader: {
+  sourceChipText: {
+    ...TYPE.caption,
+    color: BRAND[700],
+    flexShrink: 1,
+  },
+  typingBubble: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+    gap: SPACE.xs,
+    paddingVertical: SPACE.md,
   },
-  eventSuggestionTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: BRAND[600],
-    textTransform: 'uppercase',
+  typingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND[500],
   },
-  eventSuggestionName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: INK[900],
-    marginBottom: 4,
-  },
-  eventSuggestionDetails: {
-    fontSize: 14,
-    color: INK[500],
-    marginBottom: 8,
-  },
-  eventSuggestionDesc: {
-    fontSize: 14,
-    color: INK[500],
-    marginBottom: 12,
-    lineHeight: 20,
-  },
-  acceptEventButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: BRAND[600],
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    gap: 8,
-  },
-  acceptEventText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  inputContainer: {
+  composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    padding: 12,
-    paddingBottom: 2, // Reduced padding
+    gap: SPACE.sm,
+    padding: SPACE.md,
     borderTopWidth: 1,
     borderTopColor: HAIRLINE,
-    backgroundColor: '#fff',
-    gap: 8,
+    backgroundColor: SURFACE.card,
   },
   input: {
     flex: 1,
-    backgroundColor: INK[100],
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: INK[800],
-    maxHeight: 100,
+    maxHeight: 96,
+    backgroundColor: SURFACE.field,
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.md,
+    ...TYPE.body,
+    color: TEXT.primary,
   },
   sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: MIN_TAP,
+    height: MIN_TAP,
+    borderRadius: RADIUS.pill,
     backgroundColor: BRAND[600],
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   sendButtonDisabled: {
     backgroundColor: INK[200],
   },
 });
-

@@ -10,8 +10,6 @@ import type { Item } from '@/lib/types';
 import { searchItems } from '@/lib/search';
 
 const MAX_SUGGESTIONS = 8;
-/** Sentinel prefix for the bolded default suggestion. */
-const FALLBACK_PREFIX = 'silo:search:';
 
 /**
  * XML-encode a string for inclusion in chrome.omnibox suggestion markup. The
@@ -40,15 +38,21 @@ function shortDateLabel(iso: string): string {
   return `${Math.floor(days / 365)}y`;
 }
 
-/** Build the description XML for one suggestion row. */
-function describe(item: Item, query: string): string {
+/**
+ * Build the description XML for one suggestion row.
+ *
+ * The row is the ITEM, so it leads with the item's title. Chrome already shows
+ * what the user typed in the URL bar above the dropdown; echoing the query into
+ * every row (as this did) produced eight rows reading "react React hooks deep
+ * dive — article".
+ */
+function describe(item: Item): string {
   const title = xmlEscape(item.title);
   const cls = xmlEscape(item.classification);
   const date = shortDateLabel(item.created_at);
-  const queryHi = xmlEscape(query);
   const trailing = date ? ` · ${date}` : '';
   // <match> bolds, <dim> de-emphasizes — the supported tags in chrome.omnibox.
-  return `<match>${queryHi}</match> <match>${title}</match> <dim>— ${cls}${trailing}</dim>`;
+  return `<match>${title}</match> <dim>— ${cls}${trailing}</dim>`;
 }
 
 /** Where to navigate when the user picks a suggestion. */
@@ -71,7 +75,7 @@ export function registerOmnibox(): void {
       const hits = await searchItems(q, MAX_SUGGESTIONS);
       const suggestions: chrome.omnibox.SuggestResult[] = hits.map((item) => ({
         content: item.url ?? targetUrl(item),
-        description: describe(item, q),
+        description: describe(item),
       }));
       suggest(suggestions);
 
@@ -99,11 +103,8 @@ function resolveEnteredUrl(text: string): string {
   if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('chrome-extension://')) {
     return trimmed;
   }
-  if (trimmed.startsWith(FALLBACK_PREFIX)) {
-    const q = trimmed.slice(FALLBACK_PREFIX.length);
-    return chrome.runtime.getURL(`library.html?q=${encodeURIComponent(q)}`);
-  }
-  // Anything else: treat as a free-text query and open the popup search view.
+  // Anything else — including the bolded default suggestion, whose `content`
+  // is just the raw typed text — is a free-text query; open the library on it.
   return chrome.runtime.getURL(`library.html?q=${encodeURIComponent(trimmed)}`);
 }
 

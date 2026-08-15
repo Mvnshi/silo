@@ -10,6 +10,7 @@
 declare const styles: {
   readonly root: string;
   readonly header: string;
+  readonly headerActions: string;
   readonly wordmark: string;
   readonly closeBtn: string;
   readonly scroll: string;
@@ -22,6 +23,7 @@ declare const styles: {
   readonly previewTitle: string;
   readonly previewUrl: string;
   readonly previewDesc: string;
+  readonly previewDescMuted: string;
   readonly shimmer: string;
   readonly label: string;
   readonly pillsRow: string;
@@ -37,6 +39,7 @@ declare const styles: {
   readonly footer: string;
   readonly cta: string;
   readonly ctaSaved: string;
+  readonly footerError: string;
   readonly dupBadge: string;
   readonly dupBadgeMeta: string;
 };

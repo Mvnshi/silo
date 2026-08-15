@@ -1,179 +1,352 @@
 /**
- * Onboarding — first-run experience (3 swipeable slides).
+ * Onboarding — first-run experience (4 swipeable slides).
  *
  * Shown once (tracked via lib/storage hasOnboarded/setOnboarded), then
- * replaced with the main tabs. Both "Skip" and "Get Started" set the flag —
- * onboarding must never be able to trap the user.
+ * replaced with the main tabs. Every exit path — Skip, Continue, "Allow
+ * calendar access", "Not now" — sets the flag; onboarding must never be able
+ * to trap the user.
  *
- * Design: matches the app's light, violet-forward language — soft page
- * gradient, big gradient icon orb per slide, staggered text entrances,
- * animated page dots, gradient CTA.
+ * Motion: all four slides mount at t=0 inside one paging ScrollView, so
+ * entrance animations would only ever be seen on slide 1. Instead the orb and
+ * copy are driven from the live scroll offset (`scrollX`), which also feeds the
+ * page dots so they stretch *with* the swipe rather than snapping after it.
+ * Only slide 1 gets a real entrance, since it is the one on screen at mount.
+ *
+ * The last slide primes the calendar permission. Asking here — with the reason
+ * on screen — replaces the cold prompt that used to fire from the Silo tab on
+ * first load; a denial there silently broke the whole scheduling loop.
  */
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
-  ScrollView,
-  Dimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
   StyleSheet,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown, useAnimatedStyle, withSpring } from 'react-native-reanimated';
+import Animated, {
+  interpolate,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+  type SharedValue,
+} from 'react-native-reanimated';
 import PressableScale from '@/components/ui/PressableScale';
 import { setOnboarded } from '@/lib/storage';
-import { BRAND, INK, GRADIENTS, SPRING } from '@/lib/theme';
+import { requestCalendarPermissions } from '@/lib/scheduler';
+import { enterHero, enterList, usePrefersReducedMotion } from '@/lib/motion';
+import {
+  ACCENT,
+  BRAND,
+  GRADIENTS,
+  RADIUS,
+  SHADOW,
+  SPACE,
+  TEXT,
+  TYPE,
+} from '@/lib/theme';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const ORB_SIZE = 200;
+const ORB_ICON = 88;
 
 interface Slide {
   icon: keyof typeof Ionicons.glyphMap;
   colors: readonly [string, string];
   title: string;
   subtitle: string;
+  /** Reassurance line under the copy. */
+  note?: string;
+  /** Renders the calendar permission-priming actions instead of the footer CTA. */
+  prime?: boolean;
 }
 
 const SLIDES: Slide[] = [
   {
     icon: 'albums',
-    colors: ['#8b5cf6', '#6366f1'],
+    colors: GRADIENTS.brand,
     title: 'Save anything',
     subtitle:
       'Share any link, reel, screenshot, or thought into Silo — from any app, in one tap.',
+    note: 'Everything stays on your device.',
   },
   {
     icon: 'sparkles',
-    colors: ['#ec4899', '#8b5cf6'],
+    colors: GRADIENTS.accent,
     title: 'Silo organizes it',
     subtitle:
       'AI titles, tags, and files every save automatically. Your library sorts itself.',
   },
   {
     icon: 'play',
-    colors: ['#6366f1', '#06b6d4'],
+    colors: [BRAND[400], BRAND[700]],
     title: 'Actually come back to it',
     subtitle:
       'Stream your saves like a feed, and schedule time on your calendar to act on them.',
   },
+  {
+    icon: 'calendar',
+    colors: [ACCENT[400], BRAND[600]],
+    title: 'Put it on the calendar',
+    subtitle:
+      'Silo blocks real time so your saves become plans. We only add events you create.',
+    prime: true,
+  },
 ];
 
-/** One page-indicator dot that stretches into a pill while active. */
-function Dot({ active }: { active: boolean }) {
-  const aStyle = useAnimatedStyle(() => ({
-    width: withSpring(active ? 24 : 8, SPRING.settle),
-    opacity: withSpring(active ? 1 : 0.35, SPRING.settle),
-  }));
+const LAST = SLIDES.length - 1;
+
+/**
+ * One page-indicator dot that stretches into a pill as its slide arrives.
+ * Interpolated off the live scroll offset so it tracks the finger.
+ */
+function Dot({
+  index,
+  width,
+  scrollX,
+}: {
+  index: number;
+  width: number;
+  scrollX: SharedValue<number>;
+}) {
+  const aStyle = useAnimatedStyle(() => {
+    const range = [(index - 1) * width, index * width, (index + 1) * width];
+    return {
+      width: interpolate(scrollX.value, range, [8, 24, 8], 'clamp'),
+      opacity: interpolate(scrollX.value, range, [0.35, 1, 0.35], 'clamp'),
+    };
+  });
   return <Animated.View style={[styles.dot, aStyle]} />;
+}
+
+function SlideView({
+  slide,
+  index,
+  width,
+  scrollX,
+  reduced,
+  onAllow,
+  onDecline,
+}: {
+  slide: Slide;
+  index: number;
+  width: number;
+  scrollX: SharedValue<number>;
+  reduced: boolean;
+  onAllow: () => void;
+  onDecline: () => void;
+}) {
+  const orbStyle = useAnimatedStyle(() => {
+    if (reduced) return { opacity: 1, transform: [{ scale: 1 }] };
+    const range = [(index - 1) * width, index * width, (index + 1) * width];
+    return {
+      opacity: interpolate(scrollX.value, range, [0.4, 1, 0.4], 'clamp'),
+      transform: [{ scale: interpolate(scrollX.value, range, [0.78, 1, 0.78], 'clamp') }],
+    };
+  });
+
+  // Copy trails the orb (larger travel) so the two layers separate as you swipe.
+  const copyStyle = useAnimatedStyle(() => {
+    if (reduced) return { opacity: 1, transform: [{ translateY: 0 }] };
+    const range = [(index - 1) * width, index * width, (index + 1) * width];
+    return {
+      opacity: interpolate(scrollX.value, range, [0, 1, 0], 'clamp'),
+      transform: [{ translateY: interpolate(scrollX.value, range, [32, 0, 32], 'clamp') }],
+    };
+  });
+
+  // Only the first slide is on screen at mount, so it alone gets an entrance.
+  const first = index === 0;
+
+  return (
+    <View style={[styles.slide, { width }]}>
+      <Animated.View entering={first ? enterHero(0, reduced) : undefined}>
+        <Animated.View style={orbStyle}>
+          <LinearGradient
+            colors={[...slide.colors]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.orb, { shadowColor: slide.colors[0] }]}
+          >
+            <Ionicons name={slide.icon} size={ORB_ICON} color={TEXT.inverse} />
+          </LinearGradient>
+        </Animated.View>
+      </Animated.View>
+
+      <Animated.View
+        style={styles.copyWrap}
+        entering={first ? enterList(2, reduced) : undefined}
+      >
+        <Animated.View style={[styles.copy, copyStyle]}>
+          <Text style={styles.title}>{slide.title}</Text>
+          <Text style={styles.subtitle}>{slide.subtitle}</Text>
+          {!!slide.note && <Text style={styles.note}>{slide.note}</Text>}
+
+          {slide.prime && (
+            <>
+              <PressableScale
+                haptic="light"
+                onPress={onAllow}
+                containerStyle={styles.primeButton}
+                accessibilityLabel="Allow calendar access"
+              >
+                <LinearGradient
+                  colors={[...GRADIENTS.brand]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.cta}
+                >
+                  <Ionicons name="calendar-outline" size={18} color={TEXT.inverse} />
+                  <Text style={styles.ctaText}>Allow calendar access</Text>
+                </LinearGradient>
+              </PressableScale>
+              <PressableScale
+                haptic="selection"
+                onPress={onDecline}
+                style={styles.declineHit}
+              >
+                <Text style={styles.decline}>Not now</Text>
+              </PressableScale>
+            </>
+          )}
+        </Animated.View>
+      </Animated.View>
+    </View>
+  );
 }
 
 export default function Onboarding() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const scrollRef = useRef<ScrollView>(null);
-  const [page, setPage] = useState(0);
-  const isLast = page === SLIDES.length - 1;
+  const { width } = useWindowDimensions();
+  const reduced = usePrefersReducedMotion();
 
-  function onScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
-    const next = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
-    if (next !== page) {
+  const scrollRef = useRef<React.ComponentRef<typeof Animated.ScrollView>>(null);
+  const [page, setPage] = useState(0);
+  /** Mirrors `page` for effects that must not re-run when the page changes. */
+  const pageRef = useRef(0);
+  const isPrime = page === LAST;
+
+  const scrollX = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollX.value = e.contentOffset.x;
+  });
+
+  // Split View / Stage Manager resizes change `width` after layout; re-anchor
+  // the offset so the active slide stays centred instead of drifting mid-page.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ x: width * pageRef.current, animated: false });
+  }, [width]);
+
+  /** Discrete page state — dots and copy already track the finger continuously. */
+  function onMomentumScrollEnd(e: NativeSyntheticEvent<NativeScrollEvent>) {
+    const next = Math.round(e.nativeEvent.contentOffset.x / width);
+    if (next !== pageRef.current) {
+      pageRef.current = next;
       setPage(next);
-      Haptics.selectionAsync();
+      Haptics.selectionAsync().catch(() => {});
     }
   }
 
-  /** Persist the flag and enter the app (used by both Skip and Get Started). */
+  /** Persist the flag and enter the app (every exit path funnels through here). */
   async function finish() {
     await setOnboarded();
     router.replace('/(tabs)');
   }
 
-  function nextOrFinish() {
-    if (isLast) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      finish();
-    } else {
-      scrollRef.current?.scrollTo({ x: SCREEN_WIDTH * (page + 1), animated: true });
-    }
+  function next() {
+    scrollRef.current?.scrollTo({ x: width * (page + 1), animated: !reduced });
   }
+
+  /**
+   * Ask for calendar access with the reason still on screen. We proceed either
+   * way — a denial must not strand the user on the last slide, and scheduling
+   * re-asks in context later.
+   */
+  async function allowCalendar() {
+    const granted = await requestCalendarPermissions();
+    if (granted) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    }
+    finish();
+  }
+
+  // The footer CTA hands off to the prime slide's own buttons: fade it out with
+  // the swipe (rather than unmounting) so the footer height never jumps.
+  const ctaStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollX.value, [(LAST - 1) * width, LAST * width], [1, 0], 'clamp'),
+  }));
 
   return (
     <View style={styles.container}>
       <LinearGradient colors={[...GRADIENTS.page]} style={StyleSheet.absoluteFill} />
 
       {/* Skip — always available; onboarding can never trap the user. */}
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <PressableScale haptic="selection" onPress={finish} hitSlop={12}>
+      <View style={[styles.topBar, { paddingTop: insets.top + SPACE.sm }]}>
+        <PressableScale haptic="selection" onPress={finish}>
           <Text style={styles.skip}>Skip</Text>
         </PressableScale>
       </View>
 
-      <ScrollView
+      <Animated.ScrollView
         ref={scrollRef}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={onScroll}
-        style={{ flex: 1 }}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        style={styles.pager}
       >
         {SLIDES.map((slide, i) => (
-          <View key={slide.title} style={styles.slide}>
-            <Animated.View entering={FadeInDown.delay(80).springify().damping(16)}>
-              <LinearGradient
-                colors={[...slide.colors]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={[styles.orb, { shadowColor: slide.colors[0] }]}
-              >
-                <Ionicons name={slide.icon} size={88} color="#fff" />
-              </LinearGradient>
-            </Animated.View>
-            <Animated.Text
-              entering={FadeInDown.delay(160).springify().damping(16)}
-              style={styles.title}
-            >
-              {slide.title}
-            </Animated.Text>
-            <Animated.Text
-              entering={FadeInDown.delay(240).springify().damping(16)}
-              style={styles.subtitle}
-            >
-              {slide.subtitle}
-            </Animated.Text>
-            {i === 0 && (
-              <Animated.Text
-                entering={FadeInDown.delay(340).springify().damping(16)}
-                style={styles.privacyNote}
-              >
-                Everything stays on your device.
-              </Animated.Text>
-            )}
-          </View>
+          <SlideView
+            key={slide.title}
+            slide={slide}
+            index={i}
+            width={width}
+            scrollX={scrollX}
+            reduced={reduced}
+            onAllow={allowCalendar}
+            onDecline={finish}
+          />
         ))}
-      </ScrollView>
+      </Animated.ScrollView>
 
       {/* Dots + CTA */}
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 24 }]}>
+      <View style={[styles.footer, { paddingBottom: insets.bottom + SPACE.xl }]}>
         <View style={styles.dots}>
           {SLIDES.map((s, i) => (
-            <Dot key={s.title} active={i === page} />
+            <Dot key={s.title} index={i} width={width} scrollX={scrollX} />
           ))}
         </View>
-        <PressableScale haptic="light" onPress={nextOrFinish} style={styles.ctaWrap}>
-          <LinearGradient
-            colors={[...GRADIENTS.brand]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.cta}
+        <Animated.View
+          style={ctaStyle}
+          pointerEvents={isPrime ? 'none' : 'auto'}
+          accessibilityElementsHidden={isPrime}
+          importantForAccessibility={isPrime ? 'no-hide-descendants' : 'auto'}
+        >
+          <PressableScale
+            haptic="light"
+            onPress={next}
+            containerStyle={styles.ctaWrap}
+            accessibilityLabel="Continue"
           >
-            <Text style={styles.ctaText}>{isLast ? 'Get Started' : 'Continue'}</Text>
-            <Ionicons name="arrow-forward" size={18} color="#fff" />
-          </LinearGradient>
-        </PressableScale>
+            <LinearGradient
+              colors={[...GRADIENTS.brand]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.cta}
+            >
+              <Text style={styles.ctaText}>Continue</Text>
+              <Ionicons name="arrow-forward" size={18} color={TEXT.inverse} />
+            </LinearGradient>
+          </PressableScale>
+        </Animated.View>
       </View>
     </View>
   );
@@ -181,72 +354,64 @@ export default function Onboarding() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  pager: { flex: 1 },
   topBar: {
     position: 'absolute',
     top: 0,
     right: 0,
     zIndex: 10,
-    paddingHorizontal: 24,
+    paddingHorizontal: SPACE.xl,
   },
-  skip: { fontSize: 15, fontWeight: '700', color: BRAND[600] },
+  skip: { ...TYPE.bodyStrong, color: TEXT.brand },
   slide: {
-    width: SCREEN_WIDTH,
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 36,
+    paddingHorizontal: SPACE.xxl,
   },
   orb: {
-    width: 200,
-    height: 200,
-    borderRadius: 100,
+    width: ORB_SIZE,
+    height: ORB_SIZE,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 44,
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.35,
-    shadowRadius: 32,
+    marginBottom: SPACE.xxxl,
+    ...SHADOW.brandFloating,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-    color: INK[900],
-    textAlign: 'center',
-  },
+  copyWrap: { alignSelf: 'stretch' },
+  copy: { alignItems: 'center' },
+  title: { ...TYPE.display, color: TEXT.primary, textAlign: 'center' },
   subtitle: {
-    fontSize: 16,
-    lineHeight: 24,
-    color: INK[500],
+    ...TYPE.body,
+    color: TEXT.secondary,
     textAlign: 'center',
-    marginTop: 12,
+    marginTop: SPACE.md,
   },
-  privacyNote: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: BRAND[600],
-    marginTop: 16,
-  },
-  footer: { paddingHorizontal: 24 },
+  note: { ...TYPE.footnote, color: TEXT.brand, marginTop: SPACE.base },
+  primeButton: { alignSelf: 'stretch', marginTop: SPACE.xl },
+  declineHit: { paddingVertical: SPACE.md, paddingHorizontal: SPACE.lg },
+  decline: { ...TYPE.callout, color: TEXT.secondary },
+  footer: { paddingHorizontal: SPACE.xl },
   dots: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 6,
-    marginBottom: 20,
+    gap: SPACE.sm,
+    marginBottom: SPACE.lg,
   },
   dot: {
     height: 8,
-    borderRadius: 4,
+    borderRadius: RADIUS.pill,
     backgroundColor: BRAND[600],
   },
-  ctaWrap: { width: '100%' },
+  ctaWrap: { alignSelf: 'stretch' },
   cta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 17,
-    borderRadius: 18,
+    gap: SPACE.sm,
+    paddingVertical: SPACE.base,
+    borderRadius: RADIUS.lg,
+    ...SHADOW.brandCard,
   },
-  ctaText: { fontSize: 17, fontWeight: '700', color: '#fff' },
+  ctaText: { ...TYPE.headline, color: TEXT.inverse },
 });

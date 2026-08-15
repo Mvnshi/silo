@@ -1,22 +1,25 @@
 /**
- * Add Content Screen
- * 
- * Main screen for adding new content to Silo. Supports multiple input methods:
- * - Paste or type URLs
- * - Take photos with camera
- * - Select images from gallery
- * - Create text notes
- * 
- * Features:
- * - AI analysis for links and images
- * - Manual classification editing
- * - Tag management
- * - Stack assignment
- * - Auto-schedule suggestions
- * 
+ * Add Content Screen — the capture home.
+ *
+ * Capture paths: quick-paste field, clipboard hand-off, recent screenshots,
+ * camera, gallery, and free-text notes. Links and images run through the AI
+ * extractor; everything remains editable (and saveable) if that fails.
+ *
+ * Capture principles this screen holds to:
+ * - **Never lose a save.** Every failure path still leaves a titled, saveable
+ *   item — analysis is an enhancement, not a gate.
+ * - **Never block on the network for confirmation.** The save is confirmed the
+ *   moment storage accepts it; geocoding and schedule suggestions run after.
+ * - **Never spend a permission/paste prompt the user didn't ask for.** The
+ *   clipboard is only *sniffed* (hasUrlAsync, no banner) and photo access is
+ *   only *checked* until the user taps the matching affordance.
+ * - **Errors are inline notices, not modals** — a modal hides the very fields
+ *   it is telling you to fix.
+ *
  * Dependencies:
- * - expo-image-picker: Camera and gallery access
- * - lib/api: Backend AI analysis
+ * - expo-image-picker: camera and gallery access
+ * - expo-media-library: recent-screenshot peek (opt-in)
+ * - lib/api: backend AI analysis (cancellable, 20s budget)
  */
 
 import React, { useCallback, useRef, useState } from 'react';
@@ -28,19 +31,21 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-  Image as RNImage,
   KeyboardAvoidingView,
+  Linking,
   Platform,
 } from 'react-native';
 // expo-image handles iOS PHAsset `ph://` URIs (screenshots from the photo
 // library); RN's stock Image does not, so use this for any photo-library URI.
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+import * as MediaLibrary from 'expo-media-library';
 
 /**
  * Defer the expo-clipboard load via require(). It's a native module added in
@@ -49,13 +54,33 @@ import * as ImagePicker from 'expo-image-picker';
  * Lazy-require + try/catch lets the rest of the screen work in that case (we
  * just don't surface the clipboard suggestion). Cleared on first native rebuild.
  */
-function readClipboardString(): Promise<string> {
+function clipboardModule(): typeof import('expo-clipboard') | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Clipboard = require('expo-clipboard');
-    return Clipboard.getStringAsync();
+    return require('expo-clipboard');
   } catch {
-    return Promise.resolve('');
+    return null;
+  }
+}
+
+/**
+ * Pasteboard *sniff*: iOS answers this from the pasteboard's pattern metadata,
+ * so it does NOT trigger the "Silo pasted from Safari" banner. Reading the
+ * actual string does — which is why that is deferred until the user taps.
+ */
+async function clipboardHasUrl(): Promise<boolean> {
+  try {
+    return (await clipboardModule()?.hasUrlAsync()) ?? false;
+  } catch {
+    return false;
+  }
+}
+
+async function readClipboardString(): Promise<string> {
+  try {
+    return (await clipboardModule()?.getStringAsync()) ?? '';
+  } catch {
+    return '';
   }
 }
 import TagPicker from '@/components/TagPicker';
@@ -65,14 +90,29 @@ import OptionCard from '@/components/ui/OptionCard';
 import PressableScale from '@/components/ui/PressableScale';
 import GlassCard from '@/components/ui/GlassCard';
 import Skeleton from '@/components/ui/Skeleton';
-import { BRAND, GRADIENTS, HAIRLINE, INK, RADIUS } from '@/lib/theme';
-import { addItem, updateItem, getItems } from '@/lib/storage';
+import { useToast } from '@/components/ui/Toast';
+import {
+  ACCENT,
+  BRAND,
+  GRADIENTS,
+  HAIRLINE,
+  RADIUS,
+  SHADOW,
+  SPACE,
+  STATUS,
+  SURFACE,
+  TEXT,
+  TYPE,
+} from '@/lib/theme';
+import { enterList, LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
+import { celebrationHaptic } from '@/lib/haptics';
+import { addItem, addStack, updateItem, getItems, getStacks } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
-import { Classification, CLASSIFICATIONS, SocialPlatform, Item } from '@/lib/types';
+import { Classification, CLASSIFICATIONS, SocialPlatform, Item, Stack } from '@/lib/types';
 import { createItem } from '@/lib/items';
 import { detectPlatform } from '@/lib/embed';
 import { imageUriToBase64, getRecentScreenshots, Screenshot } from '@/lib/screenshots';
-import { classConfig } from '@/lib/classification';
+import { classConfig, classGradient } from '@/lib/classification';
 import * as Location from 'expo-location';
 
 /** True iff `s` looks like a usable http(s) URL. */
@@ -85,9 +125,53 @@ function isUrlLike(s: string): boolean {
   }
 }
 
+/** Photo-library access as this screen reasons about it (never an enum compare). */
+type PhotoAccess = 'unknown' | 'undetermined' | 'granted' | 'denied';
+
+/**
+ * An inline, dismissable-by-fixing error. Capture never uses `Alert` for these:
+ * a modal covers the exact field it is asking the user to edit.
+ */
+interface Notice {
+  message: string;
+  tone?: 'info' | 'danger';
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
+function InlineNotice({ message, tone = 'info', actionLabel, onAction }: Notice) {
+  const danger = tone === 'danger';
+  const body = (
+    <View style={[styles.notice, danger && styles.noticeDanger]}>
+      <Ionicons name="alert-circle" size={16} color={danger ? STATUS.danger : ACCENT[500]} />
+      <Text style={styles.noticeText}>{message}</Text>
+      {actionLabel ? <Text style={styles.noticeAction}>{actionLabel}</Text> : null}
+    </View>
+  );
+  if (!onAction) return body;
+  return (
+    <PressableScale
+      haptic="light"
+      onPress={onAction}
+      accessibilityLabel={actionLabel ? `${message} ${actionLabel}` : message}
+    >
+      {body}
+    </PressableScale>
+  );
+}
+
+/**
+ * OptionCard derives its entrance delay as `index * 70`. Offsetting the index by
+ * 160/70 pushes the whole (demoted) capture grid to ~160ms, so the primary
+ * zones — clipboard, photos, recent saves — land first.
+ */
+const OPTION_ENTER_OFFSET = 160 / 70;
+
 export default function AddScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const toast = useToast();
+  const reduced = usePrefersReducedMotion();
   const [inputType, setInputType] = useState<'url' | 'note' | 'image' | null>(null);
   const [url, setUrl] = useState('');
   const [noteText, setNoteText] = useState('');
@@ -96,6 +180,7 @@ export default function AddScreen() {
   const [description, setDescription] = useState('');
   const [classification, setClassification] = useState<Classification>('other');
   const [tags, setTags] = useState<string[]>([]);
+  const [stackId, setStackId] = useState<string | undefined>(undefined);
   const [script, setScript] = useState<string>(''); // AI-generated script for audio
   const [placeName, setPlaceName] = useState<string>(''); // Place name from AI
   const [placeAddress, setPlaceAddress] = useState<string>(''); // Place address from AI
@@ -107,63 +192,111 @@ export default function AddScreen() {
   const [sourceUrl, setSourceUrl] = useState(''); // resolved/canonical URL to persist
   // Guards against a fast double-tap on "Save" creating duplicate items.
   const savingRef = useRef(false);
+  /** Aborts the in-flight extraction (Cancel button / leaving the form). */
+  const analyzeAbortRef = useRef<AbortController | null>(null);
+
+  // ---- Inline notices. One state per render site, so a message can never
+  //      appear somewhere the user can't act on it. ----
+  const [homeNotice, setHomeNotice] = useState<Notice | null>(null);
+  const [urlNotice, setUrlNotice] = useState<Notice | null>(null);
+  const [imageNotice, setImageNotice] = useState<Notice | null>(null);
+  const [saveNotice, setSaveNotice] = useState<Notice | null>(null);
+  /**
+   * The last save threw. Kept as a flag rather than a Notice carrying a handler
+   * so "try again" always runs the CURRENT handleSave — a stored callback would
+   * close over the field values from the failed attempt and re-save those.
+   */
+  const [saveFailed, setSaveFailed] = useState(false);
+  /** The extractor came back thin — nudge the user to check the fields. */
+  const [degraded, setDegraded] = useState(false);
+  /** Save was attempted with an empty title. */
+  const [titleMissing, setTitleMissing] = useState(false);
 
   // ---- Anticipatory-capture state (see "AT-A-GLANCE" zone below). ----
   /** What the user typed/pasted in the always-visible quick-capture field. */
   const [quickText, setQuickText] = useState('');
-  /** Most-recent URL we surfaced from the clipboard — guards against re-nagging. */
-  const handledClipboardRef = useRef<string | null>(null);
-  /** Last clipboard URL we want to offer one-tap save for. null = nothing to show. */
-  const [clipboardSuggestion, setClipboardSuggestion] = useState<string | null>(null);
+  /** True once the user accepted/dismissed the current clipboard offer. */
+  const clipboardHandledRef = useRef(false);
+  /** Whether to offer the clipboard link. Content is unread until they tap. */
+  const [clipboardOffer, setClipboardOffer] = useState(false);
+  /** Photo-library access, checked (never requested) on focus. */
+  const [photoAccess, setPhotoAccess] = useState<PhotoAccess>('unknown');
   /** A small peek of the user's recent screenshots (4) for one-tap import. */
   const [recentShots, setRecentShots] = useState<Screenshot[]>([]);
   /** Last 3 saved items so the user can re-enter quickly without rummaging. */
   const [recentItems, setRecentItems] = useState<Item[]>([]);
+  /** Stacks to file into at capture time. */
+  const [stacks, setStacks] = useState<Stack[]>([]);
+
+  /**
+   * Reload the "You just saved" strip. Extracted from the focus effect because
+   * the tab never loses focus during a save — without an explicit refresh the
+   * strip would show the state from before the item the user just captured.
+   */
+  const refreshRecents = useCallback(async () => {
+    try {
+      const items = await getItems();
+      setRecentItems(
+        items
+          .filter((i) => !i.archived)
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .slice(0, 3),
+      );
+    } catch {
+      /* storage error — leave the strip as it is */
+    }
+  }, []);
+
+  const refreshStacks = useCallback(async () => {
+    try {
+      setStacks(await getStacks());
+    } catch {
+      /* storage error — the chip row just shows "New stack" */
+    }
+  }, []);
 
   /**
    * On focus, light up the AT-A-GLANCE zone: clipboard sniff + recent shots +
-   * recent saves. Everything is best-effort — denied permissions or empty
-   * results simply hide that zone (we never bug the user with permission
-   * prompts here; the user opted in elsewhere).
+   * recent saves + stacks. Everything is best-effort and, critically, prompt-free:
+   * the clipboard is sniffed via hasUrlAsync (no paste banner) and photo access
+   * is only *read* — the request happens when the user taps the opt-in tile.
    */
   useFocusEffect(
     useCallback(() => {
       let alive = true;
       (async () => {
-        try {
-          const text = (await readClipboardString()).trim();
-          if (alive && isUrlLike(text) && handledClipboardRef.current !== text) {
-            setClipboardSuggestion(text);
+        if (!clipboardHandledRef.current) {
+          const hasLink = await clipboardHasUrl();
+          if (alive && hasLink) setClipboardOffer(true);
+        }
+
+        const permission = await MediaLibrary.getPermissionsAsync().catch(() => null);
+        if (!alive) return;
+        const access: PhotoAccess = permission
+          ? (String(permission.status) as PhotoAccess)
+          : 'unknown';
+        setPhotoAccess(access);
+        if (access === 'granted') {
+          try {
+            const shots = await getRecentScreenshots(4);
+            if (alive) setRecentShots(shots);
+          } catch {
+            if (alive) setRecentShots([]);
           }
-        } catch {
-          /* clipboard unavailable on web/older OS; ignore */
         }
-        try {
-          const shots = await getRecentScreenshots(4);
-          if (alive) setRecentShots(shots);
-        } catch {
-          if (alive) setRecentShots([]);
-        }
-        try {
-          const items = await getItems();
-          if (alive) {
-            setRecentItems(
-              items
-                .filter((i) => !i.archived)
-                .sort(
-                  (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-                )
-                .slice(0, 3)
-            );
-          }
-        } catch {
-          /* storage error — leave the strip empty */
-        }
+
+        if (!alive) return;
+        await refreshRecents();
+        if (alive) await refreshStacks();
       })();
       return () => {
         alive = false;
+        // Leaving the tab is the one signal we have that the pasteboard may hold
+        // something new: we can't compare contents without reading (and reading
+        // is what shows the banner), so "offer once per visit" is the rule.
+        clipboardHandledRef.current = false;
       };
-    }, [])
+    }, [refreshRecents, refreshStacks]),
   );
 
   /** Quick-paste field submit — URL gets the extractor, anything else becomes a note. */
@@ -181,28 +314,46 @@ export default function AddScreen() {
     } else {
       setInputType('note');
       setNoteText(value);
+      setDescription(value);
       setQuickText('');
     }
   }
 
-  /** One-tap save on the clipboard suggestion. */
-  function acceptClipboard() {
-    if (!clipboardSuggestion) return;
-    const value = clipboardSuggestion;
-    handledClipboardRef.current = value;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  /**
+   * The user asked for the clipboard link — only now do we read the string
+   * (and spend iOS's one paste banner).
+   */
+  async function acceptClipboard() {
+    clipboardHandledRef.current = true;
+    setClipboardOffer(false);
+    const value = (await readClipboardString()).trim();
     setInputType('url');
+    if (!isUrlLike(value)) {
+      // The pasteboard changed between the sniff and the read.
+      setUrlNotice({ message: 'That link slipped away — paste it here instead.' });
+      return;
+    }
     setUrl(value);
-    setClipboardSuggestion(null);
     handleAnalyzeUrl(value);
   }
 
-  /** Dismiss the clipboard suggestion without saving (don't nag again for the same URL). */
+  /** Dismiss the clipboard offer without saving (don't nag again this visit). */
   function dismissClipboard() {
-    if (!clipboardSuggestion) return;
-    handledClipboardRef.current = clipboardSuggestion;
-    Haptics.selectionAsync();
-    setClipboardSuggestion(null);
+    clipboardHandledRef.current = true;
+    setClipboardOffer(false);
+  }
+
+  /** Ask for photo access — only ever from a tap on the opt-in tile. */
+  async function enablePhotoPeek() {
+    const permission = await MediaLibrary.requestPermissionsAsync().catch(() => null);
+    const access: PhotoAccess = permission ? (String(permission.status) as PhotoAccess) : 'denied';
+    setPhotoAccess(access);
+    if (access !== 'granted') return;
+    try {
+      setRecentShots(await getRecentScreenshots(4));
+    } catch {
+      setRecentShots([]);
+    }
   }
 
   /** Tap a recent screenshot thumbnail to import + analyze (reuses existing flow). */
@@ -215,6 +366,10 @@ export default function AddScreen() {
 
   /** Reset the entire capture form to its initial state (single source of truth). */
   function resetForm() {
+    // Anything still in flight is now for a form that no longer exists.
+    analyzeAbortRef.current?.abort();
+    analyzeAbortRef.current = null;
+    setLoading(false);
     setInputType(null);
     setUrl('');
     setNoteText('');
@@ -223,6 +378,7 @@ export default function AddScreen() {
     setDescription('');
     setClassification('other');
     setTags([]);
+    setStackId(undefined);
     setScript('');
     setPlaceName('');
     setPlaceAddress('');
@@ -230,6 +386,14 @@ export default function AddScreen() {
     setAuthor('');
     setPlatform(undefined);
     setSourceUrl('');
+    setHomeNotice(null);
+    setUrlNotice(null);
+    setImageNotice(null);
+    setSaveNotice(null);
+    setSaveFailed(false);
+    setDegraded(false);
+    setTitleMissing(false);
+    void refreshRecents();
   }
 
   /**
@@ -237,7 +401,8 @@ export default function AddScreen() {
    * metadata (title / author / caption / thumbnail) plus a classification + tags
    * via the Gemini chain. On a private/dead link the Worker returns ok:false with
    * whatever it has; on a hard failure we still populate the raw URL — either
-   * way the user can save (never lose a save).
+   * way the user can save (never lose a save). Both thin cases surface as the
+   * inline "degraded" notice inside the preview card, not as a modal.
    *
    * Accepts an explicit `urlArg` so one-tap entry points (clipboard suggestion,
    * quick-paste field) can pass the URL directly — bypassing the React-state
@@ -246,21 +411,28 @@ export default function AddScreen() {
   async function handleAnalyzeUrl(urlArg?: string) {
     const candidate = (urlArg ?? url).trim();
     if (!candidate) {
-      Alert.alert('Error', 'Please enter a URL');
+      setUrlNotice({ message: 'Paste a link first' });
       return;
     }
+    if (!isUrlLike(candidate)) {
+      setUrlNotice({ message: 'That doesn’t look like a link — it needs to start with https://' });
+      return;
+    }
+    setUrlNotice(null);
+    setDegraded(false);
 
     const urlToAnalyze = candidate;
-    try {
-      new URL(urlToAnalyze);
-    } catch {
-      Alert.alert('Invalid URL', 'Please enter a valid URL (e.g., https://example.com)');
-      return;
-    }
+    // One extraction at a time; a new one supersedes whatever was in flight.
+    analyzeAbortRef.current?.abort();
+    const controller = new AbortController();
+    analyzeAbortRef.current = controller;
 
     try {
       setLoading(true);
-      const result = await extractLink(urlToAnalyze);
+      const result = await extractLink(urlToAnalyze, controller.signal);
+      // The user cancelled while the response was on the wire — the form they
+      // were filling is gone, so writing into it would resurrect it.
+      if (controller.signal.aborted) return;
 
       setTitle(result.title || urlToAnalyze);
       setDescription(result.description || result.caption || '');
@@ -272,15 +444,11 @@ export default function AddScreen() {
       setSourceUrl(result.sourceUrl || urlToAnalyze);
       setScript('');
 
-      if (!result.ok) {
-        // Rich metadata wasn't available (private / login-walled / dead). The form
-        // is still populated with what we have so the user can edit and save.
-        Alert.alert(
-          'Limited preview',
-          'This link is private or couldn’t be fully read, but you can still save it and edit the details below.'
-        );
-      }
+      // Rich metadata wasn't available (private / login-walled / dead). The form
+      // is still populated with what we have so the user can edit and save.
+      setDegraded(!result.ok);
     } catch (error) {
+      if (controller.signal.aborted) return;
       console.error('Failed to extract URL:', error);
       // Hard failure (e.g. backend unreachable): fall back to a manually-editable
       // item from the raw URL so the save is never lost. The embed still works —
@@ -288,8 +456,9 @@ export default function AddScreen() {
       setTitle((prev) => prev || urlToAnalyze);
       setSourceUrl(urlToAnalyze);
       setPlatform(detectPlatform(urlToAnalyze));
-      Alert.alert('Heads up', 'Couldn’t fetch details for this link, but you can still save it below.');
+      setDegraded(true);
     } finally {
+      if (analyzeAbortRef.current === controller) analyzeAbortRef.current = null;
       setLoading(false);
     }
   }
@@ -298,13 +467,18 @@ export default function AddScreen() {
    * Handle image selection from camera or gallery
    */
   async function handleSelectImage(source: 'camera' | 'gallery') {
+    setHomeNotice(null);
     try {
       let result;
 
       if (source === 'camera') {
         const permission = await ImagePicker.requestCameraPermissionsAsync();
         if (!permission.granted) {
-          Alert.alert('Permission Required', 'Camera access is needed to take photos');
+          setHomeNotice({
+            message: 'Silo needs camera access to snap things',
+            actionLabel: 'Open Settings',
+            onAction: () => Linking.openSettings(),
+          });
           return;
         }
         result = await ImagePicker.launchCameraAsync({
@@ -314,7 +488,11 @@ export default function AddScreen() {
       } else {
         const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!permission.granted) {
-          Alert.alert('Permission Required', 'Photo library access is needed');
+          setHomeNotice({
+            message: 'Silo needs photo access to pull one in',
+            actionLabel: 'Open Settings',
+            onAction: () => Linking.openSettings(),
+          });
           return;
         }
         result = await ImagePicker.launchImageLibraryAsync({
@@ -330,40 +508,139 @@ export default function AddScreen() {
       }
     } catch (error) {
       console.error('Failed to select image:', error);
-      Alert.alert('Error', 'Failed to select image');
+      setHomeNotice({
+        message: 'That photo didn’t come through — try again?',
+        tone: 'danger',
+        actionLabel: 'Retry',
+        onAction: () => handleSelectImage(source),
+      });
     }
   }
 
   /**
-   * Analyze selected image with AI
+   * Analyze a captured image. A failure must still leave a saveable item, so the
+   * catch fills a plain-language title and the neutral classification and offers
+   * a retry inline — the photo itself is already captured and previewed.
    */
   async function analyzeSelectedImage(uri: string) {
+    setImageNotice(null);
+    // The image request isn't abortable (analyzeImage takes no signal), but the
+    // controller still acts as the "did the user walk away?" flag.
+    analyzeAbortRef.current?.abort();
+    const controller = new AbortController();
+    analyzeAbortRef.current = controller;
+
     try {
       setLoading(true);
       const base64 = await imageUriToBase64(uri);
       const analysis = await analyzeImage(base64, 'image/jpeg');
-      
+      if (controller.signal.aborted) return;
+
       setTitle(analysis.title);
       setDescription(analysis.description || '');
       setClassification(analysis.classification);
       setTags(analysis.tags || []);
       setScript(analysis.script || ''); // Store script for audio generation
     } catch (error) {
+      if (controller.signal.aborted) return;
       console.error('Failed to analyze image:', error);
-      Alert.alert('Error', 'Failed to analyze image. Please enter details manually.');
+      const stamp = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      setTitle((prev) => prev || `Photo from ${stamp}`);
+      setClassification('other');
+      setImageNotice({
+        message: 'Couldn’t read that one. Add a title yourself and it’s still saved.',
+        actionLabel: 'Try again',
+        onAction: () => analyzeSelectedImage(uri),
+      });
     } finally {
+      if (analyzeAbortRef.current === controller) analyzeAbortRef.current = null;
       setLoading(false);
     }
   }
 
+  /** Create a stack inline so capture can file an item the moment it's caught. */
+  function handleNewStack() {
+    Alert.prompt('New stack', 'What should this one be called?', async (name) => {
+      const trimmed = (name || '').trim();
+      if (!trimmed) return;
+      try {
+        const stack: Stack = {
+          id: `stack_${Date.now()}`,
+          name: trimmed,
+          color: BRAND[500],
+          item_count: 0,
+          created_at: new Date().toISOString(),
+        };
+        await addStack(stack);
+        await refreshStacks();
+        setStackId(stack.id);
+      } catch (error) {
+        console.error('Failed to create stack:', error);
+        setSaveNotice({ message: 'Couldn’t make that stack. Try once more.', tone: 'danger' });
+      }
+    });
+  }
+
   /**
-   * Save the item to storage
+   * Best-effort enrichment that must never delay the save confirmation:
+   * a place with an address but no coordinates gets geocoded in the background.
+   */
+  async function geocodeInBackground(item: Item) {
+    if (!(item.place_name || item.place_address)) return;
+    if (item.place_latitude && item.place_longitude) return;
+    try {
+      const addressToGeocode = item.place_address || item.place_name || '';
+      if (!addressToGeocode) return;
+      const geocoded = await Location.geocodeAsync(addressToGeocode);
+      if (geocoded && geocoded.length > 0) {
+        const { latitude, longitude } = geocoded[0];
+        await updateItem(item.id, { place_latitude: latitude, place_longitude: longitude });
+      }
+    } catch (error) {
+      console.warn('Failed to geocode address (continuing without coordinates):', error);
+    }
+  }
+
+  /**
+   * Toast "Schedule it" action: ask the model when to revisit, then book it.
+   * Runs entirely after the save, so a slow/absent AI never gates confirmation.
+   */
+  async function scheduleSavedItem(item: Item) {
+    try {
+      const suggestion = await suggestScheduleTime({
+        title: item.title,
+        classification: item.classification || 'other',
+        description: item.description,
+        duration: item.duration,
+      });
+      await scheduleItemReview(item, suggestion.date, suggestion.time, item.duration || 15);
+      void celebrationHaptic();
+      toast.show({
+        message: `On your calendar — ${suggestion.date}, ${suggestion.time}`,
+        tone: 'success',
+      });
+    } catch (error) {
+      console.error('Failed to schedule item:', error);
+      toast.show({
+        message: 'Couldn’t add that to your calendar.',
+        tone: 'danger',
+        action: { label: 'Retry', onPress: () => scheduleSavedItem(item) },
+      });
+    }
+  }
+
+  /**
+   * Save the item to storage. Confirmation fires as soon as storage accepts it —
+   * geocoding and the schedule suggestion are strictly post-save.
    */
   async function handleSave() {
     if (!title.trim()) {
-      Alert.alert('Error', 'Please enter a title');
+      setTitleMissing(true);
       return;
     }
+    setTitleMissing(false);
+    setSaveNotice(null);
+    setSaveFailed(false);
 
     // In-flight guard: a fast double-tap must not create two items.
     if (savingRef.current) return;
@@ -387,129 +664,85 @@ export default function AddScreen() {
         author: inputType === 'url' ? author.trim() || undefined : undefined,
         script: script.trim() || undefined, // Store AI-generated script
         tags,
+        // Filing at capture time — without this every in-app save is unfiled
+        // forever and the Stacks tab can only ever show seeded data.
+        stack_id: stackId,
         // Include location data if detected by AI or if classification is 'place'
         place_name: placeName.trim() || (classification === 'place' ? title.trim() : undefined),
-        place_address: placeAddress.trim() || (classification === 'place' ? description.trim() : undefined),
+        place_address:
+          placeAddress.trim() || (classification === 'place' ? description.trim() : undefined),
       });
 
       // (Voice narration is a roadmap feature, default-off — see lib/config.ts.
       //  Apple's on-device Speech framework can fill it later for free, no paid TTS.)
 
-      // Save item
       await addItem(item);
 
-      // If it's a place with address but no coordinates, geocode it
-      if ((item.place_name || item.place_address) && !item.place_latitude && !item.place_longitude) {
-        try {
-          const addressToGeocode = item.place_address || item.place_name || '';
-          if (addressToGeocode) {
-            const geocoded = await Location.geocodeAsync(addressToGeocode);
-            if (geocoded && geocoded.length > 0) {
-              const { latitude, longitude } = geocoded[0];
-              // Update item with coordinates
-              await updateItem(item.id, {
-                place_latitude: latitude,
-                place_longitude: longitude,
-              });
-            }
-          }
-        } catch (error) {
-          console.warn('Failed to geocode address (continuing without coordinates):', error);
-          // Don't show error - geocoding is optional
-        }
-      }
+      // Confirm NOW. Everything below this line is best-effort enrichment.
+      void celebrationHaptic();
+      resetForm();
+      toast.show({
+        message: 'Saved to Silo',
+        tone: 'success',
+        action: { label: 'Schedule it', onPress: () => scheduleSavedItem(item) },
+      });
 
       // (No server-side embeddings or vector DB — the assistant retrieves
       //  on-device via keyword + tag matching, which is free.)
-
-      // Suggest scheduling (like screenshots tab)
-      try {
-        const suggestion = await suggestScheduleTime({
-          title: item.title,
-          classification: item.classification || 'other',
-          description: item.description,
-          duration: item.duration,
-        });
-        
-        // Show alert with suggestion
-        Alert.alert(
-          'Schedule this item?',
-          `${suggestion.reason}\n\nDate: ${suggestion.date}\nTime: ${suggestion.time}`,
-          [
-            {
-              text: 'No thanks',
-              style: 'cancel',
-              onPress: () => resetForm(),
-            },
-            {
-              text: 'Add to Calendar',
-              onPress: async () => {
-                try {
-                  await scheduleItemReview(item, suggestion.date, suggestion.time, item.duration || 15);
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                  Alert.alert('Success', 'Event added to calendar', [
-                    { text: 'OK', onPress: () => resetForm() },
-                  ]);
-                } catch (error) {
-                  console.error('Failed to schedule event:', error);
-                  Alert.alert('Error', 'Failed to add event to calendar', [
-                    { text: 'OK', onPress: () => resetForm() },
-                  ]);
-                }
-              },
-            },
-          ]
-        );
-      } catch (error) {
-        console.warn('Failed to suggest schedule (continuing without suggestion):', error);
-        // Don't show error - schedule suggestion is optional
-        Alert.alert('Success', 'Item added successfully', [
-          { text: 'OK', onPress: () => resetForm() },
-        ]);
-      }
+      void geocodeInBackground(item);
     } catch (error) {
       console.error('Failed to save item:', error);
-      Alert.alert('Error', 'Failed to save item');
+      setSaveFailed(true);
     } finally {
       setLoading(false);
       savingRef.current = false;
     }
   }
 
+  const degradedNotice = (
+    <InlineNotice message="We couldn’t read much from this link — check the details before saving." />
+  );
+
   return (
-    <KeyboardAvoidingView 
+    <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       {/* Gradient Background */}
-      <LinearGradient
-        colors={[...GRADIENTS.page]}
-        style={StyleSheet.absoluteFill}
-      />
+      <LinearGradient colors={[...GRADIENTS.page]} style={StyleSheet.absoluteFill} />
       <ChatBot onClose={() => {}} />
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: Math.max(insets.top, 4), paddingBottom: insets.bottom + 120 }
+          {
+            paddingTop: Math.max(insets.top, 4),
+            // Tab bar + the assistant FAB that floats above it — without the
+            // extra clearance the last capture row sits under the FAB.
+            paddingBottom: insets.bottom + 176,
+          },
         ]}
-        contentInsetAdjustmentBehavior="automatic"
+        // "never", not "automatic": the explicit paddingTop above already
+        // accounts for the safe area, and automatic adds it a second time.
+        contentInsetAdjustmentBehavior="never"
+        // Without "handled" every capture costs two taps: the first is eaten
+        // dismissing the keyboard before the button ever sees it.
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
       >
         {/* Input Type Selection — anticipatory capture */}
         {!inputType && (
           <View style={styles.typeSelection}>
-            <Text className="text-[34px] font-extrabold tracking-tight text-ink-900">Capture</Text>
-            <Text className="mb-4 mt-1.5 text-[15px] leading-[20px] text-ink-500">
-              Paste, jot, or snap — Silo files it.
-            </Text>
+            <Text style={styles.pageTitle}>Capture</Text>
+            <Text style={styles.pageSubtitle}>Paste, jot, or snap — Silo files it.</Text>
 
             {/* Always-visible quick-paste field. Acts as Save Link on URLs,
                 New Note on free text. */}
             <View style={styles.quickField}>
-              <Ionicons name="sparkles" size={18} color={INK[400]} />
+              <Ionicons name="sparkles" size={18} color={TEXT.decorative} />
               <TextInput
                 style={styles.quickInput}
                 placeholder="Paste a link or type a thought"
-                placeholderTextColor={INK[400]}
+                placeholderTextColor={TEXT.placeholder}
                 value={quickText}
                 onChangeText={setQuickText}
                 onSubmitEditing={commitQuickText}
@@ -528,156 +761,215 @@ export default function AddScreen() {
                     <Ionicons
                       name={isUrlLike(quickText) ? 'arrow-forward' : 'pencil'}
                       size={18}
-                      color="#fff"
+                      color={TEXT.inverse}
                     />
                   </LinearGradient>
                 </PressableScale>
               )}
             </View>
 
-            {/* Clipboard suggestion — only renders when we have a fresh URL. */}
-            {clipboardSuggestion && (
-              <GlassCard
-                tint="light"
-                intensity={45}
-                radius={RADIUS.lg}
-                style={styles.clipCard}
-              >
-                <View style={styles.clipInner}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.clipEyebrow}>FROM YOUR CLIPBOARD</Text>
-                    <Text style={styles.clipUrl} numberOfLines={1}>
-                      {clipboardSuggestion}
-                    </Text>
-                  </View>
-                  <PressableScale
-                    haptic="selection"
-                    onPress={dismissClipboard}
-                    style={styles.clipDismiss}
-                    accessibilityLabel="Dismiss"
-                  >
-                    <Ionicons name="close" size={18} color={INK[500]} />
-                  </PressableScale>
-                  <PressableScale
-                    haptic="light"
-                    onPress={acceptClipboard}
-                    accessibilityLabel="Save link"
-                  >
-                    <LinearGradient
-                      colors={[...GRADIENTS.brand]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.clipSaveBtn}
+            {homeNotice ? <InlineNotice {...homeNotice} /> : null}
+
+            {/* Clipboard offer. We know a link is there (pattern sniff) but have
+                deliberately not read it — tapping Paste link is what spends the
+                one "pasted from" banner iOS allows. */}
+            {clipboardOffer && (
+              <Animated.View entering={enterList(0, reduced)}>
+                <GlassCard tint="light" intensity={45} radius={RADIUS.lg} style={styles.clipCard}>
+                  <View style={styles.clipInner}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.clipEyebrow}>FROM YOUR CLIPBOARD</Text>
+                      <Text style={styles.clipUrl} numberOfLines={1}>
+                        There’s a link ready to save
+                      </Text>
+                    </View>
+                    <PressableScale
+                      haptic="selection"
+                      onPress={dismissClipboard}
+                      style={styles.clipDismiss}
+                      accessibilityLabel="Dismiss"
                     >
-                      <Text style={styles.clipSaveText}>Save</Text>
-                    </LinearGradient>
-                  </PressableScale>
-                </View>
-              </GlassCard>
+                      <Ionicons name="close" size={18} color={TEXT.tertiary} />
+                    </PressableScale>
+                    <PressableScale
+                      haptic="light"
+                      onPress={acceptClipboard}
+                      accessibilityLabel="Paste link"
+                    >
+                      <LinearGradient
+                        colors={[...GRADIENTS.brand]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.clipSaveBtn}
+                      >
+                        <Text style={styles.clipSaveText}>Paste link</Text>
+                      </LinearGradient>
+                    </PressableScale>
+                  </View>
+                </GlassCard>
+              </Animated.View>
             )}
 
-            {/* Recent screenshots peek — one tap to import + analyze. */}
-            {recentShots.length > 0 && (
-              <View style={styles.peekSection}>
-                <Text style={styles.peekTitle}>From your photos</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.peekStrip}
-                >
-                  {recentShots.map((s) => (
-                    <PressableScale
-                      key={s.id}
-                      haptic="light"
-                      onPress={() => importRecentShot(s)}
-                      style={styles.peekTile}
+            {/* Recent screenshots peek — one tap to import + analyze. Mounted
+                only once we know what to show, so the entrance plays on the
+                content rather than on an empty box. */}
+            {(photoAccess === 'undetermined' ||
+              photoAccess === 'denied' ||
+              recentShots.length > 0) && (
+              <Animated.View entering={enterList(1, reduced)}>
+                {photoAccess === 'granted' && recentShots.length > 0 && (
+                  <View style={styles.peekSection}>
+                    <Text style={styles.peekTitle}>From your photos</Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.peekStrip}
+                      keyboardShouldPersistTaps="handled"
                     >
-                      <Image source={{ uri: s.uri }} style={styles.peekImg} />
+                      {recentShots.map((s) => (
+                        <PressableScale
+                          key={s.id}
+                          haptic="light"
+                          onPress={() => importRecentShot(s)}
+                          style={styles.peekTile}
+                          accessibilityLabel="Import this screenshot"
+                        >
+                          <Image
+                            source={{ uri: s.uri }}
+                            style={styles.peekImg}
+                            contentFit="cover"
+                          />
+                        </PressableScale>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Opt-in tile. The permission sheet only ever fires from this tap. */}
+                {photoAccess === 'undetermined' && (
+                  <View style={styles.peekSection}>
+                    <Text style={styles.peekTitle}>From your photos</Text>
+                    <PressableScale
+                      haptic="light"
+                      onPress={enablePhotoPeek}
+                      style={styles.permTile}
+                      scaleTo={0.985}
+                    >
+                      <View style={styles.permIcon}>
+                        <Ionicons name="images" size={18} color={TEXT.brand} />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.permTitle}>Show my recent screenshots</Text>
+                        <Text style={styles.permSub}>Save one in a single tap.</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={TEXT.decorative} />
                     </PressableScale>
-                  ))}
-                </ScrollView>
-              </View>
+                  </View>
+                )}
+
+                {/* Denial leaves a way back rather than a dead strip. */}
+                {photoAccess === 'denied' && (
+                  <View style={styles.peekSection}>
+                    <Text style={styles.peekTitle}>From your photos</Text>
+                    <PressableScale
+                      haptic="light"
+                      onPress={() => Linking.openSettings()}
+                      style={styles.permTile}
+                      scaleTo={0.985}
+                    >
+                      <View style={styles.permIcon}>
+                        <Ionicons name="lock-closed" size={18} color={TEXT.brand} />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.permTitle}>Photo access is off</Text>
+                        <Text style={styles.permSub}>Turn it on in Settings to peek here.</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={TEXT.decorative} />
+                    </PressableScale>
+                  </View>
+                )}
+              </Animated.View>
             )}
 
             {/* Last 3 saves — re-enter recent items without rummaging. */}
             {recentItems.length > 0 && (
-              <View style={styles.peekSection}>
+              <Animated.View entering={enterList(2, reduced)} style={styles.peekSection}>
                 <Text style={styles.peekTitle}>You just saved</Text>
-                {recentItems.map((item) => {
+                {recentItems.map((item, index) => {
                   const cfg = classConfig(item.classification);
                   return (
-                    <PressableScale
+                    <Animated.View
                       key={item.id}
-                      haptic="light"
-                      onPress={() => router.push(`/item/${item.id}`)}
-                      style={styles.recentRow}
+                      layout={LAYOUT}
+                      entering={enterList(index, reduced)}
                     >
-                      <LinearGradient
-                        colors={[cfg.from, cfg.to]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.recentIcon}
+                      <PressableScale
+                        haptic="light"
+                        onPress={() => router.push(`/item/${item.id}`)}
+                        style={styles.recentRow}
+                        scaleTo={0.985}
                       >
-                        <Ionicons name={cfg.icon} size={16} color="#fff" />
-                      </LinearGradient>
-                      <View style={{ flex: 1, marginLeft: 10, minWidth: 0 }}>
-                        <Text style={styles.recentTitle} numberOfLines={1}>
-                          {item.title}
-                        </Text>
-                        <Text style={styles.recentSub} numberOfLines={1}>
-                          {item.classification.toUpperCase()}
-                        </Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={INK[300]} />
-                    </PressableScale>
+                        <LinearGradient
+                          colors={[cfg.from, cfg.to]}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.recentIcon}
+                        >
+                          <Ionicons name={cfg.icon} size={16} color={TEXT.inverse} />
+                        </LinearGradient>
+                        <View style={{ flex: 1, marginLeft: SPACE.sm, minWidth: 0 }}>
+                          <Text style={styles.recentTitle} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          <Text style={[styles.recentSub, { color: cfg.deep }]} numberOfLines={1}>
+                            {cfg.label.toUpperCase()}
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={TEXT.decorative} />
+                      </PressableScale>
+                    </Animated.View>
                   );
                 })}
-              </View>
+              </Animated.View>
             )}
 
-            {/* The original 4 OptionCards — demoted to a compact grid. */}
-            <Text style={styles.orTitle}>Or capture something new</Text>
-            <View style={styles.optionGrid}>
-              <View style={styles.optionGridCell}>
-                <OptionCard
-                  index={0}
-                  icon="link"
-                  colors={['#6366f1', '#8b5cf6']}
-                  title="Link"
-                  subtitle="Paste a URL"
-                  onPress={() => setInputType('url')}
-                />
-              </View>
-              <View style={styles.optionGridCell}>
-                <OptionCard
-                  index={1}
-                  icon="camera"
-                  colors={['#ec4899', '#f472b6']}
-                  title="Camera"
-                  subtitle="Snap a photo"
-                  onPress={() => handleSelectImage('camera')}
-                />
-              </View>
-              <View style={styles.optionGridCell}>
-                <OptionCard
-                  index={2}
-                  icon="images"
-                  colors={['#06b6d4', '#22d3ee']}
-                  title="Gallery"
-                  subtitle="From photos"
-                  onPress={() => handleSelectImage('gallery')}
-                />
-              </View>
-              <View style={styles.optionGridCell}>
-                <OptionCard
-                  index={3}
-                  icon="create"
-                  colors={['#10b981', '#34d399']}
-                  title="Note"
-                  subtitle="Quick thought"
-                  onPress={() => setInputType('note')}
-                />
-              </View>
+            {/* The four explicit capture routes. Full-width rows, not a 2-up
+                grid: OptionCard is a row (52pt tile + title + subtitle), and at
+                48% width every subtitle wrapped onto a second line. */}
+            <Text style={styles.orTitle}>OR CAPTURE SOMETHING NEW</Text>
+            <View style={styles.optionList}>
+              <OptionCard
+                index={OPTION_ENTER_OFFSET}
+                icon="link"
+                colors={GRADIENTS.brand}
+                title="Link"
+                subtitle="Paste a URL"
+                onPress={() => setInputType('url')}
+              />
+              <OptionCard
+                index={OPTION_ENTER_OFFSET + 1}
+                icon="camera"
+                colors={classGradient('video')}
+                title="Camera"
+                subtitle="Snap a photo"
+                onPress={() => handleSelectImage('camera')}
+              />
+              <OptionCard
+                index={OPTION_ENTER_OFFSET + 2}
+                icon="images"
+                colors={classGradient('place')}
+                title="Gallery"
+                subtitle="From your photos"
+                onPress={() => handleSelectImage('gallery')}
+              />
+              <OptionCard
+                index={OPTION_ENTER_OFFSET + 3}
+                icon="create"
+                colors={classGradient('product')}
+                title="Note"
+                subtitle="Jot a quick thought"
+                onPress={() => setInputType('note')}
+              />
             </View>
           </View>
         )}
@@ -687,21 +979,30 @@ export default function AddScreen() {
           <View style={styles.form}>
             <View style={styles.inputGroup}>
               <View style={styles.urlHeader}>
-                <PressableScale haptic="light" style={styles.backButton} onPress={() => resetForm()}>
-                  <Ionicons name="arrow-back" size={24} color={INK[700]} />
+                <PressableScale
+                  haptic="light"
+                  style={styles.backButton}
+                  onPress={() => resetForm()}
+                  accessibilityLabel="Back to capture"
+                >
+                  <Ionicons name="arrow-back" size={24} color={TEXT.secondary} />
                 </PressableScale>
                 <Text style={styles.label}>URL</Text>
               </View>
               <TextInput
                 style={styles.input}
                 placeholder="https://example.com"
-                placeholderTextColor={INK[400]}
+                placeholderTextColor={TEXT.placeholder}
                 value={url}
-                onChangeText={setUrl}
+                onChangeText={(text) => {
+                  setUrl(text);
+                  if (urlNotice) setUrlNotice(null);
+                }}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
               />
+              {urlNotice ? <InlineNotice {...urlNotice} /> : null}
               <PressableScale
                 haptic="light"
                 onPress={() => handleAnalyzeUrl()}
@@ -715,7 +1016,7 @@ export default function AddScreen() {
                   style={styles.analyzeButton}
                 >
                   {loading ? (
-                    <ActivityIndicator color="#fff" />
+                    <ActivityIndicator color={TEXT.inverse} />
                   ) : (
                     <Text style={styles.analyzeButtonText}>Analyze with AI</Text>
                   )}
@@ -725,17 +1026,57 @@ export default function AddScreen() {
           </View>
         )}
 
+        {/* Image capture — the photo itself is the header, so a failed analysis
+            still lands on something recognisable with a way back. */}
+        {inputType === 'image' && (
+          <View style={styles.form}>
+            <View style={styles.inputGroup}>
+              <View style={styles.urlHeader}>
+                <PressableScale
+                  haptic="light"
+                  style={styles.backButton}
+                  onPress={() => resetForm()}
+                  accessibilityLabel="Back to capture"
+                >
+                  <Ionicons name="arrow-back" size={24} color={TEXT.secondary} />
+                </PressableScale>
+                <Text style={styles.label}>Photo</Text>
+              </View>
+              {imageUri ? (
+                <Image
+                  source={{ uri: imageUri }}
+                  style={styles.capturedImage}
+                  contentFit="cover"
+                  transition={220}
+                  accessibilityLabel="Captured photo"
+                />
+              ) : null}
+              {imageNotice ? <InlineNotice {...imageNotice} /> : null}
+            </View>
+          </View>
+        )}
+
         {/* Note Input */}
         {inputType === 'note' && (
           <View style={styles.form}>
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Note</Text>
+              <View style={styles.urlHeader}>
+                <PressableScale
+                  haptic="light"
+                  style={styles.backButton}
+                  onPress={() => resetForm()}
+                  accessibilityLabel="Back to capture"
+                >
+                  <Ionicons name="arrow-back" size={24} color={TEXT.secondary} />
+                </PressableScale>
+                <Text style={styles.label}>Note</Text>
+              </View>
               <TextInput
                 style={[styles.input, styles.textArea]}
                 placeholder="Write your note..."
-                placeholderTextColor={INK[400]}
+                placeholderTextColor={TEXT.placeholder}
                 value={noteText}
-                onChangeText={text => {
+                onChangeText={(text) => {
                   setNoteText(text);
                   setDescription(text);
                 }}
@@ -751,37 +1092,55 @@ export default function AddScreen() {
           <View style={styles.form}>
             {inputType === 'url' && (thumbnailUri || author || platform) ? (
               <View style={styles.previewCard}>
-                {thumbnailUri ? (
-                  <RNImage source={{ uri: thumbnailUri }} style={styles.previewThumb} resizeMode="cover" />
-                ) : (
-                  <View style={[styles.previewThumb, styles.previewThumbFallback]}>
-                    <Ionicons name="link" size={22} color="#6366f1" />
+                <View style={styles.previewRow}>
+                  {thumbnailUri ? (
+                    <Image
+                      source={{ uri: thumbnailUri }}
+                      style={styles.previewThumb}
+                      contentFit="cover"
+                      transition={220}
+                    />
+                  ) : (
+                    <View style={[styles.previewThumb, styles.previewThumbFallback]}>
+                      <Ionicons name="link" size={22} color={BRAND[500]} />
+                    </View>
+                  )}
+                  <View style={styles.previewMeta}>
+                    {platform ? (
+                      <Text style={styles.previewPlatform}>{platform.toUpperCase()}</Text>
+                    ) : null}
+                    {author ? (
+                      <Text style={styles.previewAuthor} numberOfLines={1}>
+                        {author}
+                      </Text>
+                    ) : null}
+                    {title ? (
+                      <Text style={styles.previewTitle} numberOfLines={2}>
+                        {title}
+                      </Text>
+                    ) : null}
                   </View>
-                )}
-                <View style={styles.previewMeta}>
-                  {platform ? <Text style={styles.previewPlatform}>{platform.toUpperCase()}</Text> : null}
-                  {author ? (
-                    <Text style={styles.previewAuthor} numberOfLines={1}>
-                      {author}
-                    </Text>
-                  ) : null}
-                  {title ? (
-                    <Text style={styles.previewTitle} numberOfLines={2}>
-                      {title}
-                    </Text>
-                  ) : null}
                 </View>
+                {degraded ? degradedNotice : null}
               </View>
+            ) : degraded ? (
+              degradedNotice
             ) : null}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Title</Text>
               <TextInput
                 style={styles.input}
                 placeholder="Item title"
-                placeholderTextColor={INK[400]}
+                placeholderTextColor={TEXT.placeholder}
                 value={title}
-                onChangeText={setTitle}
+                onChangeText={(text) => {
+                  setTitle(text);
+                  if (titleMissing) setTitleMissing(false);
+                }}
               />
+              {titleMissing ? (
+                <Text style={styles.fieldHelp}>Give it a title so you can find it later</Text>
+              ) : null}
             </View>
 
             <View style={styles.inputGroup}>
@@ -789,7 +1148,7 @@ export default function AddScreen() {
               <TextInput
                 style={[styles.input, styles.textArea]}
                 placeholder="Add a description..."
-                placeholderTextColor={INK[400]}
+                placeholderTextColor={TEXT.placeholder}
                 value={description}
                 onChangeText={setDescription}
                 multiline
@@ -799,11 +1158,16 @@ export default function AddScreen() {
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Classification</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {CLASSIFICATIONS.map(type => (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                {CLASSIFICATIONS.map((type) => (
                   <PressableScale
                     key={type}
                     haptic="selection"
+                    selected={classification === type}
                     style={[
                       styles.classificationChip,
                       classification === type && styles.classificationChipActive,
@@ -823,10 +1187,58 @@ export default function AddScreen() {
               </ScrollView>
             </View>
 
+            {/* Filing happens here or never — the Stacks tab reads `stack_id`. */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Stack</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.stackRow}
+                keyboardShouldPersistTaps="handled"
+              >
+                {stacks.map((stack) => {
+                  const active = stackId === stack.id;
+                  return (
+                    <PressableScale
+                      key={stack.id}
+                      haptic="selection"
+                      selected={active}
+                      style={[styles.stackChip, active && styles.stackChipActive]}
+                      // Tapping the selected stack unfiles — filing must be undoable
+                      // without leaving the form.
+                      onPress={() => setStackId(active ? undefined : stack.id)}
+                    >
+                      <Text style={[styles.stackChipText, active && styles.stackChipTextActive]}>
+                        {stack.name}
+                      </Text>
+                    </PressableScale>
+                  );
+                })}
+                <PressableScale
+                  haptic="light"
+                  onPress={handleNewStack}
+                  style={styles.stackChipNew}
+                  accessibilityLabel="New stack"
+                >
+                  <Ionicons name="add" size={14} color={TEXT.brand} />
+                  <Text style={styles.stackChipNewText}>New stack</Text>
+                </PressableScale>
+              </ScrollView>
+            </View>
+
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Tags</Text>
               <TagPicker selectedTags={tags} onTagsChange={setTags} />
             </View>
+
+            {saveNotice ? <InlineNotice {...saveNotice} /> : null}
+            {saveFailed ? (
+              <InlineNotice
+                message="That didn’t save. Tap to try again."
+                tone="danger"
+                onAction={handleSave}
+              />
+            ) : null}
 
             <PressableScale
               haptic="light"
@@ -841,19 +1253,18 @@ export default function AddScreen() {
                 style={styles.saveButton}
               >
                 {loading ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color={TEXT.inverse} />
                 ) : (
                   <Text style={styles.saveButtonText}>Save Item</Text>
                 )}
               </LinearGradient>
             </PressableScale>
 
-            <PressableScale
-              haptic="light"
-              style={styles.cancelButton}
-              onPress={() => setInputType(null)}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+            {/* Discard, not "Cancel" — this clears the whole draft. The old
+                Cancel only hid the input type, leaving a populated form stacked
+                under the capture home that saved as an untyped note. */}
+            <PressableScale haptic="light" style={styles.cancelButton} onPress={() => resetForm()}>
+              <Text style={styles.cancelButtonText}>Discard</Text>
             </PressableScale>
           </View>
         )}
@@ -865,6 +1276,9 @@ export default function AddScreen() {
             <Skeleton width="72%" height={18} style={styles.loadingLine} />
             <Skeleton width="48%" height={14} style={styles.loadingLine} />
             <Text style={styles.loadingText}>Analyzing with AI...</Text>
+            <PressableScale haptic="light" style={styles.cancelButton} onPress={() => resetForm()}>
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </PressableScale>
           </View>
         )}
       </ScrollView>
@@ -877,249 +1291,306 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: 16,
+    padding: SPACE.base,
     paddingTop: 0,
   },
   typeSelection: {
-    gap: 12,
+    gap: SPACE.md,
   },
+  pageTitle: { ...TYPE.display, color: TEXT.primary },
+  pageSubtitle: { ...TYPE.callout, color: TEXT.secondary, marginTop: SPACE.xs },
   /* Anticipatory-capture zone styles */
   quickField: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#fff',
+    gap: SPACE.sm,
+    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.pill,
     borderWidth: 1,
     borderColor: HAIRLINE,
     paddingHorizontal: 14,
     paddingVertical: 6,
-    shadowColor: INK[900],
-    shadowOpacity: 0.04,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 12,
-    elevation: 2,
+    ...SHADOW.card,
   },
-  quickInput: { flex: 1, fontSize: 15, color: INK[900], paddingVertical: 10 },
+  quickInput: { flex: 1, ...TYPE.callout, color: TEXT.primary, paddingVertical: SPACE.sm },
   quickSendBtn: {
     width: 34,
     height: 34,
-    borderRadius: 17,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
   clipCard: {
-    marginTop: 2,
+    marginTop: SPACE.xxs,
   },
   clipInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: SPACE.sm,
     padding: 14,
   },
-  clipEyebrow: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-    color: INK[400],
-  },
-  clipUrl: { fontSize: 13, color: INK[800], marginTop: 4 },
+  clipEyebrow: { ...TYPE.overline, color: TEXT.tertiary },
+  clipUrl: { ...TYPE.footnote, color: TEXT.primary, marginTop: SPACE.xs },
   clipDismiss: {
     width: 30,
     height: 30,
-    borderRadius: 15,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
   clipSaveBtn: {
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
   },
-  clipSaveText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  peekSection: { gap: 8, marginTop: 6 },
+  clipSaveText: { ...TYPE.subhead, fontWeight: '700', color: TEXT.inverse },
+  peekSection: { gap: SPACE.sm, marginTop: 6 },
   peekTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.6,
-    color: INK[400],
-    marginLeft: 2,
+    ...TYPE.overline,
+    color: TEXT.tertiary,
+    marginLeft: SPACE.xxs,
   },
-  peekStrip: { gap: 10, paddingRight: 16 },
+  peekStrip: { gap: SPACE.sm, paddingRight: SPACE.base },
   peekTile: {
     width: 80,
     height: 110,
     borderRadius: RADIUS.md,
     overflow: 'hidden',
-    backgroundColor: INK[100],
+    backgroundColor: SURFACE.field,
     borderWidth: 1,
     borderColor: HAIRLINE,
   },
   peekImg: { width: '100%', height: '100%' },
-  recentRow: {
+  /* Photo-access opt-in / recovery tile (same shape as a recent row). */
+  permTile: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    gap: SPACE.md,
+    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
     borderColor: HAIRLINE,
-    padding: 10,
+    padding: SPACE.md,
+    ...SHADOW.hairline,
+  },
+  permIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: RADIUS.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: BRAND[50],
+  },
+  permTitle: { ...TYPE.subhead, color: TEXT.primary },
+  permSub: { ...TYPE.caption, fontWeight: '500', color: TEXT.tertiary, marginTop: SPACE.xxs },
+  recentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: SURFACE.card,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    padding: SPACE.sm + 2,
   },
   recentIcon: {
     width: 32,
     height: 32,
-    borderRadius: 9,
+    borderRadius: RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  recentTitle: { fontSize: 14, fontWeight: '600', color: INK[900] },
-  recentSub: { fontSize: 10, fontWeight: '700', color: INK[400], marginTop: 2, letterSpacing: 0.6 },
+  recentTitle: { ...TYPE.subhead, color: TEXT.primary },
+  recentSub: { ...TYPE.overline, marginTop: SPACE.xxs },
   orTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: INK[400],
-    letterSpacing: 0.6,
+    ...TYPE.overline,
+    color: TEXT.tertiary,
     marginTop: 14,
-    marginLeft: 2,
+    marginLeft: SPACE.xxs,
   },
-  optionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  optionGridCell: { width: '48%' },
+  optionList: { marginTop: SPACE.xs },
   form: {
-    gap: 20,
-    backgroundColor: '#fff',
+    gap: SPACE.lg,
+    backgroundColor: SURFACE.card,
     borderRadius: RADIUS.xl,
     borderWidth: 1,
     borderColor: HAIRLINE,
-    padding: 16,
-    shadowColor: INK[900],
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    elevation: 2,
+    padding: SPACE.base,
+    ...SHADOW.card,
   },
   inputGroup: {
-    gap: 8,
+    gap: SPACE.sm,
   },
   urlHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 4,
+    gap: SPACE.md,
+    marginBottom: SPACE.xs,
   },
   backButton: {
-    padding: 4,
-    marginLeft: -4,
+    padding: SPACE.xs,
+    marginLeft: -SPACE.xs,
   },
   label: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: INK[700],
+    ...TYPE.bodyStrong,
+    color: TEXT.secondary,
   },
   input: {
-    backgroundColor: INK[50],
+    backgroundColor: SURFACE.sunken,
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: HAIRLINE,
-    padding: 16,
-    fontSize: 16,
-    color: INK[900],
+    padding: SPACE.base,
+    ...TYPE.body,
+    color: TEXT.primary,
   },
   textArea: {
     minHeight: 100,
     textAlignVertical: 'top',
   },
+  fieldHelp: {
+    ...TYPE.footnote,
+    color: STATUS.danger,
+    marginLeft: SPACE.xxs,
+  },
+  capturedImage: {
+    width: '100%',
+    height: 220,
+    borderRadius: RADIUS.lg,
+    backgroundColor: SURFACE.field,
+  },
+  /* Inline notice — replaces the Alert.alert('Error', …) family. */
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE.sm,
+    backgroundColor: BRAND[50],
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACE.md,
+    paddingVertical: SPACE.sm + 2,
+  },
+  noticeDanger: {
+    backgroundColor: STATUS.dangerSoft,
+  },
+  noticeText: { ...TYPE.footnote, color: TEXT.secondary, flex: 1 },
+  noticeAction: { ...TYPE.footnote, fontWeight: '800', color: TEXT.brand },
   analyzeButton: {
     borderRadius: RADIUS.pill,
-    padding: 16,
+    padding: SPACE.base,
     alignItems: 'center',
   },
   analyzeButtonText: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#fff',
+    ...TYPE.headline,
+    color: TEXT.inverse,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   classificationChip: {
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 8,
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+    marginRight: SPACE.sm,
     borderWidth: 1,
     borderColor: HAIRLINE,
-    shadowColor: INK[900],
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    ...SHADOW.hairline,
   },
   classificationChipActive: {
     backgroundColor: BRAND[600],
     borderColor: BRAND[600],
   },
   classificationChipText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: INK[500],
+    ...TYPE.subhead,
+    color: TEXT.tertiary,
     textTransform: 'capitalize',
   },
   classificationChipTextActive: {
-    color: '#fff',
+    color: TEXT.inverse,
   },
+  stackRow: { gap: SPACE.sm, paddingRight: SPACE.base },
+  stackChip: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    ...SHADOW.hairline,
+  },
+  stackChipActive: {
+    backgroundColor: BRAND[600],
+    borderColor: BRAND[600],
+  },
+  stackChipText: { ...TYPE.subhead, color: TEXT.tertiary },
+  stackChipTextActive: { color: TEXT.inverse },
+  stackChipNew: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE.xs,
+    paddingHorizontal: SPACE.md,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: BRAND[300],
+    backgroundColor: BRAND[50],
+  },
+  stackChipNewText: { ...TYPE.subhead, color: TEXT.brand },
   // Layout wrapper around the gradient save pill (margin lives here so the
   // press-scale transform doesn't shift it). The form is a column, so unlike
   // reel.tsx's row variant this wrapper must NOT take flex: 1 — in an
   // auto-height parent that would collapse the button to zero height.
   saveButtonWrap: {
-    marginTop: 8,
+    marginTop: SPACE.sm,
   },
   saveButton: {
     borderRadius: RADIUS.pill,
-    padding: 16,
+    padding: SPACE.base,
     alignItems: 'center',
   },
   saveButtonText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#fff',
+    ...TYPE.title3,
+    color: TEXT.inverse,
   },
   cancelButton: {
-    padding: 16,
+    padding: SPACE.base,
     alignItems: 'center',
   },
   cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: BRAND[600],
+    ...TYPE.bodyStrong,
+    color: TEXT.brand,
   },
   loadingContainer: {
     alignItems: 'center',
-    paddingVertical: 40,
+    paddingVertical: SPACE.xxxl,
   },
   // Skeleton text line under the preview-shaped block.
   loadingLine: {
-    marginTop: 12,
+    marginTop: SPACE.md,
   },
   loadingText: {
-    fontSize: 16,
-    color: INK[500],
-    marginTop: 16,
+    ...TYPE.body,
+    color: TEXT.tertiary,
+    marginTop: SPACE.base,
   },
   previewCard: {
+    gap: SPACE.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    padding: SPACE.md,
+  },
+  previewRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 14,
-    padding: 12,
+    gap: SPACE.md,
   },
   previewThumb: {
     width: 64,
     height: 64,
-    borderRadius: 10,
-    backgroundColor: '#EEF2FF',
+    borderRadius: RADIUS.sm,
+    backgroundColor: SURFACE.field,
   },
   previewThumbFallback: {
     alignItems: 'center',
@@ -1127,22 +1598,19 @@ const styles = StyleSheet.create({
   },
   previewMeta: {
     flex: 1,
-    gap: 2,
+    gap: SPACE.xxs,
   },
   previewPlatform: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#6366f1',
-    letterSpacing: 0.5,
+    ...TYPE.overline,
+    color: TEXT.brand,
   },
   previewAuthor: {
-    fontSize: 14,
+    ...TYPE.subhead,
     fontWeight: '700',
-    color: INK[700],
+    color: TEXT.primary,
   },
   previewTitle: {
-    fontSize: 13,
-    color: INK[500],
+    ...TYPE.footnote,
+    color: TEXT.secondary,
   },
 });
-

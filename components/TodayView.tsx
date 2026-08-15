@@ -3,20 +3,39 @@
  *
  * This is where Silo's "AI decides with you" thesis becomes a product surface:
  * we read what you've saved (L1) + your calendar free/busy + (when permitted)
- * your location (L2) and turn it into 3 things you could act on right now,
- * plus context. See VISION.md.
+ * your location (L2) and turn it into a short list of things you could act on
+ * right now, plus context. See VISION.md.
+ *
+ * The "Picked for you" block is the headline claim and gets a hero treatment
+ * (overline + title + one bordered card) rather than looking like every other
+ * section. Its heading counts the actual picks so it never over-promises.
+ *
+ * Location is NEVER requested on mount — the "Near you" slot shows a priming
+ * row and the OS dialog only follows an explicit tap.
  *
  * Pure presentation + a couple of small helpers — all data is passed in from
  * the parent so the source of truth stays in calendar.tsx (single fetch path).
  */
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
+import Animated from 'react-native-reanimated';
 import PressableScale from '@/components/ui/PressableScale';
 import GlassCard from '@/components/ui/GlassCard';
-import { BRAND, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
+import Skeleton from '@/components/ui/Skeleton';
+import {
+  BRAND,
+  GRADIENTS,
+  HAIRLINE,
+  RADIUS,
+  SHADOW,
+  SPACE,
+  TEXT,
+  TYPE,
+} from '@/lib/theme';
+import { enterList, exitFade, LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
 import { Item, Classification } from '@/lib/types';
 import { classConfig } from '@/lib/classification';
 import { toLocalDateString } from '@/lib/datetime';
@@ -28,8 +47,6 @@ import {
   ReviewOutcome,
 } from '@/lib/resurface';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 export interface TodayEvent {
   title: string;
   startDate: Date;
@@ -37,11 +54,20 @@ export interface TodayEvent {
   itemId?: string;
 }
 
+/** Foreground-location permission as this screen sees it. */
+export type LocationStatus = 'idle' | 'requesting' | 'granted' | 'denied';
+
 interface Props {
   allItems: Item[];
   /** All events relevant to today — calendar imports + Silo scheduled events. */
   events: TodayEvent[];
   currentLocation: { latitude: number; longitude: number } | null;
+  /** First load still in flight — render skeletons rather than "inbox is clear". */
+  loading?: boolean;
+  /** Foreground-location permission; drives the "Near you" priming row. */
+  locationStatus: LocationStatus;
+  /** Ask for location (or route to Settings once denied). */
+  onRequestLocation: () => void;
   onScheduleItem: (item: Item) => void;
   onDoneItem: (itemId: string) => void;
   onSnoozeItem: (itemId: string) => void;
@@ -62,6 +88,17 @@ function ageLabel(iso: string): string {
   return `saved ${Math.floor(days / 365)}y ago`;
 }
 
+/**
+ * Heading for the picks block. It counts, because the list is a `slice(0, 3)`
+ * and a static "3 things" over one row is the product lying to the user.
+ */
+function picksHeading(count: number): string {
+  if (count === 0) return 'Nothing queued yet';
+  if (count === 1) return 'One thing you could do today';
+  if (count === 2) return 'Two things you could do today';
+  return '3 things you could do today';
+}
+
 /** Great-circle distance in miles. Inline to avoid pulling a geo dep. */
 function haversineMiles(
   a: { latitude: number; longitude: number },
@@ -76,7 +113,7 @@ function haversineMiles(
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-/** Classification → rough time-of-day fit (used to rank "3 to do today"). */
+/** Classification → rough time-of-day fit (used to rank the picks). */
 function timeOfDayFit(c: Classification, hour: number): number {
   // morning 5-11, midday 11-15, afternoon 15-18, evening 18-22
   const isMorning = hour >= 5 && hour < 11;
@@ -145,6 +182,9 @@ export default function TodayView({
   allItems,
   events,
   currentLocation,
+  loading = false,
+  locationStatus,
+  onRequestLocation,
   onScheduleItem,
   onDoneItem,
   onSnoozeItem,
@@ -153,6 +193,7 @@ export default function TodayView({
   onKeepStale,
   onArchiveStale,
 }: Props) {
+  const reduced = usePrefersReducedMotion();
   const now = useMemo(() => new Date(), []);
   const todayKey = toLocalDateString(now);
 
@@ -179,9 +220,9 @@ export default function TodayView({
     : null;
   const isNow = minutesUntilNext !== null && minutesUntilNext >= -30 && minutesUntilNext <= 30;
 
-  // 3 things you could do today: not done/archived/scheduled, ranked by
-  // loved-repeatable > bucketlist > time-of-day fit > recency. A "loved" item
-  // off its cooldown is the strongest pick — that's the habit loop paying off.
+  // The picks: not done/archived/scheduled, ranked by loved-repeatable >
+  // bucketlist > time-of-day fit > recency. A "loved" item off its cooldown is
+  // the strongest pick — that's the habit loop paying off.
   const topThree = useMemo(() => {
     const hour = now.getHours();
     return allItems
@@ -242,6 +283,12 @@ export default function TodayView({
 
   const freeTime = useMemo(() => longestFreeMinutes(todayEvents, now), [todayEvents, now]);
 
+  // Only skeleton the very first load; a refresh keeps the current content.
+  const showSkeleton = loading && allItems.length === 0;
+  const locationDenied = locationStatus === 'denied';
+  // Once granted, an empty "Near you" means nothing IS near you — don't beg.
+  const showNearPrime = locationStatus !== 'granted';
+
   return (
     <ScrollView
       style={styles.container}
@@ -249,236 +296,301 @@ export default function TodayView({
       showsVerticalScrollIndicator={false}
     >
       {/* Greeting */}
-      <View style={styles.greeting}>
+      <Animated.View entering={enterList(0, reduced)} style={styles.greeting}>
         <Text style={styles.greetingTitle}>Today</Text>
         <Text style={styles.greetingSub}>{format(now, 'EEEE, MMMM d')}</Text>
-      </View>
+      </Animated.View>
 
-      {/* Check-in: close the loop on things you scheduled. */}
-      {pendingReviews.length > 0 && (
+      {showSkeleton ? (
         <>
-          <Text style={styles.sectionTitle}>How did it go?</Text>
-          {pendingReviews.map((item) => (
-            <EventReviewCard
-              key={item.id}
-              item={item}
-              onOutcome={onReview}
-              onReschedule={onScheduleItem}
-            />
-          ))}
-        </>
-      )}
-
-      {/* Resurface: things going stale in the pile. */}
-      {staleItems.length > 0 && (
-        <>
-          <Text style={styles.sectionTitle}>Still want these?</Text>
-          {staleItems.map((item) => (
-            <StaleCard
-              key={item.id}
-              item={item}
-              ageLabel={ageLabel(item.created_at)}
-              onKeep={onKeepStale}
-              onArchive={onArchiveStale}
-            />
-          ))}
-        </>
-      )}
-
-      {/* Now / Next Up */}
-      <GlassCard tint="light" intensity={50} radius={RADIUS.xl} style={styles.heroCard}>
-        <View style={styles.heroInner}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.eyebrow, { color: isNow ? BRAND[600] : INK[400] }]}>
-              {nextEvent ? (isNow ? 'NOW' : 'NEXT UP') : 'YOUR DAY'}
-            </Text>
-            <Text style={styles.heroTitle} numberOfLines={2}>
-              {nextEvent ? nextEvent.title : 'No plans yet'}
-            </Text>
-            <Text style={styles.heroSub}>
-              {nextEvent
-                ? `${format(nextEvent.startDate, 'h:mm a')} – ${format(nextEvent.endDate, 'h:mm a')}`
-                : 'Pick something below.'}
-            </Text>
+          <Skeleton height={92} radius={RADIUS.xl} style={styles.heroSkeleton} />
+          <Text style={styles.picksOverline}>PICKED FOR YOU</Text>
+          <View style={[styles.picksCard, styles.picksCardSpaced]}>
+            {[0, 1, 2].map((i) => (
+              <View key={i} style={[styles.picksRow, i > 0 && styles.picksDivider]}>
+                <Skeleton height={58} radius={RADIUS.md} />
+              </View>
+            ))}
           </View>
-          {nextEvent?.itemId && (
-            <PressableScale
-              haptic="light"
-              onPress={() => onOpenItem(nextEvent.itemId as string)}
-              style={styles.heroBtnWrap}
-            >
-              <LinearGradient
-                colors={[...GRADIENTS.brand]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.heroBtn}
-              >
-                <Ionicons name="arrow-forward" size={20} color="#fff" />
-              </LinearGradient>
-            </PressableScale>
-          )}
-        </View>
-      </GlassCard>
-
-      {/* Free time */}
-      {freeTime && (
-        <View style={styles.freeCard}>
-          <View style={styles.freeIcon}>
-            <Ionicons name="time-outline" size={18} color={BRAND[600]} />
-          </View>
-          <Text style={styles.freeText}>
-            <Text style={styles.freeNum}>{freeTime.minutes} min</Text>{' '}
-            free {freeTimeLabel(freeTime.start)}
-          </Text>
-        </View>
-      )}
-
-      {/* 3 things you could do today */}
-      <Text style={styles.sectionTitle}>3 things you could do today</Text>
-      {topThree.length === 0 ? (
-        <View style={styles.emptyRow}>
-          <Text style={styles.emptyText}>
-            Inbox is clear — share a link into Silo to get started.
-          </Text>
-        </View>
+        </>
       ) : (
-        topThree.map(({ item, repeat }) => {
-          const cfg = classConfig(item.classification);
-          return (
-            <View key={item.id} style={styles.row}>
-              {/* PressableScale's outer Pressable doesn't carry `flex`, so we
-                  wrap it in a flex:1 View to take the available row width. */}
-              <View style={{ flex: 1 }}>
-                <PressableScale
-                  haptic="light"
-                  onPress={() => onOpenItem(item.id)}
-                  style={styles.rowMain}
-                >
-                  <LinearGradient
-                    colors={[cfg.from, cfg.to]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.rowIcon}
-                  >
-                    <Ionicons name={cfg.icon} size={18} color="#fff" />
-                  </LinearGradient>
-                  <View style={{ flex: 1, marginLeft: 12, minWidth: 0 }}>
-                    <Text style={styles.rowTitle} numberOfLines={1}>
-                      {item.title}
-                    </Text>
-                    {repeat ? (
-                      <View style={styles.lovedTag}>
-                        <Ionicons name="heart" size={11} color={BRAND[600]} />
-                        <Text style={styles.lovedTagText}>You loved this last time</Text>
-                      </View>
-                    ) : item.description ? (
-                      <Text style={styles.rowSub} numberOfLines={1}>
-                        {item.description}
-                      </Text>
-                    ) : null}
-                  </View>
-                </PressableScale>
-              </View>
-              <View style={styles.rowActions}>
-                <PressableScale
-                  haptic="light"
-                  onPress={() => onScheduleItem(item)}
-                  style={styles.actionBtn}
-                  accessibilityLabel="Schedule"
-                >
-                  <Ionicons name="calendar-outline" size={18} color={BRAND[600]} />
-                </PressableScale>
-                <PressableScale
-                  haptic="selection"
-                  onPress={() => onDoneItem(item.id)}
-                  style={styles.actionBtn}
-                  accessibilityLabel="Mark done"
-                >
-                  <Ionicons name="checkmark" size={20} color={BRAND[600]} />
-                </PressableScale>
-                <PressableScale
-                  haptic="light"
-                  onPress={() => onSnoozeItem(item.id)}
-                  style={styles.actionBtn}
-                  accessibilityLabel="Snooze to tomorrow"
-                >
-                  <Ionicons name="moon-outline" size={18} color={BRAND[600]} />
-                </PressableScale>
-              </View>
-            </View>
-          );
-        })
-      )}
-
-      {/* Near you */}
-      {nearYou.length > 0 && (
         <>
-          <Text style={styles.sectionTitle}>Near you</Text>
-          {nearYou.map(({ item, miles }) => {
-            const cfg = classConfig(item.classification);
-            return (
-              <PressableScale
-                key={item.id}
-                haptic="light"
-                onPress={() => onOpenItem(item.id)}
-                style={styles.nearRow}
-              >
-                <LinearGradient
-                  colors={[cfg.from, cfg.to]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.nearIcon}
-                >
-                  <Ionicons name="location" size={18} color="#fff" />
-                </LinearGradient>
-                <View style={{ flex: 1, marginLeft: 12, minWidth: 0 }}>
-                  <Text style={styles.rowTitle} numberOfLines={1}>
-                    {item.title}
+          {/* Check-in: close the loop on things you scheduled. */}
+          {pendingReviews.length > 0 && (
+            <Animated.View entering={enterList(1, reduced)}>
+              <Text style={styles.sectionTitle}>How did it go?</Text>
+              {pendingReviews.map((item) => (
+                <EventReviewCard
+                  key={item.id}
+                  item={item}
+                  onOutcome={onReview}
+                  onReschedule={onScheduleItem}
+                />
+              ))}
+            </Animated.View>
+          )}
+
+          {/* Resurface: things going stale in the pile. */}
+          {staleItems.length > 0 && (
+            <Animated.View entering={enterList(2, reduced)}>
+              <Text style={styles.sectionTitle}>Still want these?</Text>
+              {staleItems.map((item) => (
+                <StaleCard
+                  key={item.id}
+                  item={item}
+                  ageLabel={ageLabel(item.created_at)}
+                  onKeep={onKeepStale}
+                  onArchive={onArchiveStale}
+                />
+              ))}
+            </Animated.View>
+          )}
+
+          {/* Now / Next Up */}
+          <Animated.View entering={enterList(3, reduced)} layout={LAYOUT} exiting={exitFade(reduced)}>
+            <GlassCard tint="light" intensity={50} radius={RADIUS.xl} style={styles.heroCard}>
+              <View style={styles.heroInner}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.eyebrow, { color: isNow ? BRAND[600] : TEXT.tertiary }]}>
+                    {nextEvent ? (isNow ? 'NOW' : 'NEXT UP') : 'YOUR DAY'}
                   </Text>
-                  <Text style={styles.rowSub} numberOfLines={1}>
-                    {item.place_name || item.place_address || 'Saved place'}
+                  <Text style={styles.heroTitle} numberOfLines={2}>
+                    {nextEvent ? nextEvent.title : 'No plans yet'}
+                  </Text>
+                  <Text style={styles.heroSub}>
+                    {nextEvent
+                      ? `${format(nextEvent.startDate, 'h:mm a')} – ${format(nextEvent.endDate, 'h:mm a')}`
+                      : 'Pick something below.'}
                   </Text>
                 </View>
-                <Text style={styles.nearDist}>{miles < 1 ? '<1' : Math.round(miles)} mi</Text>
-              </PressableScale>
-            );
-          })}
-        </>
-      )}
-
-      {/* This week */}
-      {thisWeek.length > 0 && (
-        <>
-          <Text style={styles.sectionTitle}>This week</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.weekStrip}
-          >
-            {thisWeek.map((item) => {
-              const cfg = classConfig(item.classification);
-              return (
-                <PressableScale
-                  key={item.id}
-                  haptic="light"
-                  onPress={() => onOpenItem(item.id)}
-                  style={styles.weekTile}
-                >
-                  <LinearGradient
-                    colors={[cfg.from, cfg.to]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.weekTileIcon}
+                {nextEvent?.itemId && (
+                  <PressableScale
+                    haptic="light"
+                    onPress={() => onOpenItem(nextEvent.itemId as string)}
+                    accessibilityLabel={`Open ${nextEvent.title}`}
                   >
-                    <Ionicons name={cfg.icon} size={20} color="#fff" />
-                  </LinearGradient>
-                  <Text style={styles.weekTitle} numberOfLines={2}>
-                    {item.title}
-                  </Text>
-                </PressableScale>
-              );
-            })}
-          </ScrollView>
+                    <LinearGradient
+                      colors={[...GRADIENTS.brand]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.heroBtn}
+                    >
+                      <Ionicons name="arrow-forward" size={20} color="#fff" />
+                    </LinearGradient>
+                  </PressableScale>
+                )}
+              </View>
+            </GlassCard>
+          </Animated.View>
+
+          {/* Free time */}
+          {freeTime && (
+            <Animated.View entering={enterList(4, reduced)} style={styles.freeCard}>
+              <View style={styles.freeIcon}>
+                <Ionicons name="time-outline" size={18} color={BRAND[600]} />
+              </View>
+              <Text style={styles.freeText}>
+                <Text style={styles.freeNum}>{freeTime.minutes} min</Text>{' '}
+                free {freeTimeLabel(freeTime.start)}
+              </Text>
+            </Animated.View>
+          )}
+
+          {/* The picks — the product's headline claim, so it gets a hero block
+              rather than looking like the fifth section header on the page. */}
+          <Animated.View entering={enterList(5, reduced)} style={styles.picksBlock}>
+            <Text style={styles.picksOverline}>PICKED FOR YOU</Text>
+            <Text style={styles.picksHeading}>{picksHeading(topThree.length)}</Text>
+
+            {topThree.length === 0 ? (
+              <View style={styles.emptyRow}>
+                <Text style={styles.emptyText}>
+                  Inbox is clear — share a link into Silo to get started.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.picksCard}>
+                {topThree.map(({ item, repeat }, index) => {
+                  const cfg = classConfig(item.classification);
+                  return (
+                    <Animated.View
+                      key={item.id}
+                      layout={LAYOUT}
+                      exiting={exitFade(reduced)}
+                      style={[styles.picksRow, index > 0 && styles.picksDivider]}
+                    >
+                      {/* PressableScale's outer Pressable doesn't carry `flex`,
+                          so containerStyle is what takes the row width. */}
+                      <PressableScale
+                        haptic="light"
+                        onPress={() => onOpenItem(item.id)}
+                        containerStyle={{ flex: 1 }}
+                        style={styles.rowMain}
+                      >
+                        <LinearGradient
+                          colors={[cfg.from, cfg.to]}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.rowIcon}
+                        >
+                          <Ionicons name={cfg.icon} size={22} color="#fff" />
+                        </LinearGradient>
+                        <View style={{ flex: 1, marginLeft: SPACE.md, minWidth: 0 }}>
+                          <Text style={styles.rowTitle} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          {repeat ? (
+                            <View style={styles.lovedTag}>
+                              <Ionicons name="heart" size={11} color={BRAND[600]} />
+                              <Text style={styles.lovedTagText}>You loved this last time</Text>
+                            </View>
+                          ) : item.description ? (
+                            <Text style={styles.rowSub} numberOfLines={1}>
+                              {item.description}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </PressableScale>
+                      <View style={styles.rowActions}>
+                        <PressableScale
+                          haptic="light"
+                          onPress={() => onScheduleItem(item)}
+                          style={styles.actionBtn}
+                          accessibilityLabel={`Schedule ${item.title}`}
+                        >
+                          <Ionicons name="calendar-outline" size={18} color={BRAND[600]} />
+                        </PressableScale>
+                        <PressableScale
+                          haptic="selection"
+                          onPress={() => onDoneItem(item.id)}
+                          style={styles.actionBtn}
+                          accessibilityLabel={`Mark ${item.title} done`}
+                        >
+                          <Ionicons name="checkmark" size={20} color={BRAND[600]} />
+                        </PressableScale>
+                        <PressableScale
+                          haptic="light"
+                          onPress={() => onSnoozeItem(item.id)}
+                          style={styles.actionBtn}
+                          accessibilityLabel={`Snooze ${item.title} to tomorrow`}
+                        >
+                          <Ionicons name="moon-outline" size={18} color={BRAND[600]} />
+                        </PressableScale>
+                      </View>
+                    </Animated.View>
+                  );
+                })}
+              </View>
+            )}
+          </Animated.View>
+
+          {/* Near you — or the row that primes for location. The OS dialog only
+              ever follows an explicit tap here, never a tab open. */}
+          {(nearYou.length > 0 || showNearPrime) && (
+            <Animated.View entering={enterList(6, reduced)}>
+              <Text style={styles.sectionTitle}>Near you</Text>
+              {nearYou.length > 0
+                ? nearYou.map(({ item, miles }) => {
+                    const cfg = classConfig(item.classification);
+                    return (
+                      <PressableScale
+                        key={item.id}
+                        haptic="light"
+                        onPress={() => onOpenItem(item.id)}
+                        style={styles.nearRow}
+                      >
+                        <LinearGradient
+                          colors={[cfg.from, cfg.to]}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.nearIcon}
+                        >
+                          <Ionicons name="location" size={18} color="#fff" />
+                        </LinearGradient>
+                        <View style={{ flex: 1, marginLeft: SPACE.md, minWidth: 0 }}>
+                          <Text style={styles.rowTitle} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          <Text style={styles.rowSub} numberOfLines={1}>
+                            {item.place_name || item.place_address || 'Saved place'}
+                          </Text>
+                        </View>
+                        <Text style={styles.nearDist}>
+                          {miles < 1 ? '<1' : Math.round(miles)} mi
+                        </Text>
+                      </PressableScale>
+                    );
+                  })
+                : (
+                  <PressableScale
+                    haptic="light"
+                    onPress={onRequestLocation}
+                    disabled={locationStatus === 'requesting'}
+                    style={styles.nearRow}
+                    accessibilityLabel={
+                      locationDenied ? 'Open location settings' : 'Turn on location'
+                    }
+                  >
+                    <View style={styles.primeIcon}>
+                      <Ionicons name="navigate" size={18} color={BRAND[600]} />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: SPACE.md, minWidth: 0 }}>
+                      <Text style={styles.rowTitle} numberOfLines={1}>
+                        {locationDenied ? 'Location is off' : 'See what’s near you'}
+                      </Text>
+                      <Text style={styles.rowSub} numberOfLines={2}>
+                        {locationDenied
+                          ? 'Turn it back on in Settings to surface saved places nearby.'
+                          : 'Silo will surface saved places within 25 miles.'}
+                      </Text>
+                    </View>
+                    <Text style={styles.primeCta}>
+                      {locationStatus === 'requesting'
+                        ? 'Checking…'
+                        : locationDenied
+                          ? 'Settings'
+                          : 'Turn on'}
+                    </Text>
+                  </PressableScale>
+                )}
+            </Animated.View>
+          )}
+
+          {/* This week */}
+          {thisWeek.length > 0 && (
+            <Animated.View entering={enterList(7, reduced)}>
+              <Text style={styles.sectionTitle}>This week</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.weekStrip}
+              >
+                {thisWeek.map((item) => {
+                  const cfg = classConfig(item.classification);
+                  return (
+                    <PressableScale
+                      key={item.id}
+                      haptic="light"
+                      onPress={() => onOpenItem(item.id)}
+                      style={styles.weekTile}
+                    >
+                      <LinearGradient
+                        colors={[cfg.from, cfg.to]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.weekTileIcon}
+                      >
+                        <Ionicons name={cfg.icon} size={20} color="#fff" />
+                      </LinearGradient>
+                      <Text style={styles.weekTitle} numberOfLines={2}>
+                        {item.title}
+                      </Text>
+                    </PressableScale>
+                  );
+                })}
+              </ScrollView>
+            </Animated.View>
+          )}
         </>
       )}
 
@@ -489,34 +601,25 @@ export default function TodayView({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingTop: 12 },
-  greeting: { marginBottom: 16 },
-  greetingTitle: {
-    fontSize: 34,
-    fontWeight: '800',
-    color: INK[900],
-    letterSpacing: -0.6,
-  },
-  greetingSub: { fontSize: 15, color: INK[500], marginTop: 2 },
-  heroCard: { marginBottom: 12 },
-  heroInner: { flexDirection: 'row', alignItems: 'center', padding: 18, gap: 12 },
-  eyebrow: { fontSize: 11, fontWeight: '800', letterSpacing: 1 },
-  heroTitle: {
-    fontSize: 19,
-    fontWeight: '700',
-    color: INK[900],
-    marginTop: 4,
-    letterSpacing: -0.2,
-  },
-  heroSub: { fontSize: 13, color: INK[500], marginTop: 4 },
-  heroBtnWrap: {},
+  content: { paddingHorizontal: SPACE.base, paddingTop: SPACE.md },
+  greeting: { marginBottom: SPACE.base },
+  greetingTitle: { ...TYPE.display, color: TEXT.primary },
+  greetingSub: { ...TYPE.callout, color: TEXT.tertiary, marginTop: SPACE.xxs },
+
+  heroSkeleton: { marginBottom: SPACE.lg },
+  heroCard: { marginBottom: SPACE.md },
+  heroInner: { flexDirection: 'row', alignItems: 'center', padding: 18, gap: SPACE.md },
+  eyebrow: { ...TYPE.overline },
+  heroTitle: { ...TYPE.title3, color: TEXT.primary, marginTop: SPACE.xs },
+  heroSub: { ...TYPE.footnote, color: TEXT.tertiary, marginTop: SPACE.xs },
   heroBtn: {
     width: 44,
     height: 44,
-    borderRadius: 22,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
+
   freeCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -525,71 +628,79 @@ const styles = StyleSheet.create({
     borderColor: BRAND[100],
     borderRadius: RADIUS.lg,
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: SPACE.md,
     gap: 10,
     marginBottom: 22,
   },
   freeIcon: {
     width: 30,
     height: 30,
-    borderRadius: 15,
+    borderRadius: RADIUS.pill,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  freeText: { fontSize: 14, color: INK[700], flex: 1 },
+  freeText: { ...TYPE.subhead, fontWeight: '500', color: TEXT.secondary, flex: 1 },
   freeNum: { fontWeight: '700', color: BRAND[700] },
+
   sectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: INK[900],
-    marginTop: 4,
+    ...TYPE.headline,
+    color: TEXT.primary,
+    marginTop: SPACE.xs,
     marginBottom: 10,
-    letterSpacing: -0.2,
   },
-  emptyRow: {
+
+  /* --- the picks hero block --- */
+  picksBlock: { marginBottom: SPACE.lg },
+  picksOverline: { ...TYPE.overline, color: BRAND[600], marginBottom: SPACE.xs },
+  picksHeading: { ...TYPE.title1, color: TEXT.primary, marginBottom: SPACE.md },
+  picksCard: {
     backgroundColor: '#fff',
-    borderRadius: RADIUS.lg,
+    borderRadius: RADIUS.xl,
     borderWidth: 1,
-    borderColor: HAIRLINE,
-    padding: 18,
+    borderColor: BRAND[100],
+    ...SHADOW.brandCard,
   },
-  emptyText: { fontSize: 14, color: INK[500], textAlign: 'center' },
-  row: {
+  picksCardSpaced: { marginTop: SPACE.md },
+  picksRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: RADIUS.lg,
-    borderWidth: 1,
-    borderColor: HAIRLINE,
-    padding: 10,
-    marginBottom: 8,
-    shadowColor: INK[900],
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
+    paddingHorizontal: 14,
+    paddingVertical: SPACE.md,
   },
+  picksDivider: { borderTopWidth: 1, borderTopColor: HAIRLINE },
+
+  emptyRow: {
+    backgroundColor: '#fff',
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: BRAND[100],
+    padding: 18,
+  },
+  emptyText: { ...TYPE.subhead, fontWeight: '500', color: TEXT.tertiary, textAlign: 'center' },
+
   rowMain: { flexDirection: 'row', alignItems: 'center' },
   rowIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowTitle: { fontSize: 15, fontWeight: '600', color: INK[900] },
-  rowSub: { fontSize: 12, color: INK[500], marginTop: 2 },
-  lovedTag: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-  lovedTagText: { fontSize: 11, fontWeight: '700', color: BRAND[600] },
-  rowActions: { flexDirection: 'row', gap: 4, marginLeft: 8 },
+  rowTitle: { ...TYPE.bodyStrong, color: TEXT.primary },
+  rowSub: { ...TYPE.footnote, color: TEXT.tertiary, marginTop: SPACE.xxs },
+  lovedTag: { flexDirection: 'row', alignItems: 'center', gap: SPACE.xs, marginTop: 3 },
+  lovedTagText: { ...TYPE.caption, fontWeight: '700', color: BRAND[700] },
+  rowActions: { flexDirection: 'row', gap: SPACE.xs, marginLeft: SPACE.sm },
   actionBtn: {
     width: 34,
     height: 34,
-    borderRadius: 17,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: BRAND[50],
   },
+
   nearRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -598,17 +709,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: HAIRLINE,
     padding: 10,
-    marginBottom: 8,
+    marginBottom: SPACE.sm,
   },
   nearIcon: {
     width: 38,
     height: 38,
-    borderRadius: 10,
+    borderRadius: RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  nearDist: { fontSize: 13, fontWeight: '600', color: BRAND[600] },
-  weekStrip: { gap: 10, paddingRight: 16, paddingBottom: 4 },
+  nearDist: { ...TYPE.subhead, color: BRAND[600] },
+  primeIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: RADIUS.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: BRAND[50],
+  },
+  primeCta: { ...TYPE.subhead, fontWeight: '700', color: BRAND[600], marginLeft: SPACE.sm },
+
+  weekStrip: { gap: 10, paddingRight: SPACE.base, paddingBottom: SPACE.xs },
   weekTile: {
     width: 110,
     height: 140,
@@ -622,9 +743,9 @@ const styles = StyleSheet.create({
   weekTileIcon: {
     width: 36,
     height: 36,
-    borderRadius: 10,
+    borderRadius: RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  weekTitle: { fontSize: 12, fontWeight: '600', color: INK[900], lineHeight: 16 },
+  weekTitle: { ...TYPE.caption, color: TEXT.primary },
 });

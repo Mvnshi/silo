@@ -1,13 +1,16 @@
 /**
- * Settings / Profile screen.
- * Profile + stats, real preferences (persisted to UserSettings), data export +
- * delete-all (privacy/trust), and About. Reached from the Stacks header.
+ * Settings / Profile screen (presented as a modal from the Stacks header).
+ * Profile + stats, real preferences (persisted to UserSettings), device sync
+ * ("Your devices"), data export + delete-all (privacy/trust), and About.
+ *
+ * Sections fade/rise in on mount (index-staggered) and the profile + stat tiles
+ * hold Skeletons until the first storage read lands, so the screen never shows
+ * a frame of placeholder zeroes.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Text,
   View,
-  Pressable,
   ScrollView,
   Switch,
   Alert,
@@ -16,14 +19,20 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
+  StyleSheet,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import Animated from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { format } from 'date-fns';
 import PressableScale from '@/components/ui/PressableScale';
+import ScreenHeader from '@/components/ui/ScreenHeader';
+import Skeleton from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
+import { enterList, usePrefersReducedMotion } from '@/lib/motion';
 import {
   getItems,
   getStacks,
@@ -37,7 +46,20 @@ import {
   DEFAULT_SETTINGS,
 } from '@/lib/storage';
 import { syncNow, newSpaceKey } from '@/lib/sync';
-import { BRAND, GRADIENTS, HAIRLINE, INK } from '@/lib/theme';
+import {
+  ACCENT,
+  BRAND,
+  GRADIENTS,
+  HAIRLINE,
+  INK,
+  RADIUS,
+  SHADOW,
+  SPACE,
+  STATUS,
+  SURFACE,
+  TEXT,
+  TYPE,
+} from '@/lib/theme';
 import { UserSettings } from '@/lib/types';
 import { APP_VERSION, SUPPORT_EMAIL } from '@/lib/config';
 
@@ -49,6 +71,12 @@ const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
 /** Must match the server's SPACE_KEY_RE (workers/sync.ts). */
 const SPACE_KEY_RE = /^[A-Za-z0-9_-]{6,128}$/;
+
+/**
+ * Entrance order — every block on this screen animates in with the same
+ * stagger, so the indices have to be declared in one place to stay in sync.
+ */
+const ORDER = { profile: 0, stats: 1, preferences: 2, devices: 3, data: 4, about: 5 } as const;
 
 /**
  * Mirror of add.tsx's lazy expo-clipboard require (see that file's WHY: a
@@ -74,19 +102,26 @@ function relTime(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  index,
+  children,
+}: {
+  title: string;
+  /** Position in the entrance stagger — see ORDER. */
+  index: number;
+  children: React.ReactNode;
+}) {
+  const reduced = usePrefersReducedMotion();
   return (
-    <View className="mt-7">
-      <Text className="mb-2 ml-5 text-[12px] font-bold uppercase tracking-wider text-ink-400">
-        {title}
-      </Text>
-      <View
-        className="mx-4 overflow-hidden rounded-3xl bg-white"
-        style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 12 }}
-      >
-        {children}
+    <Animated.View style={styles.section} entering={enterList(index, reduced)}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {/* Shadow lives on the outer view: the inner one clips its rows to the
+          corner radius, and `overflow: hidden` would clip the shadow too. */}
+      <View style={styles.cardShadow}>
+        <View style={styles.card}>{children}</View>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -109,30 +144,49 @@ function Row({
   danger?: boolean;
   divider?: boolean;
 }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={!onPress}
-      className="flex-row items-center px-4 py-3 active:bg-ink-50"
-      style={divider ? { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' } : undefined}
-    >
-      <View className="h-8 w-8 items-center justify-center rounded-[10px]" style={{ backgroundColor: tint + '1A' }}>
+  const body = (
+    <View style={styles.row}>
+      <View style={[styles.rowIcon, { backgroundColor: tint + '1A' }]}>
         <Ionicons name={icon} size={17} color={tint} />
       </View>
-      <View className="ml-3 flex-1">
-        <Text className={`text-[15px] font-semibold ${danger ? 'text-red-500' : 'text-ink-900'}`}>{label}</Text>
-        {!!sub && <Text className="mt-0.5 text-[12px] text-ink-400">{sub}</Text>}
+      <View style={styles.rowText}>
+        <Text style={[styles.rowLabel, danger && styles.rowLabelDanger]}>{label}</Text>
+        {!!sub && <Text style={styles.rowSub}>{sub}</Text>}
       </View>
-      {right ?? (onPress ? <Ionicons name="chevron-forward" size={16} color="#cbd5e1" /> : null)}
-    </Pressable>
+      {right ?? (onPress ? <Ionicons name="chevron-forward" size={16} color={INK[300]} /> : null)}
+    </View>
+  );
+
+  // Rows that only host a control (switch, stepper, version string) are not
+  // buttons — rendering them as a Pressable would announce a dead tap target.
+  if (!onPress) return <View style={divider ? styles.rowDivider : undefined}>{body}</View>;
+
+  return (
+    <PressableScale
+      onPress={onPress}
+      haptic="light"
+      scaleTo={0.985}
+      // Rows already clear the 44pt minimum; the default slop would spill into
+      // the neighbouring row and steal its taps.
+      hitSlop={0}
+      containerStyle={divider ? styles.rowDivider : undefined}
+      accessibilityLabel={sub ? `${label}. ${sub}` : label}
+    >
+      {body}
+    </PressableScale>
   );
 }
 
 export default function Settings() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const toast = useToast();
+  const reduced = usePrefersReducedMotion();
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [stats, setStats] = useState({ items: 0, stacks: 0, since: '' });
+  // Until the first storage read resolves, the counts are meaningless zeroes —
+  // show Skeletons instead of "0 Items".
+  const [ready, setReady] = useState(false);
 
   // --- Sync section state (S1) ---
   const [sync, setSync] = useState<SyncState>({
@@ -147,6 +201,7 @@ export default function Settings() {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -176,8 +231,11 @@ export default function Settings() {
         setSync(ss);
         setServerUrl(ss.serverUrl ?? ENV_BASE_URL);
         const ts = parseInt(uid.split('_')[1] || '0', 10);
-        const since = ts ? format(new Date(ts), 'MMM yyyy') : '—';
+        // Empty string when the id carries no timestamp: the profile line drops
+        // the "since …" clause entirely rather than printing a placeholder.
+        const since = ts ? format(new Date(ts), 'MMM yyyy') : '';
         setStats({ items: items.length, stacks: stacks.length, since });
+        setReady(true);
       })();
       return () => {
         active = false;
@@ -256,11 +314,14 @@ export default function Settings() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // Re-read: syncNow may have minted the space code + bumped lastSyncAt.
       setSync(await getSyncState());
-      setSyncResult(`Up ${r.pushed} / Down ${r.pulled}`);
+      setSyncResult(`Synced ${r.pushed} up, ${r.pulled} down`);
       if (flashTimer.current) clearTimeout(flashTimer.current);
       flashTimer.current = setTimeout(() => setSyncResult(null), 2500);
     } catch (e) {
+      // The raw message is developer-facing (URLs, status codes) and now lives
+      // under Advanced; the user gets a plain-language toast.
       setSyncError(e instanceof Error ? e.message : 'Sync failed');
+      toast.show({ message: 'Couldn’t sync. Check your connection.', tone: 'danger' });
     } finally {
       setSyncing(false);
     }
@@ -292,13 +353,19 @@ export default function Settings() {
         null,
         2
       );
-      await Share.share({ message: payload }, { dialogTitle: 'Export your Silo data' });
+      const res = await Share.share({ message: payload }, { dialogTitle: 'Export your Silo data' });
+      // Dismissing the share sheet isn't a failure — only confirm on a real send.
+      if (res.action === Share.sharedAction) {
+        toast.show({ message: `Exported ${items.length} items`, tone: 'success' });
+      }
     } catch {
-      Alert.alert('Export failed', 'Could not export your data. Please try again.');
+      toast.show({ message: 'Couldn’t export your data', tone: 'danger' });
     }
   };
 
   const confirmClear = () => {
+    // Deliberately still a blocking confirm rather than an undo toast: this is
+    // irreversible and wipes everything, so a second tap is the right cost.
     Alert.alert(
       'Delete all data?',
       'This permanently removes every saved item, stack, and setting on this device. This cannot be undone.',
@@ -320,80 +387,143 @@ export default function Settings() {
   const comingSoon = (what: string) =>
     Alert.alert(what, `${what} will be published before the App Store launch (required for subscriptions).`);
 
-  return (
-    <View className="flex-1 bg-ink-50">
-      {/* Header */}
-      <LinearGradient colors={['#ede9fe', '#f5f3ff']} style={{ paddingTop: insets.top + 6 }}>
-        <View className="flex-row items-center px-3 pb-3">
-          <Pressable onPress={() => router.back()} className="h-10 w-10 items-center justify-center rounded-full active:bg-white/60">
-            <Ionicons name="chevron-back" size={24} color="#4c1d95" />
-          </Pressable>
-          <Text className="text-[18px] font-bold text-ink-900">Settings</Text>
-        </View>
-      </LinearGradient>
+  // The server URL is a self-hoster's escape hatch: only surface it in dev, or
+  // once this device has actually been pointed at a custom server.
+  const showAdvanced = __DEV__ || !!sync.serverUrl;
 
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
+  return (
+    <View style={styles.page}>
+      <ScreenHeader title="Settings" />
+
+      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + SPACE.xxxl }}>
         {/* Profile card */}
-        <View className="mx-4 mt-4 flex-row items-center rounded-3xl bg-white p-4" style={{ shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.14, shadowRadius: 18 }}>
-          <LinearGradient colors={['#8b5cf6', '#6366f1']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="person" size={28} color="#fff" />
+        <Animated.View style={styles.profileCard} entering={enterList(ORDER.profile, reduced)}>
+          <LinearGradient
+            colors={GRADIENTS.brand}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.avatar}
+          >
+            <Ionicons name="person" size={28} color={TEXT.inverse} />
           </LinearGradient>
-          <View className="ml-4 flex-1">
-            <Text className="text-[18px] font-bold text-ink-900">Your Silo</Text>
-            <Text className="mt-0.5 text-[13px] text-ink-400">On this device · since {stats.since}</Text>
+          <View style={styles.profileText}>
+            {ready ? (
+              <>
+                <Text style={styles.profileName}>Your Silo</Text>
+                <Text style={styles.profileMeta}>
+                  {stats.since ? `On this device · since ${stats.since}` : 'On this device'}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Skeleton width={110} height={19} radius={RADIUS.xs} />
+                <Skeleton width={170} height={13} radius={RADIUS.xs} style={styles.skeletonLine} />
+              </>
+            )}
           </View>
-        </View>
+        </Animated.View>
 
         {/* Stats */}
-        <View className="mx-4 mt-3 flex-row gap-3">
+        <Animated.View style={styles.statRow} entering={enterList(ORDER.stats, reduced)}>
           {[
-            { n: stats.items, l: 'Items', i: 'documents' as const, c: '#8b5cf6' },
-            { n: stats.stacks, l: 'Stacks', i: 'albums' as const, c: '#ec4899' },
+            { n: stats.items, l: 'Items', i: 'documents' as const, c: BRAND[500] },
+            { n: stats.stacks, l: 'Stacks', i: 'albums' as const, c: ACCENT[500] },
           ].map((s) => (
-            <View key={s.l} className="flex-1 items-center rounded-3xl bg-white py-4" style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10 }}>
+            <View key={s.l} style={styles.statTile}>
               <Ionicons name={s.i} size={18} color={s.c} />
-              <Text className="mt-1.5 text-[22px] font-extrabold text-ink-900">{s.n}</Text>
-              <Text className="text-[12px] font-medium text-ink-400">{s.l}</Text>
+              {ready ? (
+                <Text style={styles.statNum}>{s.n}</Text>
+              ) : (
+                <Skeleton width={34} height={22} radius={RADIUS.xs} style={styles.skeletonStat} />
+              )}
+              <Text style={styles.statLabel}>{s.l}</Text>
             </View>
           ))}
-        </View>
+        </Animated.View>
 
-        {/* Sync across devices (S1 — pairing code + server + manual sync) */}
-        <Section title="Sync across devices">
+        {/* Preferences */}
+        <Section title="Preferences" index={ORDER.preferences}>
+          <Row
+            icon="time"
+            tint={BRAND[500]}
+            label="Default review length"
+            sub="How long to block out when scheduling"
+            right={
+              <View style={styles.stepperRow}>
+                <PressableScale
+                  haptic="selection"
+                  scaleTo={0.9}
+                  onPress={() => adjustDuration(-5)}
+                  style={styles.stepper}
+                  accessibilityLabel="Decrease review length by 5 minutes"
+                >
+                  <Ionicons name="remove" size={16} color={INK[600]} />
+                </PressableScale>
+                <Text style={styles.stepperValue}>{settings.default_duration}m</Text>
+                <PressableScale
+                  haptic="selection"
+                  scaleTo={0.9}
+                  onPress={() => adjustDuration(5)}
+                  style={styles.stepper}
+                  accessibilityLabel="Increase review length by 5 minutes"
+                >
+                  <Ionicons name="add" size={16} color={INK[600]} />
+                </PressableScale>
+              </View>
+            }
+          />
+          <Row
+            icon="sparkles"
+            tint={ACCENT[500]}
+            label="Auto-suggest review time"
+            sub="Let AI propose when to revisit a save"
+            right={
+              <Switch
+                value={settings.auto_schedule}
+                onValueChange={(v) => update({ auto_schedule: v })}
+                trackColor={{ true: BRAND[600], false: INK[200] }}
+              />
+            }
+          />
+          <Row
+            icon="notifications"
+            tint={STATUS.warning}
+            label="Notifications"
+            sub="Bucket-list & review reminders (when available)"
+            divider={false}
+            right={
+              <Switch
+                value={settings.notifications_enabled}
+                onValueChange={(v) => update({ notifications_enabled: v })}
+                trackColor={{ true: BRAND[600], false: INK[200] }}
+              />
+            }
+          />
+        </Section>
+
+        {/* Your devices (S1 — pairing code + manual sync; server URL under Advanced) */}
+        <Section title="Your devices" index={ORDER.devices}>
           {/* Status header: paired state + relative last-synced time */}
-          <View
-            className="flex-row items-center px-4 py-3"
-            style={{ borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
-          >
-            <View
-              className="h-9 w-9 items-center justify-center rounded-xl"
-              style={{ backgroundColor: BRAND[50] }}
-            >
+          <View style={[styles.syncStatus, styles.rowDivider]}>
+            <View style={styles.syncBadge}>
               <Ionicons name="cloud-outline" size={18} color={BRAND[600]} />
             </View>
-            <View className="ml-3 flex-1">
-              <Text className="text-[15px] font-semibold text-ink-900">
-                {sync.spaceKey ? 'Paired' : 'Not paired yet'}
-              </Text>
-              <Text className="mt-0.5 text-[12px] text-ink-400">
+            <View style={styles.rowText}>
+              <Text style={styles.rowLabel}>{sync.spaceKey ? 'Paired' : 'Not paired yet'}</Text>
+              <Text style={styles.rowSub}>
                 {sync.lastSyncAt ? `Synced ${relTime(sync.lastSyncAt)}` : 'Never synced'}
               </Text>
             </View>
           </View>
 
           {/* Space code: monospace pill + copy + regenerate */}
-          <View className="px-4 py-3" style={{ borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
-            <Text className="text-[12px] font-semibold uppercase tracking-wider text-ink-400">
-              Space code
-            </Text>
-            <View className="mt-2 flex-row items-center">
-              <View
-                className="flex-1 justify-center rounded-full px-4 py-2"
-                style={{ backgroundColor: BRAND[50], borderWidth: 1, borderColor: HAIRLINE }}
-              >
+          <View style={[styles.field, styles.rowDivider]}>
+            <Text style={styles.fieldLabel}>Space code</Text>
+            <View style={styles.fieldRow}>
+              <View style={styles.codePill}>
                 <Text
                   numberOfLines={1}
-                  style={{ fontFamily: MONO, fontSize: 13, color: sync.spaceKey ? BRAND[700] : INK[400] }}
+                  style={[styles.codeText, !sync.spaceKey && styles.codeTextEmpty]}
                 >
                   {sync.spaceKey ?? 'created on first sync'}
                 </Text>
@@ -402,16 +532,17 @@ export default function Settings() {
                 haptic="light"
                 onPress={copyCode}
                 disabled={!sync.spaceKey}
-                className="ml-2 rounded-full px-3.5 py-2"
-                style={{ backgroundColor: sync.spaceKey ? BRAND[600] : INK[200] }}
+                style={[styles.pillButton, !sync.spaceKey && styles.pillButtonDisabled]}
+                containerStyle={styles.pillButtonSpacing}
               >
-                <Text className="text-[13px] font-bold text-white">{copied ? 'Copied' : 'Copy'}</Text>
+                <Text style={styles.pillButtonText}>{copied ? 'Copied' : 'Copy'}</Text>
               </PressableScale>
               <PressableScale
                 haptic="light"
                 onPress={confirmRegenerate}
-                className="ml-2 h-9 w-9 items-center justify-center rounded-full"
-                style={{ backgroundColor: INK[100] }}
+                style={styles.iconButton}
+                containerStyle={styles.pillButtonSpacing}
+                accessibilityLabel="Regenerate space code"
               >
                 <Ionicons name="refresh" size={16} color={INK[600]} />
               </PressableScale>
@@ -419,11 +550,9 @@ export default function Settings() {
           </View>
 
           {/* Join an existing space (typed/pasted from another device) */}
-          <View className="px-4 py-3" style={{ borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
-            <Text className="text-[12px] font-semibold uppercase tracking-wider text-ink-400">
-              Join existing space
-            </Text>
-            <View className="mt-2 flex-row items-center">
+          <View style={[styles.field, styles.rowDivider]}>
+            <Text style={styles.fieldLabel}>Join existing space</Text>
+            <View style={styles.fieldRow}>
               <TextInput
                 value={joinCode}
                 onChangeText={(t) => {
@@ -431,152 +560,340 @@ export default function Settings() {
                   if (joinError) setJoinError(null);
                 }}
                 placeholder="silo-…"
-                placeholderTextColor={INK[300]}
+                placeholderTextColor={INK[400]}
                 autoCapitalize="none"
                 autoCorrect={false}
-                className="flex-1 rounded-full px-4 py-2 text-ink-900"
-                style={{ fontFamily: MONO, fontSize: 13, backgroundColor: INK[50], borderWidth: 1, borderColor: HAIRLINE }}
+                style={[styles.input, styles.inputFlex]}
+                accessibilityLabel="Space code from your other device"
               />
               <PressableScale
                 haptic="light"
                 onPress={joinSpace}
-                className="ml-2 rounded-full px-4 py-2"
-                style={{ backgroundColor: BRAND[600] }}
+                style={styles.pillButton}
+                containerStyle={styles.pillButtonSpacing}
               >
-                <Text className="text-[13px] font-bold text-white">Join</Text>
+                <Text style={styles.pillButtonText}>Join</Text>
               </PressableScale>
             </View>
-            {!!joinError && <Text className="mt-1.5 text-[12px] text-red-500">{joinError}</Text>}
+            {!!joinError && <Text style={styles.errorText}>{joinError}</Text>}
           </View>
 
-          {/* Server URL (saved on blur; empty = env default) */}
-          <View className="px-4 py-3" style={{ borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
-            <Text className="text-[12px] font-semibold uppercase tracking-wider text-ink-400">
-              Server URL
-            </Text>
-            <TextInput
-              value={serverUrl}
-              onChangeText={setServerUrl}
-              onBlur={saveServerUrl}
-              placeholder="http://192.168.1.20:8787"
-              placeholderTextColor={INK[300]}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              className="mt-2 rounded-full px-4 py-2 text-ink-900"
-              style={{ fontFamily: MONO, fontSize: 13, backgroundColor: INK[50], borderWidth: 1, borderColor: HAIRLINE }}
-            />
-            <Text className="ml-1 mt-1.5 text-[12px] text-ink-400">
-              Your laptop on Wi-Fi (Mode 1) or your deployed Worker (Mode 2) — see SYNC.md
-            </Text>
-          </View>
-
-          {/* Sync now: spinner while running, then a brief "Up N / Down M" flash */}
-          <View className="px-4 pb-4 pt-3">
+          {/* Sync now: spinner while running, then a brief "Synced N up, M down" flash */}
+          <View style={styles.ctaBlock}>
             <PressableScale haptic="light" onPress={runSync} disabled={syncing}>
               <LinearGradient
                 colors={GRADIENTS.brand}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: 999,
-                  paddingVertical: 13,
-                  shadowColor: '#8b5cf6',
-                  shadowOffset: { width: 0, height: 6 },
-                  shadowOpacity: 0.3,
-                  shadowRadius: 12,
-                }}
+                style={[styles.cta, SHADOW.brandCard]}
               >
                 {syncing ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={TEXT.inverse} />
                 ) : (
                   <>
-                    <Ionicons name={syncResult ? 'checkmark-circle' : 'sync'} size={16} color="#fff" />
-                    <Text className="ml-2 text-[15px] font-bold text-white">
-                      {syncResult ?? 'Sync now'}
-                    </Text>
+                    <Ionicons
+                      name={syncResult ? 'checkmark-circle' : 'sync'}
+                      size={16}
+                      color={TEXT.inverse}
+                    />
+                    <Text style={styles.ctaText}>{syncResult ?? 'Sync now'}</Text>
                   </>
                 )}
               </LinearGradient>
             </PressableScale>
-            {!!syncError && (
-              <Text className="mt-2 text-center text-[12px] text-red-500">{syncError}</Text>
-            )}
           </View>
-        </Section>
 
-        {/* Preferences */}
-        <Section title="Preferences">
-          <Row
-            icon="time"
-            tint="#6366f1"
-            label="Default review length"
-            sub="How long to block out when scheduling"
-            right={
-              <View className="flex-row items-center">
-                <Pressable onPress={() => adjustDuration(-5)} className="h-7 w-7 items-center justify-center rounded-full bg-ink-100 active:bg-ink-200">
-                  <Ionicons name="remove" size={16} color="#475569" />
-                </Pressable>
-                <Text className="mx-3 w-12 text-center text-[14px] font-bold text-ink-900">{settings.default_duration}m</Text>
-                <Pressable onPress={() => adjustDuration(5)} className="h-7 w-7 items-center justify-center rounded-full bg-ink-100 active:bg-ink-200">
-                  <Ionicons name="add" size={16} color="#475569" />
-                </Pressable>
-              </View>
-            }
-          />
-          <Row
-            icon="sparkles"
-            tint="#ec4899"
-            label="Auto-suggest review time"
-            sub="Let AI propose when to revisit a save"
-            right={
-              <Switch
-                value={settings.auto_schedule}
-                onValueChange={(v) => update({ auto_schedule: v })}
-                trackColor={{ true: '#8b5cf6', false: '#e2e8f0' }}
-              />
-            }
-          />
-          <Row
-            icon="notifications"
-            tint="#f59e0b"
-            label="Notifications"
-            sub="Bucket-list & review reminders (when available)"
-            divider={false}
-            right={
-              <Switch
-                value={settings.notifications_enabled}
-                onValueChange={(v) => update({ notifications_enabled: v })}
-                trackColor={{ true: '#8b5cf6', false: '#e2e8f0' }}
-              />
-            }
-          />
+          {/* Advanced: self-hosting only. Hidden unless this device already
+              points at a custom server (or we're in a dev build). */}
+          {showAdvanced && (
+            <>
+              <PressableScale
+                haptic="light"
+                scaleTo={0.985}
+                hitSlop={0}
+                onPress={() => setAdvancedOpen((o) => !o)}
+                selected={advancedOpen}
+                containerStyle={styles.advancedWrap}
+                accessibilityLabel="Advanced sync settings"
+              >
+                <View style={styles.advancedRow}>
+                  <Text style={styles.advancedLabel}>Advanced</Text>
+                  <Ionicons
+                    name={advancedOpen ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={INK[300]}
+                  />
+                </View>
+              </PressableScale>
+              {advancedOpen && (
+                <View style={styles.advancedPanel}>
+                  <Text style={styles.fieldLabel}>Server URL</Text>
+                  <TextInput
+                    value={serverUrl}
+                    onChangeText={setServerUrl}
+                    onBlur={saveServerUrl}
+                    placeholder="https://your-server.example"
+                    placeholderTextColor={INK[400]}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    style={[styles.input, styles.inputBlock]}
+                    accessibilityLabel="Sync server URL"
+                  />
+                  <Text style={styles.fieldHelp}>
+                    Only change this if you’re running your own Silo server.
+                  </Text>
+                  {!!syncError && <Text style={styles.errorText}>{syncError}</Text>}
+                </View>
+              )}
+            </>
+          )}
         </Section>
 
         {/* Data */}
-        <Section title="Your data">
-          <Row icon="download-outline" tint="#10b981" label="Export my data" sub="Download everything as JSON" onPress={exportData} />
-          <Row icon="trash-outline" tint="#ef4444" label="Delete all data" sub="Wipe this device — can't be undone" danger divider={false} onPress={confirmClear} />
+        <Section title="Your data" index={ORDER.data}>
+          <Row
+            icon="download-outline"
+            tint={STATUS.success}
+            label="Export my data"
+            sub="Download everything as JSON"
+            onPress={exportData}
+          />
+          <Row
+            icon="trash-outline"
+            tint={STATUS.danger}
+            label="Delete all data"
+            sub="Wipe this device — can't be undone"
+            danger
+            divider={false}
+            onPress={confirmClear}
+          />
         </Section>
 
         {/* About */}
-        <Section title="About">
-          <Row icon="shield-checkmark-outline" tint="#06b6d4" label="Privacy Policy" onPress={() => comingSoon('Privacy Policy')} />
-          <Row icon="document-text-outline" tint="#64748b" label="Terms of Service" onPress={() => comingSoon('Terms of Service')} />
+        <Section title="About" index={ORDER.about}>
+          <Row
+            icon="shield-checkmark-outline"
+            tint={BRAND[600]}
+            label="Privacy Policy"
+            onPress={() => comingSoon('Privacy Policy')}
+          />
+          <Row
+            icon="document-text-outline"
+            tint={INK[500]}
+            label="Terms of Service"
+            onPress={() => comingSoon('Terms of Service')}
+          />
           <Row
             icon="mail-outline"
-            tint="#8b5cf6"
+            tint={ACCENT[500]}
             label="Send feedback"
             onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=Silo%20feedback`)}
           />
-          <Row icon="information-circle-outline" tint="#94a3b8" label="Version" right={<Text className="text-[14px] text-ink-400">{APP_VERSION}</Text>} divider={false} />
+          <Row
+            icon="information-circle-outline"
+            tint={INK[400]}
+            label="Version"
+            right={<Text style={styles.versionText}>{APP_VERSION}</Text>}
+            divider={false}
+          />
         </Section>
 
-        <Text className="mt-8 text-center text-[12px] text-ink-300">Silo · all your saves, organized</Text>
+        <Text style={styles.footer}>Silo · all your saves, organized</Text>
       </ScrollView>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: SURFACE.sunken },
+
+  section: { marginTop: SPACE.xxl },
+  sectionTitle: {
+    ...TYPE.overline,
+    color: TEXT.tertiary,
+    textTransform: 'uppercase',
+    marginBottom: SPACE.sm,
+    marginLeft: SPACE.lg,
+  },
+  cardShadow: {
+    marginHorizontal: SPACE.base,
+    borderRadius: RADIUS.xl,
+    backgroundColor: SURFACE.card,
+    ...SHADOW.card,
+  },
+  card: { borderRadius: RADIUS.xl, overflow: 'hidden' },
+
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.md,
+  },
+  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: HAIRLINE },
+  rowIcon: {
+    height: 32,
+    width: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: RADIUS.sm,
+  },
+  rowText: { marginLeft: SPACE.md, flex: 1 },
+  rowLabel: { ...TYPE.callout, fontWeight: '600', color: TEXT.primary },
+  rowLabelDanger: { color: STATUS.danger },
+  rowSub: { ...TYPE.caption, fontWeight: '400', color: TEXT.tertiary, marginTop: 2 },
+
+  profileCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: SPACE.base,
+    marginTop: SPACE.base,
+    padding: SPACE.base,
+    borderRadius: RADIUS.xl,
+    backgroundColor: SURFACE.card,
+    ...SHADOW.brandCard,
+  },
+  avatar: {
+    width: 60,
+    height: 60,
+    borderRadius: RADIUS.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileText: { marginLeft: SPACE.base, flex: 1 },
+  profileName: { ...TYPE.title3, color: TEXT.primary },
+  profileMeta: { ...TYPE.footnote, fontWeight: '400', color: TEXT.tertiary, marginTop: 2 },
+  skeletonLine: { marginTop: SPACE.sm },
+
+  statRow: {
+    flexDirection: 'row',
+    gap: SPACE.md,
+    marginHorizontal: SPACE.base,
+    marginTop: SPACE.md,
+  },
+  statTile: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: SPACE.base,
+    borderRadius: RADIUS.xl,
+    backgroundColor: SURFACE.card,
+    ...SHADOW.card,
+  },
+  statNum: { ...TYPE.title2, color: TEXT.primary, marginTop: 6 },
+  skeletonStat: { marginTop: 8, marginBottom: 4 },
+  statLabel: { ...TYPE.caption, color: TEXT.tertiary },
+
+  stepperRow: { flexDirection: 'row', alignItems: 'center' },
+  stepper: {
+    height: 28,
+    width: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: RADIUS.pill,
+    backgroundColor: INK[100],
+  },
+  stepperValue: {
+    ...TYPE.subhead,
+    fontWeight: '700',
+    color: TEXT.primary,
+    width: 48,
+    textAlign: 'center',
+    marginHorizontal: SPACE.md,
+  },
+
+  syncStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.md,
+  },
+  syncBadge: {
+    height: 36,
+    width: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: RADIUS.md,
+    backgroundColor: BRAND[50],
+  },
+
+  field: { paddingHorizontal: SPACE.base, paddingVertical: SPACE.md },
+  fieldRow: { flexDirection: 'row', alignItems: 'center', marginTop: SPACE.sm },
+  fieldLabel: { ...TYPE.overline, color: TEXT.tertiary, textTransform: 'uppercase' },
+  fieldHelp: { ...TYPE.caption, fontWeight: '400', color: TEXT.tertiary, marginTop: 6 },
+  errorText: { ...TYPE.caption, fontWeight: '400', color: STATUS.danger, marginTop: 6 },
+
+  codePill: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND[50],
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+  },
+  codeText: { ...TYPE.footnote, fontFamily: MONO, color: BRAND[700] },
+  codeTextEmpty: { color: TEXT.tertiary },
+
+  input: {
+    ...TYPE.footnote,
+    fontFamily: MONO,
+    color: TEXT.primary,
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+    backgroundColor: INK[50],
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+  },
+  inputFlex: { flex: 1 },
+  inputBlock: { marginTop: SPACE.sm },
+
+  pillButton: {
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.sm,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND[600],
+  },
+  pillButtonDisabled: { backgroundColor: INK[200] },
+  pillButtonSpacing: { marginLeft: SPACE.sm },
+  pillButtonText: { ...TYPE.footnote, fontWeight: '700', color: TEXT.inverse },
+  iconButton: {
+    height: 36,
+    width: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: RADIUS.pill,
+    backgroundColor: INK[100],
+  },
+
+  ctaBlock: { paddingHorizontal: SPACE.base, paddingTop: SPACE.md, paddingBottom: SPACE.base },
+  cta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 13,
+    borderRadius: RADIUS.pill,
+  },
+  ctaText: { ...TYPE.callout, fontWeight: '700', color: TEXT.inverse, marginLeft: SPACE.sm },
+
+  advancedWrap: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIRLINE },
+  advancedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACE.base,
+    paddingVertical: SPACE.md,
+  },
+  advancedLabel: { ...TYPE.caption, color: TEXT.tertiary, textTransform: 'uppercase' },
+  advancedPanel: { paddingHorizontal: SPACE.base, paddingBottom: SPACE.base },
+
+  versionText: { ...TYPE.footnote, fontWeight: '400', color: TEXT.tertiary },
+  footer: {
+    ...TYPE.caption,
+    fontWeight: '400',
+    color: TEXT.tertiary,
+    textAlign: 'center',
+    marginTop: SPACE.xxl,
+  },
+});
