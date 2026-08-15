@@ -21,10 +21,24 @@ interface Props {
   width?: number | `${number}%`;
   height?: number;
   radius?: number;
+  /**
+   * Block colour. The default is near-white and disappears on dark surfaces —
+   * pass something like `rgba(255,255,255,0.08)` on the Streams feed.
+   */
+  color?: string;
+  /** Sweep highlight colour, to match `color`'s surface. */
+  sweepColor?: string;
   style?: StyleProp<ViewStyle>;
 }
 
-export default function Skeleton({ width = '100%', height = 16, radius = RADIUS.sm, style }: Props) {
+export default function Skeleton({
+  width = '100%',
+  height = 16,
+  radius = RADIUS.sm,
+  color = INK[100],
+  sweepColor = 'rgba(255,255,255,0.8)',
+  style,
+}: Props) {
   // Sweep a soft highlight across the block on a loop.
   const sweep = useSharedValue(-1);
   useEffect(() => {
@@ -42,13 +56,13 @@ export default function Skeleton({ width = '100%', height = 16, radius = RADIUS.
   return (
     <Animated.View
       style={[
-        { width, height, borderRadius: radius, backgroundColor: INK[100], overflow: 'hidden' },
+        { width, height, borderRadius: radius, backgroundColor: color, overflow: 'hidden' },
         style,
       ]}
     >
       <Animated.View style={[{ width: '60%', height: '100%' }, aStyle]}>
         <LinearGradient
-          colors={['transparent', 'rgba(255,255,255,0.8)', 'transparent']}
+          colors={['transparent', sweepColor, 'transparent']}
           start={{ x: 0, y: 0.5 }}
           end={{ x: 1, y: 0.5 }}
           style={{ flex: 1 }}

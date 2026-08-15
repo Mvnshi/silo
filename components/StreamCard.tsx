@@ -5,15 +5,26 @@
  * Renders inline social embeds (via lib/embed) or a gradient content card, with
  * audio playback and interactive Schedule / Done / Archive controls.
  *
+ * Two things make this screen behave:
+ *
+ * 1. **Only the active card mounts a WebView.** A WKWebView is expensive and a
+ *    playing one keeps playing when it scrolls away. Inactive cards render the
+ *    poster image instead, so the feed holds exactly one live player no matter
+ *    how far you scroll.
+ * 2. **The embed gets its natural aspect box, not the whole screen.** A 16:9
+ *    player stretched to a portrait card scales its own chrome up until the
+ *    title bar collides with the status bar. Here it sits in a centred box over
+ *    a blurred poster fill, with scrims top and bottom so Silo's overlay stays
+ *    legible over arbitrary media.
+ *
  * Props:
  * - item: Content item to display
- * - onArchive: Callback when item is archived
- * - onSchedule: Callback when item is scheduled
- * - onComplete: Callback when item is marked done
+ * - active: True when this card is the one on screen (drives WebView mount)
+ * - onArchive / onSchedule / onComplete: action callbacks
  *
  * Dependencies:
  * - expo-av: Audio playback
- * - expo-linear-gradient: Background gradients
+ * - expo-linear-gradient: Background gradients / scrims
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -21,7 +32,7 @@ import {
   View,
   Text,
   StyleSheet,
-  Dimensions,
+  useWindowDimensions,
   ScrollView,
   ActivityIndicator,
   Image,
@@ -31,14 +42,16 @@ import { WebView } from 'react-native-webview';
 import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import GlassCard from '@/components/ui/GlassCard';
 import PressableScale from '@/components/ui/PressableScale';
-import { GRADIENTS, RADIUS } from '@/lib/theme';
+import { GRADIENTS, RADIUS, SHADOW, SPACE, TYPE } from '@/lib/theme';
 import { Item } from '@/lib/types';
 import { getEmbed } from '@/lib/embed';
 import { classConfig, classGradient } from '@/lib/classification';
 
-const { width, height } = Dimensions.get('window');
+/** Height of the floating category chip strip the overlay must clear. */
+const CHIP_STRIP = 52;
 
 /** Map a social platform to a brand glyph for the embed badge/fallback. */
 function platformIcon(platform?: string): keyof typeof Ionicons.glyphMap {
@@ -64,17 +77,16 @@ function platformIcon(platform?: string): keyof typeof Ionicons.glyphMap {
 
 interface StreamCardProps {
   item: Item;
+  /** True when this card is the visible page — only then does a WebView mount. */
+  active?: boolean;
   onArchive: (itemId: string) => void;
   onSchedule: (itemId: string) => void;
   onComplete: (itemId: string) => void;
 }
 
-function StreamCard({
-  item,
-  onArchive,
-  onSchedule,
-  onComplete
-}: StreamCardProps) {
+function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }: StreamCardProps) {
+  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [webViewError, setWebViewError] = useState(false);
@@ -122,6 +134,14 @@ function StreamCard({
     });
   }, [sound]);
 
+  /** Pause narration the moment this card stops being the visible one. */
+  useEffect(() => {
+    if (!active && isPlaying) {
+      soundRef.current?.pauseAsync().catch(() => {});
+      setIsPlaying(false);
+    }
+  }, [active, isPlaying]);
+
   /**
    * Load audio from a remote URL (voice is roadmap-only/default-off)
    */
@@ -149,7 +169,7 @@ function StreamCard({
 
     try {
       const status = await sound.getStatusAsync();
-      
+
       if (status.isLoaded) {
         if (isPlaying) {
           await sound.pauseAsync();
@@ -164,162 +184,198 @@ function StreamCard({
     }
   }
 
+  /** The action rail — identical for embed and gradient cards. */
+  function renderActions(extra?: React.ReactNode) {
+    return (
+      <View style={[styles.actions, { bottom: insets.bottom + 96 }]}>
+        {extra}
+        <RailButton icon="calendar" label="Schedule" onPress={() => onSchedule(item.id)} />
+        <RailButton icon="checkmark-circle" label="Done" onPress={() => onComplete(item.id)} />
+        <RailButton icon="archive" label="Archive" onPress={() => onArchive(item.id)} />
+      </View>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Inline embed for saved social links — render the platform's own player.
+  // ---------------------------------------------------------------------------
   if (embed.kind !== 'none') {
     const label = (item.platform || 'link').toUpperCase();
     const openSource = () => {
       const u = item.url || '';
       if (/^https?:\/\//i.test(u)) Linking.openURL(u).catch(() => {});
     };
-    return (
-      <View style={styles.container}>
-        {webViewError ? (
-          // Fallback UI if the embed can't load (private / region-locked / deleted).
-          <View style={[styles.webview, styles.embedFallback]}>
-            <Ionicons name={platformIcon(item.platform)} size={64} color="#fff" />
-            <Text style={styles.embedFallbackTitle}>{item.title || 'Open this post'}</Text>
-            <Text style={styles.embedFallbackSub}>Couldn’t load the embed here.</Text>
-            <PressableScale haptic="light" onPress={openSource}>
-              <LinearGradient
-                colors={GRADIENTS.brand}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.embedOpenBtn}
-              >
-                <Text style={styles.embedOpenBtnText}>Open link</Text>
-              </LinearGradient>
-            </PressableScale>
-          </View>
-        ) : (
-          <WebView
-            source={
-              embed.kind === 'uri'
-                ? { uri: embed.uri, headers: embed.headers }
-                : { html: embed.html, baseUrl: embed.baseUrl }
-            }
-            style={styles.webview}
-            // The embed is a fixed player, not a scrolling page. Internal
-            // scrolling must stay OFF or the WebView swallows vertical pans
-            // and the feed's swipe-to-next-card gesture stops working.
-            scrollEnabled={false}
-            allowsFullscreenVideo
-            mediaPlaybackRequiresUserAction={false}
-            javaScriptEnabled
-            domStorageEnabled
-            startInLoadingState
-            allowsInlineMediaPlayback
-            originWhitelist={['https://*', 'about:*', 'data:*']}
-            onShouldStartLoadWithRequest={(req) => {
-              const url = req.url;
-              // Allow the embed's own initial load and any non-http(s) scheme
-              // (about:/data:/blob:/intent: the player itself uses).
-              if (!/^https?:\/\//i.test(url)) return true;
-              if (embed.kind === 'uri' && url === embed.uri) return true;
-              // A user tapped a link inside the embed -> open the real browser
-              // instead of navigating this in-app WebView away from the player.
-              Linking.openURL(url).catch(() => {});
-              return false;
-            }}
-            onLoadStart={() => {
-              setWebViewLoading(true);
-              setWebViewError(false);
-            }}
-            onLoadEnd={() => setWebViewLoading(false)}
-            onError={(syntheticEvent) => {
-              console.error('Embed WebView error:', syntheticEvent.nativeEvent);
-              setWebViewError(true);
-              setWebViewLoading(false);
-            }}
-            renderError={() => (
-              <View style={[styles.webview, styles.embedFallback]}>
-                <Ionicons name={platformIcon(item.platform)} size={64} color="#fff" />
-                <Text style={styles.embedFallbackSub}>Failed to load embed.</Text>
-              </View>
-            )}
-          />
-        )}
 
-        {webViewLoading && !webViewError && (
-          <View style={[styles.webview, styles.embedLoading]} pointerEvents="none">
-            {item.imageUri ? (
-              <Image source={{ uri: item.imageUri }} style={StyleSheet.absoluteFill} resizeMode="cover" blurRadius={2} />
-            ) : null}
-            <ActivityIndicator size="large" color="#fff" />
-            <Text style={styles.embedLoadingText}>Loading…</Text>
-          </View>
-        )}
+    // Give the embed its natural box instead of stretching it edge-to-edge.
+    const embedBox =
+      embed.aspect === 'wide'
+        ? { width, height: Math.round(width * (9 / 16)) }
+        : embed.aspect === 'card'
+          ? { width: width - SPACE.base * 2, height: Math.round(height * 0.62) }
+          : { width, height };
+
+    return (
+      <View style={[styles.container, { width, height }]}>
+        {/* Ambient backdrop: the poster, blurred and dimmed, fills the card so a
+            16:9 player never sits on a dead black field. */}
+        {item.imageUri ? (
+          <Image
+            source={{ uri: item.imageUri }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            blurRadius={28}
+          />
+        ) : null}
+        <View style={[StyleSheet.absoluteFill, styles.backdropTint]} />
+
+        <View style={styles.embedCentre} pointerEvents="box-none">
+          {webViewError ? (
+            // Fallback UI if the embed can't load (private / region-locked / deleted).
+            <View style={[embedBox, styles.embedFallback]}>
+              <Ionicons name={platformIcon(item.platform)} size={56} color="#fff" />
+              <Text style={styles.embedFallbackTitle}>{item.title || 'Open this post'}</Text>
+              <Text style={styles.embedFallbackSub}>We couldn’t play this one here.</Text>
+              <PressableScale haptic="light" onPress={openSource} accessibilityRole="button">
+                <LinearGradient
+                  colors={GRADIENTS.brand}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.embedOpenBtn}
+                >
+                  <Text style={styles.embedOpenBtnText}>Open in {item.platform || 'browser'}</Text>
+                </LinearGradient>
+              </PressableScale>
+            </View>
+          ) : active ? (
+            // Only the on-screen card mounts a player. Everything else shows the
+            // poster, so the feed never holds more than one live WKWebView.
+            <View style={[embedBox, styles.embedClip]}>
+              <WebView
+                source={
+                  embed.kind === 'uri'
+                    ? { uri: embed.uri, headers: embed.headers }
+                    : { html: embed.html, baseUrl: embed.baseUrl }
+                }
+                style={styles.webview}
+                // The embed is a fixed player, not a scrolling page. Internal
+                // scrolling must stay OFF or the WebView swallows vertical pans
+                // and the feed's swipe-to-next-card gesture stops working.
+                scrollEnabled={embed.aspect === 'card'}
+                allowsFullscreenVideo
+                mediaPlaybackRequiresUserAction={false}
+                javaScriptEnabled
+                domStorageEnabled
+                allowsInlineMediaPlayback
+                originWhitelist={['https://*', 'about:*', 'data:*']}
+                onShouldStartLoadWithRequest={(req) => {
+                  const url = req.url;
+                  // Allow the embed's own initial load and any non-http(s) scheme
+                  // (about:/data:/blob:/intent: the player itself uses).
+                  if (!/^https?:\/\//i.test(url)) return true;
+                  if (embed.kind === 'uri' && url === embed.uri) return true;
+                  // A user tapped a link inside the embed -> open the real browser
+                  // instead of navigating this in-app WebView away from the player.
+                  Linking.openURL(url).catch(() => {});
+                  return false;
+                }}
+                onLoadStart={() => {
+                  setWebViewLoading(true);
+                  setWebViewError(false);
+                }}
+                onLoadEnd={() => setWebViewLoading(false)}
+                onError={(syntheticEvent) => {
+                  console.error('Embed WebView error:', syntheticEvent.nativeEvent);
+                  setWebViewError(true);
+                  setWebViewLoading(false);
+                }}
+              />
+            </View>
+          ) : (
+            <View style={[embedBox, styles.embedClip, styles.posterIdle]}>
+              {item.imageUri ? (
+                <Image source={{ uri: item.imageUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              ) : (
+                <Ionicons name={platformIcon(item.platform)} size={56} color="rgba(255,255,255,0.5)" />
+              )}
+            </View>
+          )}
+
+          {/* Honest loading state — poster + spinner, sized to the embed box so
+              it can't be mistaken for a blank card. */}
+          {active && webViewLoading && !webViewError && (
+            <View style={[embedBox, styles.embedClip, styles.embedLoading]} pointerEvents="none">
+              {item.imageUri ? (
+                <Image
+                  source={{ uri: item.imageUri }}
+                  style={StyleSheet.absoluteFill}
+                  resizeMode="cover"
+                  blurRadius={2}
+                />
+              ) : null}
+              <ActivityIndicator size="large" color="#fff" />
+              <Text style={styles.embedLoadingText}>Loading…</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Scrims: keep the status bar and the overlay legible over any media. */}
+        <LinearGradient
+          colors={[...GRADIENTS.topScrim]}
+          style={[styles.topScrim, { height: insets.top + CHIP_STRIP + 130 }]}
+          pointerEvents="none"
+        />
+        <LinearGradient
+          colors={[...GRADIENTS.mediaScrim]}
+          style={[styles.bottomScrim, { height: insets.bottom + 190 }]}
+          pointerEvents="none"
+        />
 
         {/* Overlay with platform badge + title */}
-        <View style={styles.reelOverlay} pointerEvents="box-none">
-          <View style={styles.reelHeader}>
-            <View style={styles.badge}>
-              <Ionicons name={platformIcon(item.platform)} size={18} color="#fff" />
-              <Text style={styles.badgeText}>{label}</Text>
-            </View>
-            {item.title ? (
-              <Text style={styles.reelTitle} numberOfLines={3}>
-                {item.title}
-              </Text>
-            ) : null}
-            {item.author ? <Text style={styles.reelAuthor}>{item.author}</Text> : null}
+        <View
+          style={[styles.reelOverlay, { paddingTop: insets.top + CHIP_STRIP + SPACE.base }]}
+          pointerEvents="box-none"
+        >
+          <View style={styles.badge}>
+            <Ionicons name={platformIcon(item.platform)} size={16} color="#fff" />
+            <Text style={styles.badgeText}>{label}</Text>
           </View>
+          {item.title ? (
+            <Text style={styles.reelTitle} numberOfLines={3}>
+              {item.title}
+            </Text>
+          ) : null}
+          {item.author ? <Text style={styles.reelAuthor}>{item.author}</Text> : null}
         </View>
 
-        {/* Action Buttons — 54px circular dark-glass targets */}
-        <View style={styles.actions}>
-          <PressableScale haptic="light" style={styles.actionButton} onPress={() => onSchedule(item.id)}>
-            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
-              <Ionicons name="calendar" size={24} color="#fff" />
-            </GlassCard>
-            <Text style={styles.actionLabel}>Schedule</Text>
-          </PressableScale>
-          <PressableScale haptic="light" style={styles.actionButton} onPress={() => onComplete(item.id)}>
-            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
-              <Ionicons name="checkmark-circle" size={24} color="#fff" />
-            </GlassCard>
-            <Text style={styles.actionLabel}>Done</Text>
-          </PressableScale>
-          <PressableScale haptic="light" style={styles.actionButton} onPress={() => onArchive(item.id)}>
-            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
-              <Ionicons name="archive" size={24} color="#fff" />
-            </GlassCard>
-            <Text style={styles.actionLabel}>Archive</Text>
-          </PressableScale>
-        </View>
+        {renderActions()}
       </View>
     );
   }
 
-  // Regular content card
+  // ---------------------------------------------------------------------------
+  // Regular content card (no embeddable link) — classification gradient.
+  // ---------------------------------------------------------------------------
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={[...classGradient(item.classification)]}
-        style={styles.gradient}
-      >
-        <ScrollView 
-          contentContainerStyle={styles.content}
+    <View style={[styles.container, { width, height }]}>
+      <LinearGradient colors={[...classGradient(item.classification)]} style={styles.gradient}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.content,
+            { paddingTop: insets.top + CHIP_STRIP + SPACE.lg, paddingBottom: insets.bottom + 200 },
+          ]}
           showsVerticalScrollIndicator={false}
         >
           {/* Title with Classification Badge */}
           <View style={styles.titleRow}>
             <Text style={styles.title}>{item.title}</Text>
             <View style={styles.badge}>
-              <Ionicons
-                name={classConfig(item.classification).icon}
-                size={14}
-                color="#fff"
-              />
-              <Text style={styles.badgeText}>
-                {(item.classification || 'other').toUpperCase()}
-              </Text>
+              <Ionicons name={classConfig(item.classification).icon} size={14} color="#fff" />
+              <Text style={styles.badgeText}>{(item.classification || 'other').toUpperCase()}</Text>
             </View>
           </View>
 
           {/* Description */}
-          {item.description && (
-            <Text style={styles.description}>{item.description}</Text>
-          )}
+          {item.description && <Text style={styles.description}>{item.description}</Text>}
 
           {/* Tags */}
           {item.tags && item.tags.length > 0 && (
@@ -334,138 +390,140 @@ function StreamCard({
 
           {/* Place Info */}
           {item.place_name && (
-            <View style={styles.placeInfo}>
+            <View style={styles.metaRow}>
               <Ionicons name="location" size={16} color="#fff" />
-              <Text style={styles.placeText}>{item.place_name}</Text>
+              <Text style={styles.metaText}>{item.place_name}</Text>
             </View>
           )}
 
           {/* Duration */}
           {item.duration && (
-            <View style={styles.durationInfo}>
+            <View style={styles.metaRow}>
               <Ionicons name="time-outline" size={16} color="#fff" />
-              <Text style={styles.durationText}>{item.duration} min</Text>
+              <Text style={styles.metaText}>{item.duration} min</Text>
             </View>
           )}
         </ScrollView>
 
-        {/* Action Buttons — 54px circular dark-glass targets */}
-        <View style={styles.actions}>
-          {/* Audio Playback / Read Button */}
-          {item.audio_url ? (
-            <PressableScale
-              haptic="light"
-              style={styles.actionButton}
+        {renderActions(
+          item.audio_url ? (
+            <RailButton
+              icon={isPlaying ? 'pause' : 'play'}
+              label={isPlaying ? 'Pause' : 'Read'}
               onPress={togglePlayback}
-            >
-              <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
-                <Ionicons
-                  name={isPlaying ? 'pause' : 'play'}
-                  size={24}
-                  color="#fff"
-                />
-              </GlassCard>
-              <Text style={styles.actionLabel}>
-                {isPlaying ? 'Pause' : 'Read'}
-              </Text>
-            </PressableScale>
-          ) : null}
-
-          {/* Schedule */}
-          <PressableScale
-            haptic="light"
-            style={styles.actionButton}
-            onPress={() => onSchedule(item.id)}
-          >
-            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
-              <Ionicons name="calendar" size={24} color="#fff" />
-            </GlassCard>
-            <Text style={styles.actionLabel}>Schedule</Text>
-          </PressableScale>
-
-          {/* Mark as Completed */}
-          <PressableScale
-            haptic="light"
-            style={styles.actionButton}
-            onPress={() => onComplete(item.id)}
-          >
-            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
-              <Ionicons name="checkmark-circle" size={24} color="#fff" />
-            </GlassCard>
-            <Text style={styles.actionLabel}>Done</Text>
-          </PressableScale>
-
-          {/* Archive */}
-          <PressableScale
-            haptic="light"
-            style={styles.actionButton}
-            onPress={() => onArchive(item.id)}
-          >
-            <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
-              <Ionicons name="archive" size={24} color="#fff" />
-            </GlassCard>
-            <Text style={styles.actionLabel}>Archive</Text>
-          </PressableScale>
-        </View>
+            />
+          ) : null
+        )}
       </LinearGradient>
     </View>
   );
 }
 
+/** One 54pt circular dark-glass control on the right-hand action rail. */
+function RailButton({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <PressableScale
+      haptic="light"
+      style={styles.actionButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
+        <Ionicons name={icon} size={24} color="#fff" />
+      </GlassCard>
+      <Text style={styles.actionLabel}>{label}</Text>
+    </PressableScale>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
-    width: width,
-    height: height,
+    backgroundColor: '#08080c',
+  },
+  backdropTint: {
+    backgroundColor: 'rgba(6, 6, 10, 0.45)',
+  },
+  embedCentre: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  embedClip: {
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+  posterIdle: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   webview: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  topScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  bottomScrim: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   reelOverlay: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    // Push title/badge BELOW the floating category-chip strip (which sits at
-    // top:0 + safe-area inset + ~40px chips). Tuned so a 4-line title clears
-    // the chips on every iPhone size.
-    paddingTop: 120,
-    paddingHorizontal: 20,
+    paddingHorizontal: SPACE.lg,
+    alignItems: 'flex-start',
     zIndex: 1,
   },
-  reelHeader: {
-    alignItems: 'flex-start',
-  },
   reelTitle: {
-    fontSize: 24,
-    fontWeight: '800',
+    ...TYPE.title2,
     color: '#fff',
-    marginTop: 12,
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    marginTop: SPACE.md,
+    textShadowColor: 'rgba(0, 0, 0, 0.55)',
     textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
+    textShadowRadius: 6,
+  },
+  reelAuthor: {
+    ...TYPE.subhead,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: SPACE.xs,
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   gradient: {
     flex: 1,
-    padding: 20,
-    paddingTop: 60,
+    paddingHorizontal: SPACE.lg,
     overflow: 'hidden',
   },
   content: {
-    flex: 1,
-    paddingTop: 80,
-    paddingBottom: 120,
+    flexGrow: 1,
   },
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 16,
+    gap: SPACE.md,
+    marginBottom: SPACE.base,
   },
   title: {
-    fontSize: 32,
-    fontWeight: '800',
+    ...TYPE.display,
     color: '#fff',
     flex: 1,
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
@@ -475,70 +533,58 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(0, 0, 0, 0.38)',
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 16,
-    gap: 4,
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+    gap: SPACE.xs,
   },
   badgeText: {
+    ...TYPE.overline,
     color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
   },
   description: {
+    ...TYPE.body,
     fontSize: 18,
+    lineHeight: 27,
     color: '#fff',
-    lineHeight: 28,
-    marginBottom: 20,
+    marginBottom: SPACE.lg,
     opacity: 0.95,
   },
   tagsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 16,
+    gap: SPACE.sm,
+    marginBottom: SPACE.base,
   },
   tag: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 12,
+    paddingHorizontal: SPACE.md,
     paddingVertical: 6,
-    borderRadius: 16,
-    marginRight: 8,
-    marginBottom: 8,
+    borderRadius: RADIUS.pill,
   },
   tagText: {
+    ...TYPE.subhead,
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
   },
-  placeInfo: {
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: SPACE.sm,
+    marginBottom: SPACE.sm,
   },
-  placeText: {
+  metaText: {
+    ...TYPE.callout,
     color: '#fff',
-    fontSize: 16,
-    marginLeft: 8,
-  },
-  durationInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  durationText: {
-    color: '#fff',
-    fontSize: 16,
-    marginLeft: 8,
   },
   actions: {
     position: 'absolute',
-    bottom: 100,
-    right: 20,
+    right: SPACE.base,
     alignItems: 'center',
   },
   actionButton: {
     alignItems: 'center',
-    marginBottom: 18,
+    marginBottom: SPACE.base,
   },
   // 54px circle behind each rail icon (GlassCard supplies blur + hairline).
   actionGlass: {
@@ -546,50 +592,46 @@ const styles = StyleSheet.create({
     height: 54,
     alignItems: 'center',
     justifyContent: 'center',
+    ...SHADOW.raised,
   },
   actionLabel: {
+    ...TYPE.caption,
     color: '#fff',
-    fontSize: 12,
-    marginTop: 6,
-    fontWeight: '600',
-  },
-  reelAuthor: {
-    color: 'rgba(255,255,255,0.85)',
-    marginTop: 4,
-    fontSize: 14,
-    fontWeight: '600',
+    marginTop: 5,
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
   embedFallback: {
-    backgroundColor: '#0b0b0f',
+    backgroundColor: 'rgba(11, 11, 15, 0.92)',
+    borderRadius: RADIUS.lg,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 32,
+    paddingHorizontal: SPACE.xxl,
   },
   embedFallbackTitle: {
+    ...TYPE.headline,
     color: '#fff',
-    marginTop: 16,
-    fontSize: 16,
-    fontWeight: '700',
+    marginTop: SPACE.base,
     textAlign: 'center',
   },
   embedFallbackSub: {
-    color: 'rgba(255,255,255,0.6)',
-    marginTop: 8,
-    fontSize: 14,
+    ...TYPE.subhead,
+    fontWeight: '400',
+    color: 'rgba(255,255,255,0.65)',
+    marginTop: SPACE.sm,
+    marginBottom: SPACE.lg,
     textAlign: 'center',
   },
   embedOpenBtn: {
-    marginTop: 24,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingHorizontal: SPACE.xl,
+    paddingVertical: SPACE.md,
     borderRadius: RADIUS.pill,
   },
   embedOpenBtnText: {
-    color: '#fff',
+    ...TYPE.subhead,
     fontWeight: '700',
+    color: '#fff',
   },
   embedLoading: {
     position: 'absolute',
@@ -598,13 +640,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   embedLoadingText: {
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 10,
-    fontSize: 13,
+    ...TYPE.footnote,
     fontWeight: '600',
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: SPACE.sm,
   },
 });
 
 // Memoized: this is a full-screen FlatList row in the reel feed.
 export default React.memo(StreamCard);
-

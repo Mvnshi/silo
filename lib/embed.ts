@@ -18,10 +18,26 @@
 
 import { Item, SocialPlatform } from './types';
 
+/**
+ * How the embed wants to be laid out inside the full-screen feed card.
+ *
+ * This matters: rendering a 16:9 YouTube player edge-to-edge on a portrait
+ * phone makes the player scale its own chrome up until the title bar collides
+ * with the status bar. Give each embed its natural box and let a blurred
+ * poster fill the rest of the card instead.
+ */
+export type EmbedAspect =
+  /** 16:9 landscape player, centred vertically (YouTube, Vimeo). */
+  | 'wide'
+  /** Portrait video that should fill the card (TikTok). */
+  | 'tall'
+  /** Content-sized document; give it most of the card and let it scroll (X, IG, Threads). */
+  | 'card';
+
 export type EmbedSource =
   /** headers: sent with the initial WebView request only (e.g. Referer — see YouTube note below). */
-  | { kind: 'uri'; uri: string; headers?: Record<string, string> }
-  | { kind: 'html'; html: string; baseUrl: string }
+  | { kind: 'uri'; uri: string; headers?: Record<string, string>; aspect: EmbedAspect }
+  | { kind: 'html'; html: string; baseUrl: string; aspect: EmbedAspect }
   | { kind: 'none' };
 
 /* ---------- id extractors ---------- */
@@ -87,28 +103,28 @@ function instagramDoc(url: string): EmbedSource {
   const body = `<blockquote class="instagram-media" data-instgrm-permalink="${attr(
     url
   )}" data-instgrm-version="14" style="width:100%;max-width:540px;min-width:300px;"></blockquote><script async src="https://www.instagram.com/embed.js"></script>`;
-  return { kind: 'html', html: htmlDoc(body), baseUrl: 'https://www.instagram.com' };
+  return { kind: 'html', html: htmlDoc(body), baseUrl: 'https://www.instagram.com', aspect: 'card' };
 }
 
 function threadsDoc(url: string): EmbedSource {
   const body = `<blockquote class="text-post-media" data-text-post-permalink="${attr(
     url
   )}" data-text-post-version="0" style="width:100%;max-width:540px;min-width:300px;"></blockquote><script async src="https://www.threads.net/embed.js"></script>`;
-  return { kind: 'html', html: htmlDoc(body), baseUrl: 'https://www.threads.net' };
+  return { kind: 'html', html: htmlDoc(body), baseUrl: 'https://www.threads.net', aspect: 'card' };
 }
 
 function twitterDoc(url: string): EmbedSource {
   const body = `<blockquote class="twitter-tweet" data-dnt="true" data-theme="dark"><a href="${attr(
     url
   )}"></a></blockquote><script async src="https://platform.twitter.com/widgets.js"></script>`;
-  return { kind: 'html', html: htmlDoc(body), baseUrl: 'https://twitter.com' };
+  return { kind: 'html', html: htmlDoc(body), baseUrl: 'https://twitter.com', aspect: 'card' };
 }
 
 function tiktokDoc(url: string): EmbedSource {
   const body = `<blockquote class="tiktok-embed" cite="${attr(
     url
   )}" style="max-width:605px;min-width:300px;"></blockquote><script async src="https://www.tiktok.com/embed.js"></script>`;
-  return { kind: 'html', html: htmlDoc(body), baseUrl: 'https://www.tiktok.com' };
+  return { kind: 'html', html: htmlDoc(body), baseUrl: 'https://www.tiktok.com', aspect: 'tall' };
 }
 
 /* ---------- public API ---------- */
@@ -131,21 +147,31 @@ export function getEmbed(item: Pick<Item, 'url' | 'platform'>): EmbedSource {
       // third-party site origin — claiming youtube.com itself gets rejected
       // with error 152. WKWebView sends custom headers on the initial request,
       // which is the one YouTube validates.
+      // modestbranding + rel=0 + iv_load_policy=3 strip the in-player title
+      // bar, end-screen recommendations and annotations, so the card shows the
+      // video and Silo's own overlay — not YouTube's chrome.
       return id
         ? {
             kind: 'uri',
-            uri: `https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0`,
+            uri:
+              `https://www.youtube-nocookie.com/embed/${id}` +
+              '?playsinline=1&rel=0&modestbranding=1&iv_load_policy=3&color=white',
             headers: { Referer: 'https://silo.app/' },
+            aspect: 'wide',
           }
         : { kind: 'none' };
     }
     case 'vimeo': {
       const id = vimeoId(url);
-      return id ? { kind: 'uri', uri: `https://player.vimeo.com/video/${id}` } : { kind: 'none' };
+      return id
+        ? { kind: 'uri', uri: `https://player.vimeo.com/video/${id}?byline=0&title=0`, aspect: 'wide' }
+        : { kind: 'none' };
     }
     case 'tiktok': {
       const id = tiktokId(url);
-      return id ? { kind: 'uri', uri: `https://www.tiktok.com/embed/v2/${id}` } : tiktokDoc(url);
+      return id
+        ? { kind: 'uri', uri: `https://www.tiktok.com/embed/v2/${id}`, aspect: 'tall' }
+        : tiktokDoc(url);
     }
     case 'twitter':
       return twitterDoc(url);

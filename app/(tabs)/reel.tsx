@@ -16,20 +16,22 @@
  * - StreamCard component
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   FlatList,
   StyleSheet,
   Alert,
   RefreshControl,
-  Dimensions,
+  useWindowDimensions,
   TouchableOpacity,
   Text,
   ScrollView,
   Modal,
   Platform,
+  type ViewToken,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -48,15 +50,19 @@ import { scheduleItemReview } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
 import { parseLocalDate, defaultReviewSlot } from '@/lib/datetime';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-
 export default function ReelScreen() {
   const insets = useSafeAreaInsets();
+  const { height: SCREEN_HEIGHT } = useWindowDimensions();
   const [items, setItems] = useState<Item[]>([]);
-  const [filteredItems, setFilteredItems] = useState<Item[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Classification | 'all'>('all');
-  
+  // Id of the card currently filling the screen. Only that card mounts a
+  // WebView, so the feed never holds more than one live player.
+  const [activeId, setActiveId] = useState<string | null>(null);
+  // False while the tab is backgrounded, so a playing embed is torn down when
+  // the user switches tabs rather than continuing to play out of sight.
+  const [tabFocused, setTabFocused] = useState(true);
+
   // Schedule modal state
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleItem, setScheduleItem] = useState<Item | null>(null);
@@ -87,45 +93,51 @@ export default function ReelScreen() {
           return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
         });
       setItems(feedItems);
-      applyCategoryFilter(feedItems, selectedCategory);
     } catch (error) {
       console.error('Failed to load items:', error);
       Alert.alert('Error', 'Failed to load content');
     }
   }
 
-  /**
-   * Apply category filter
-   */
-  function applyCategoryFilter(allItems: Item[], category: Classification | 'all') {
-    if (category === 'all') {
-      setFilteredItems(allItems);
-    } else {
-      setFilteredItems(allItems.filter(item => item.classification === category));
-    }
-  }
+  /** Derived, not stored — a second copy of the list only drifts out of sync. */
+  const filteredItems = useMemo(
+    () =>
+      selectedCategory === 'all'
+        ? items
+        : items.filter((item) => item.classification === selectedCategory),
+    [items, selectedCategory]
+  );
 
   /**
    * Handle category selection
    */
   function handleCategorySelect(category: Classification | 'all') {
     setSelectedCategory(category);
-    applyCategoryFilter(items, category);
   }
 
-  // Load items when screen comes into focus
+  // Load items when screen comes into focus; pause playback when it leaves.
   useFocusEffect(
     useCallback(() => {
+      setTabFocused(true);
       loadItems();
-      // Haptic feedback when tab is focused
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      return () => setTabFocused(false);
     }, [])
   );
 
-  // Update filtered items when category changes
+  /**
+   * Track which card fills the screen. 80% coverage means the card is
+   * unambiguously "the" page, so playback never flips mid-swipe.
+   */
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 80 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    const first = viewableItems[0]?.item as Item | undefined;
+    if (first) setActiveId(first.id);
+  }).current;
+
+  // Seed the active card so the very first item plays without a swipe.
   useEffect(() => {
-    applyCategoryFilter(items, selectedCategory);
-  }, [selectedCategory, items]);
+    if (!activeId && filteredItems.length > 0) setActiveId(filteredItems[0].id);
+  }, [filteredItems, activeId]);
 
   /**
    * Handle pull to refresh
@@ -259,9 +271,8 @@ export default function ReelScreen() {
   async function handleComplete(itemId: string) {
     try {
       await updateItem(itemId, { viewed: true });
-      // Remove from current feed
+      // Remove from current feed (filteredItems is derived, so it follows).
       setItems(prevItems => prevItems.filter(item => item.id !== itemId));
-      setFilteredItems(prevItems => prevItems.filter(item => item.id !== itemId));
       // Celebration haptic for completion
       celebrationHaptic();
     } catch (error) {
@@ -283,11 +294,15 @@ export default function ReelScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Full-bleed media needs light status-bar glyphs. expo-status-bar's
+          last-mounted instance wins, so this overrides the root's "dark". */}
+      <StatusBar style="light" animated />
       <FlatList
         data={filteredItems}
         renderItem={({ item }) => (
           <StreamCard
             item={item}
+            active={tabFocused && item.id === activeId}
             onArchive={handleArchive}
             onSchedule={handleSchedule}
             onComplete={handleComplete}
@@ -304,6 +319,15 @@ export default function ReelScreen() {
           offset: SCREEN_HEIGHT * index,
           index,
         })}
+        // Windowing: keep the neighbours warm for an instant swipe, and let
+        // everything further out be recycled. Combined with the single-active
+        // WebView in StreamCard this keeps memory flat over a long feed.
+        windowSize={3}
+        initialNumToRender={1}
+        maxToRenderPerBatch={2}
+        removeClippedSubviews
+        viewabilityConfig={viewabilityConfig}
+        onViewableItemsChanged={onViewableItemsChanged}
         style={styles.list}
         contentContainerStyle={styles.listContent}
         refreshControl={

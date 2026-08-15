@@ -17,8 +17,9 @@
 
 import '../global.css';
 import { useEffect, useState } from 'react';
-import { AppState, View, LogBox } from 'react-native';
+import { AppState, LogBox } from 'react-native';
 import { Stack, Redirect, usePathname } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { syncNow } from '@/lib/sync';
 
 // Known, tracked noise only — never blanket-ignore:
@@ -38,6 +39,12 @@ import { StatusBar } from 'expo-status-bar';
 import { seedData, shouldSeedData } from '@/lib/seed';
 import { runMigrations, hasOnboarded } from '@/lib/storage';
 import { drainPendingShares } from '@/lib/shareImport';
+import { ToastProvider } from '@/components/ui/Toast';
+
+// Hold the native splash until we know whether to show onboarding or the tabs,
+// so the user never sees a blank frame between the splash and a mounted screen.
+// Best-effort: if the call loses the race with auto-hide, startup is unaffected.
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   // null = still reading the flag (render a blank frame, not the wrong screen).
@@ -111,17 +118,29 @@ export default function RootLayout() {
     return () => sub.remove();
   }, []);
 
-  // Hold one blank frame while the onboarding flag loads so a returning user
-  // never flashes onboarding (and a new user never flashes the tabs).
-  if (needsOnboarding === null) {
-    return <View style={{ flex: 1, backgroundColor: '#F5F3FF' }} />;
-  }
+  // Drop the splash only once we know which screen to mount, so the first
+  // thing after the logo is a fully-rendered surface — never a blank frame.
+  useEffect(() => {
+    if (needsOnboarding !== null) SplashScreen.hideAsync().catch(() => {});
+  }, [needsOnboarding]);
+
+  // Keep the native splash up while the onboarding flag loads, so a returning
+  // user never flashes onboarding (and a new user never flashes the tabs).
+  if (needsOnboarding === null) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <StatusBar style="dark" translucent={false} />
-        <Stack screenOptions={{ headerShown: false }} />
+        {/* Screen-level <StatusBar> instances override this (last mounted wins) —
+            see reel.tsx, which needs light glyphs over its full-bleed media. */}
+        <StatusBar style="dark" />
+        <ToastProvider>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
+            <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+          </Stack>
+        </ToastProvider>
         {/* First launch only: route into onboarding (it replaces back to tabs). */}
         {needsOnboarding && <Redirect href="/onboarding" />}
       </SafeAreaProvider>

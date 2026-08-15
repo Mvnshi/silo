@@ -1,82 +1,83 @@
 /**
  * Tabs Layout Component
- * 
+ *
  * Native iOS-style tab navigation with 5 main screens using NativeTabs:
  * - Streams (reel): TikTok-style content feed
  * - Stacks (index): Organized collections
  * - Add: Add new content
- * - Silo (calendar): Calendar / map / bucket list
+ * - Silo (calendar): Today / calendar / map / bucket list
  * - Screenshots: Review recent screenshots
- * 
+ *
  * Features:
- * - Native iOS liquid glass effect (iOS 16+)
- * - Automatic dark mode support
- * - Scroll-to-top on tab press
- * - Pop-to-root navigation
- * 
+ * - Native iOS liquid glass tab bar, tinted to the Silo violet (never the
+ *   stock #007AFF — the window tint is what UIKit falls back to otherwise).
+ * - Paired SF Symbols so UIKit plays its symbol transition on selection.
+ * - Selection haptic on every tab change (skipped on cold start).
+ * - Tab bar minimizes on scroll-down (iOS 26+), giving the feed screens
+ *   the full canvas.
+ *
  * Dependencies:
  * - expo-router: File-based routing with native tabs
  * - react-native-screens: 4.6.0+ required
  */
 
 import { NativeTabs, Label, Icon } from 'expo-router/unstable-native-tabs';
-import { useEffect } from 'react';
-import { usePathname } from 'expo-router';
+import { useEffect, useRef } from 'react';
+import { useSegments } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { BRAND, INK } from '@/lib/theme';
 
 export default function TabsLayout() {
-  const pathname = usePathname();
-  
-  // Haptic feedback on tab switch
+  // segments[0] is the "(tabs)" group; segments[1] is the active tab route
+  // ("reel" / "index" / "add" / …). usePathname() strips group segments, which
+  // is why the old pathname regex could never match.
+  const segments = useSegments();
+  const activeTab = segments[1];
+  const isFirstRun = useRef(true);
+
   useEffect(() => {
-    // Only trigger on tab routes, not nested routes
-    if (pathname && pathname.match(/^\/(tabs)\/(reel|index|add|calendar|screenshots)$/)) {
-      Haptics.selectionAsync();
+    // Don't buzz on cold start — only on an actual user-driven tab change.
+    if (isFirstRun.current) {
+      isFirstRun.current = false;
+      return;
     }
-  }, [pathname]);
+    Haptics.selectionAsync().catch(() => {});
+  }, [activeTab]);
 
   return (
-    <NativeTabs>
+    <NativeTabs
+      tintColor={BRAND[600]}
+      iconColor={{ default: INK[400], selected: BRAND[600] }}
+      labelStyle={{
+        default: { color: INK[500], fontSize: 10, fontWeight: '500' },
+        selected: { color: BRAND[600], fontSize: 10, fontWeight: '700' },
+      }}
+      minimizeBehavior="onScrollDown"
+    >
       <NativeTabs.Trigger name="reel">
         <Label>Streams</Label>
-        <Icon
-          sf="play.fill"
-          drawable="ic_menu_slideshow"
-        />
+        <Icon sf={{ default: 'play', selected: 'play.fill' }} drawable="ic_menu_slideshow" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="index">
         <Label>Stacks</Label>
-        <Icon
-          sf="folder.fill"
-          drawable="ic_menu_sort_by_size"
-        />
+        <Icon sf={{ default: 'folder', selected: 'folder.fill' }} drawable="ic_menu_sort_by_size" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="add">
         <Label>Add</Label>
-        <Icon
-          sf="plus.circle.fill"
-          drawable="ic_input_add"
-        />
+        <Icon sf={{ default: 'plus.circle', selected: 'plus.circle.fill' }} drawable="ic_input_add" />
       </NativeTabs.Trigger>
 
-            <NativeTabs.Trigger name="calendar">
-              <Label>Silo</Label>
-              <Icon
-                sf="brain"
-                drawable="ic_menu_my_calendar"
-              />
-            </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="calendar">
+        <Label>Silo</Label>
+        <Icon sf={{ default: 'brain', selected: 'brain.fill' }} drawable="ic_menu_my_calendar" />
+      </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="screenshots">
         <Label>Screenshots</Label>
-        <Icon
-          sf="photo.fill"
-          drawable="ic_menu_gallery"
-        />
+        <Icon sf={{ default: 'photo', selected: 'photo.fill' }} drawable="ic_menu_gallery" />
       </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
-
