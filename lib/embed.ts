@@ -35,8 +35,25 @@ export type EmbedAspect =
   | 'card';
 
 export type EmbedSource =
-  /** headers: sent with the initial WebView request only (e.g. Referer — see YouTube note below). */
-  | { kind: 'uri'; uri: string; headers?: Record<string, string>; aspect: EmbedAspect }
+  /**
+   * headers: sent with the initial WebView request only (e.g. Referer — see the
+   * YouTube note below).
+   * autoplayUri: same player, primed to start immediately. Present only for
+   * platforms where playback is a deliberate user action (see `posterFirst`).
+   * posterFirst: render our own thumbnail + play button and mount the WebView
+   * only on tap. YouTube deprecated `modestbranding` in 2023, so the player
+   * always draws its own title bar and "Watch on YouTube" strip over the
+   * poster — showing our poster instead keeps the card clean AND means an
+   * un-played card costs no WKWebView at all.
+   */
+  | {
+      kind: 'uri';
+      uri: string;
+      autoplayUri?: string;
+      posterFirst?: boolean;
+      headers?: Record<string, string>;
+      aspect: EmbedAspect;
+    }
   | { kind: 'html'; html: string; baseUrl: string; aspect: EmbedAspect }
   | { kind: 'none' };
 
@@ -147,15 +164,19 @@ export function getEmbed(item: Pick<Item, 'url' | 'platform'>): EmbedSource {
       // third-party site origin — claiming youtube.com itself gets rejected
       // with error 152. WKWebView sends custom headers on the initial request,
       // which is the one YouTube validates.
-      // modestbranding + rel=0 + iv_load_policy=3 strip the in-player title
-      // bar, end-screen recommendations and annotations, so the card shows the
-      // video and Silo's own overlay — not YouTube's chrome.
+      // rel=0 + iv_load_policy=3 drop end-screen recommendations and
+      // annotations. `modestbranding` is a no-op since 2023 — YouTube always
+      // draws its title bar over the poster — so the card renders OUR poster
+      // and only mounts the player once the user taps play.
+      const base =
+        `https://www.youtube-nocookie.com/embed/${id}` +
+        '?playsinline=1&rel=0&iv_load_policy=3&color=white';
       return id
         ? {
             kind: 'uri',
-            uri:
-              `https://www.youtube-nocookie.com/embed/${id}` +
-              '?playsinline=1&rel=0&modestbranding=1&iv_load_policy=3&color=white',
+            uri: base,
+            autoplayUri: `${base}&autoplay=1`,
+            posterFirst: true,
             headers: { Referer: 'https://silo.app/' },
             aspect: 'wide',
           }
@@ -163,8 +184,9 @@ export function getEmbed(item: Pick<Item, 'url' | 'platform'>): EmbedSource {
     }
     case 'vimeo': {
       const id = vimeoId(url);
+      const base = `https://player.vimeo.com/video/${id}?byline=0&title=0&portrait=0`;
       return id
-        ? { kind: 'uri', uri: `https://player.vimeo.com/video/${id}?byline=0&title=0`, aspect: 'wide' }
+        ? { kind: 'uri', uri: base, autoplayUri: `${base}&autoplay=1`, posterFirst: true, aspect: 'wide' }
         : { kind: 'none' };
     }
     case 'tiktok': {

@@ -40,6 +40,7 @@ import { seedData, shouldSeedData } from '@/lib/seed';
 import { runMigrations, hasOnboarded } from '@/lib/storage';
 import { drainPendingShares } from '@/lib/shareImport';
 import { ToastProvider } from '@/components/ui/Toast';
+import TextPromptHost from '@/components/ui/TextPrompt';
 
 // Hold the native splash until we know whether to show onboarding or the tabs,
 // so the user never sees a blank frame between the splash and a mounted screen.
@@ -140,6 +141,8 @@ export default function RootLayout() {
             <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
             <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
           </Stack>
+          {/* Backs promptForText() — replaces the iOS-only Alert.prompt. */}
+          <TextPromptHost />
         </ToastProvider>
         {/* First launch only: route into onboarding (it replaces back to tabs). */}
         {needsOnboarding && <Redirect href="/onboarding" />}

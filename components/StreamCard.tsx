@@ -91,6 +91,8 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
   const [isPlaying, setIsPlaying] = useState(false);
   const [webViewError, setWebViewError] = useState(false);
   const [webViewLoading, setWebViewLoading] = useState(true);
+  // Poster-first players (YouTube/Vimeo) only mount their WebView once tapped.
+  const [playRequested, setPlayRequested] = useState(false);
   // Holds the actually-loaded Audio.Sound so cleanup can unload it without
   // closing over the (null-at-register-time) `sound` state.
   const soundRef = useRef<Audio.Sound | null>(null);
@@ -134,12 +136,17 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
     });
   }, [sound]);
 
-  /** Pause narration the moment this card stops being the visible one. */
+  /**
+   * Scrolling away tears the player down: narration pauses and a poster-first
+   * video reverts to its poster, so nothing keeps playing off-screen.
+   */
   useEffect(() => {
-    if (!active && isPlaying) {
+    if (active) return;
+    if (isPlaying) {
       soundRef.current?.pauseAsync().catch(() => {});
       setIsPlaying(false);
     }
+    setPlayRequested(false);
   }, [active, isPlaying]);
 
   /**
@@ -187,7 +194,7 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
   /** The action rail — identical for embed and gradient cards. */
   function renderActions(extra?: React.ReactNode) {
     return (
-      <View style={[styles.actions, { bottom: insets.bottom + 96 }]}>
+      <View style={[styles.actions, { bottom: insets.bottom + 92 }]}>
         {extra}
         <RailButton icon="calendar" label="Schedule" onPress={() => onSchedule(item.id)} />
         <RailButton icon="checkmark-circle" label="Done" onPress={() => onComplete(item.id)} />
@@ -214,6 +221,13 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
           ? { width: width - SPACE.base * 2, height: Math.round(height * 0.62) }
           : { width, height };
 
+    // Poster-first platforms draw our thumbnail until the user taps play, so an
+    // un-played card costs no WKWebView and shows no platform chrome.
+    const posterFirst = embed.kind === 'uri' && embed.posterFirst === true;
+    const showPlayer = active && (!posterFirst || playRequested);
+    const playerUri =
+      embed.kind === 'uri' ? (playRequested && embed.autoplayUri) || embed.uri : undefined;
+
     return (
       <View style={[styles.container, { width, height }]}>
         {/* Ambient backdrop: the poster, blurred and dimmed, fills the card so a
@@ -228,7 +242,17 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
         ) : null}
         <View style={[StyleSheet.absoluteFill, styles.backdropTint]} />
 
-        <View style={styles.embedCentre} pointerEvents="box-none">
+        {/* Centre the player in the space ABOVE the meta block, not in the raw
+            card — otherwise the media reads as sunk toward the bottom half. */}
+        <View
+          style={[
+            styles.embedCentre,
+            embed.aspect === 'tall'
+              ? null
+              : { paddingBottom: insets.bottom + 150, paddingTop: insets.top + CHIP_STRIP },
+          ]}
+          pointerEvents="box-none"
+        >
           {webViewError ? (
             // Fallback UI if the embed can't load (private / region-locked / deleted).
             <View style={[embedBox, styles.embedFallback]}>
@@ -246,14 +270,14 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
                 </LinearGradient>
               </PressableScale>
             </View>
-          ) : active ? (
+          ) : showPlayer ? (
             // Only the on-screen card mounts a player. Everything else shows the
             // poster, so the feed never holds more than one live WKWebView.
             <View style={[embedBox, styles.embedClip]}>
               <WebView
                 source={
                   embed.kind === 'uri'
-                    ? { uri: embed.uri, headers: embed.headers }
+                    ? { uri: playerUri as string, headers: embed.headers }
                     : { html: embed.html, baseUrl: embed.baseUrl }
                 }
                 style={styles.webview}
@@ -272,7 +296,8 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
                   // Allow the embed's own initial load and any non-http(s) scheme
                   // (about:/data:/blob:/intent: the player itself uses).
                   if (!/^https?:\/\//i.test(url)) return true;
-                  if (embed.kind === 'uri' && url === embed.uri) return true;
+                  if (embed.kind === 'uri' && (url === embed.uri || url === embed.autoplayUri))
+                    return true;
                   // A user tapped a link inside the embed -> open the real browser
                   // instead of navigating this in-app WebView away from the player.
                   Linking.openURL(url).catch(() => {});
@@ -291,18 +316,37 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
               />
             </View>
           ) : (
-            <View style={[embedBox, styles.embedClip, styles.posterIdle]}>
+            // Poster. On a poster-first platform this IS the player until
+            // tapped; on others it's the placeholder for an off-screen card.
+            <PressableScale
+              haptic="medium"
+              scaleTo={0.985}
+              disabled={!posterFirst || !active}
+              onPress={() => setPlayRequested(true)}
+              accessibilityRole="button"
+              accessibilityLabel={posterFirst ? `Play ${item.title || 'video'}` : undefined}
+              style={[embedBox, styles.embedClip, styles.posterIdle]}
+            >
               {item.imageUri ? (
-                <Image source={{ uri: item.imageUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image
+                  source={{ uri: item.imageUri }}
+                  style={StyleSheet.absoluteFill}
+                  resizeMode="cover"
+                />
               ) : (
                 <Ionicons name={platformIcon(item.platform)} size={56} color="rgba(255,255,255,0.5)" />
               )}
-            </View>
+              {posterFirst && (
+                <View style={styles.playBadge}>
+                  <Ionicons name="play" size={30} color="#fff" style={styles.playGlyph} />
+                </View>
+              )}
+            </PressableScale>
           )}
 
           {/* Honest loading state — poster + spinner, sized to the embed box so
               it can't be mistaken for a blank card. */}
-          {active && webViewLoading && !webViewError && (
+          {showPlayer && webViewLoading && !webViewError && (
             <View style={[embedBox, styles.embedClip, styles.embedLoading]} pointerEvents="none">
               {item.imageUri ? (
                 <Image
@@ -321,22 +365,23 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
         {/* Scrims: keep the status bar and the overlay legible over any media. */}
         <LinearGradient
           colors={[...GRADIENTS.topScrim]}
-          style={[styles.topScrim, { height: insets.top + CHIP_STRIP + 130 }]}
+          style={[styles.topScrim, { height: insets.top + CHIP_STRIP + SPACE.lg }]}
           pointerEvents="none"
         />
         <LinearGradient
           colors={[...GRADIENTS.mediaScrim]}
-          style={[styles.bottomScrim, { height: insets.bottom + 190 }]}
+          style={[styles.bottomScrim, { height: insets.bottom + 300 }]}
           pointerEvents="none"
         />
 
-        {/* Overlay with platform badge + title */}
+        {/* Meta sits bottom-left, clear of the action rail — the layout every
+            vertical feed uses, and it keeps the middle of the card for media. */}
         <View
-          style={[styles.reelOverlay, { paddingTop: insets.top + CHIP_STRIP + SPACE.base }]}
+          style={[styles.reelMeta, { bottom: insets.bottom + 88 }]}
           pointerEvents="box-none"
         >
           <View style={styles.badge}>
-            <Ionicons name={platformIcon(item.platform)} size={16} color="#fff" />
+            <Ionicons name={platformIcon(item.platform)} size={14} color="#fff" />
             <Text style={styles.badgeText}>{label}</Text>
           </View>
           {item.title ? (
@@ -482,22 +527,36 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
   },
-  reelOverlay: {
+  reelMeta: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: SPACE.lg,
+    left: SPACE.lg,
+    // Clear of the 54pt action rail plus its right margin.
+    right: 92,
     alignItems: 'flex-start',
     zIndex: 1,
   },
   reelTitle: {
-    ...TYPE.title2,
+    ...TYPE.title3,
     color: '#fff',
-    marginTop: SPACE.md,
+    marginTop: SPACE.sm,
     textShadowColor: 'rgba(0, 0, 0, 0.55)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 6,
+  },
+  playBadge: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    backgroundColor: 'rgba(10, 10, 14, 0.55)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOW.floating,
+  },
+  playGlyph: {
+    // Optical centring: a triangle's visual centre sits left of its bounding box.
+    marginLeft: 4,
   },
   reelAuthor: {
     ...TYPE.subhead,
