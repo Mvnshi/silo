@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Glass from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import { useToast } from '@/components/ui/Toast';
 import { classConfig } from '@/lib/classification';
@@ -108,100 +109,117 @@ export default function CleanupSheet({ visible, candidates, onClose, onChanged }
 
   return (
     <Modal transparent visible animationType="none" onRequestClose={onClose}>
-      <Animated.View
-        entering={FadeIn.duration(DURATION.fast)}
-        exiting={FadeOut.duration(DURATION.instant)}
-        style={[styles.scrim, dyn.scrim]}
-      >
-        <PressableScale
-          haptic="none"
-          scaleTo={1}
-          containerStyle={StyleSheet.absoluteFill}
-          onPress={done ? finish : onClose}
-          accessibilityLabel="Close tidy up"
-        >
-          <View style={StyleSheet.absoluteFill} />
-        </PressableScale>
-
+      <View style={styles.root}>
+        {/* The scrim fades as a SIBLING of the sheet, never as its parent: any
+            opacity animation above a glass surface deletes it instead of fading
+            it. It still covers the full screen, so tapping anywhere closes. */}
         <Animated.View
-          entering={enterFromBottom(0, reduced)}
-          exiting={exitToBottom(reduced)}
-          style={[styles.sheet, dyn.sheet, { paddingBottom: insets.bottom + SPACE.lg }]}
+          entering={FadeIn.duration(DURATION.fast)}
+          exiting={FadeOut.duration(DURATION.instant)}
+          style={[StyleSheet.absoluteFill, dyn.scrim]}
         >
-          <View style={[styles.grabber, dyn.grabber]} />
+          <PressableScale
+            haptic="none"
+            scaleTo={1}
+            containerStyle={StyleSheet.absoluteFill}
+            onPress={done ? finish : onClose}
+            accessibilityLabel="Close tidy up"
+          >
+            <View style={StyleSheet.absoluteFill} />
+          </PressableScale>
+        </Animated.View>
 
-          {done ? (
-            <View style={styles.summary}>
-              <LinearGradient
-                colors={[...GRADIENTS.brand]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.summaryOrb}
-              >
-                <Ionicons name="checkmark" size={38} color="#fff" />
-              </LinearGradient>
-              <Text style={[styles.summaryTitle, dyn.summaryTitle]}>
-                {kept + released === 0 ? 'Nothing to tidy' : 'Nice — that’s tidier'}
-              </Text>
-              <Text style={[styles.summarySub, dyn.summarySub]}>
-                {kept + released === 0
-                  ? 'Your saves are all still fresh.'
-                  : `You kept ${kept} and let go of ${released}.` +
-                    (candidates.length > RUN_LENGTH
-                      ? ` ${candidates.length - RUN_LENGTH} more waiting whenever you want.`
-                      : '')}
-              </Text>
-              <PressableScale
-                haptic="medium"
-                onPress={finish}
-                style={[styles.doneBtn, dyn.doneBtn]}
-                accessibilityLabel="Done"
-              >
-                <Text style={styles.doneBtnText}>Done</Text>
-              </PressableScale>
-            </View>
-          ) : (
-            <>
-              <View style={styles.header}>
-                <Text style={[styles.headerTitle, dyn.headerTitle]}>Still want this?</Text>
-                <Text style={[styles.headerCount, dyn.headerCount]}>
-                  {index + 1} of {run.length}
-                </Text>
-              </View>
-              <View style={[styles.progressTrack, dyn.progressTrack]}>
-                <View
-                  style={[styles.progressFill, dyn.progressFill, { width: `${(index / run.length) * 100}%` }]}
-                />
-              </View>
+        {/* Glass can't cast a shadow from inside its own clipped bounds, so the
+            lift that separated the opaque sheet lives on this wrapper — which is
+            also the only thing that animates (transform only). */}
+        <Animated.View entering={enterFromBottom(0, reduced)} exiting={exitToBottom(reduced)} style={styles.sheetLift}>
+          <Glass
+            variant="regular"
+            radius={RADIUS.xxl}
+            // The rim is drawn per-edge below — only the top edge is on screen.
+            bordered={false}
+            tintColor={dyn.sheetTint}
+            style={[styles.sheet, dyn.sheet, { paddingBottom: insets.bottom + SPACE.lg }]}
+          >
+            <View style={[styles.grabber, dyn.grabber]} />
 
-              <ItemPreview item={item} />
-
-              <View style={styles.actions}>
-                <PressableScale
-                  haptic="light"
-                  containerStyle={styles.actionSlot}
-                  style={[styles.actionBtn, styles.letGoBtn, dyn.letGoBtn]}
-                  onPress={() => decide(false)}
-                  accessibilityLabel="Let this go"
+            {done ? (
+              <View style={styles.summary}>
+                <LinearGradient
+                  colors={[...GRADIENTS.brand]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.summaryOrb}
                 >
-                  <Ionicons name="archive-outline" size={19} color={c.danger} />
-                  <Text style={[styles.actionText, { color: c.danger }]}>Let go</Text>
-                </PressableScale>
+                  <Ionicons name="checkmark" size={38} color="#fff" />
+                </LinearGradient>
+                <Text style={[styles.summaryTitle, dyn.summaryTitle]}>
+                  {kept + released === 0 ? 'Nothing to tidy' : 'Nice — that’s tidier'}
+                </Text>
+                <Text style={[styles.summarySub, dyn.summarySub]}>
+                  {kept + released === 0
+                    ? 'Your saves are all still fresh.'
+                    : `You kept ${kept} and let go of ${released}.` +
+                      (candidates.length > RUN_LENGTH
+                        ? ` ${candidates.length - RUN_LENGTH} more waiting whenever you want.`
+                        : '')}
+                </Text>
                 <PressableScale
                   haptic="medium"
-                  containerStyle={styles.actionSlot}
-                  style={[styles.actionBtn, styles.keepBtn, dyn.keepBtn]}
-                  onPress={() => decide(true)}
-                  accessibilityLabel="Keep this"
+                  onPress={finish}
+                  style={[styles.doneBtn, dyn.doneBtn]}
+                  accessibilityLabel="Done"
                 >
-                  <Ionicons name="bookmark" size={19} color="#fff" />
-                  <Text style={[styles.actionText, { color: '#fff' }]}>Keep</Text>
+                  <Text style={styles.doneBtnText}>Done</Text>
                 </PressableScale>
               </View>
-            </>
-          )}
+            ) : (
+              <>
+                <View style={styles.header}>
+                  <Text style={[styles.headerTitle, dyn.headerTitle]}>Still want this?</Text>
+                  <Text style={[styles.headerCount, dyn.headerCount]}>
+                    {index + 1} of {run.length}
+                  </Text>
+                </View>
+                <View style={[styles.progressTrack, dyn.progressTrack]}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      dyn.progressFill,
+                      { width: `${(index / run.length) * 100}%` },
+                    ]}
+                  />
+                </View>
+
+                <ItemPreview item={item} />
+
+                <View style={styles.actions}>
+                  <PressableScale
+                    haptic="light"
+                    containerStyle={styles.actionSlot}
+                    style={[styles.actionBtn, styles.letGoBtn, dyn.letGoBtn]}
+                    onPress={() => decide(false)}
+                    accessibilityLabel="Let this go"
+                  >
+                    <Ionicons name="archive-outline" size={19} color={c.danger} />
+                    <Text style={[styles.actionText, { color: c.danger }]}>Let go</Text>
+                  </PressableScale>
+                  <PressableScale
+                    haptic="medium"
+                    containerStyle={styles.actionSlot}
+                    style={[styles.actionBtn, styles.keepBtn, dyn.keepBtn]}
+                    onPress={() => decide(true)}
+                    accessibilityLabel="Keep this"
+                  >
+                    <Ionicons name="bookmark" size={19} color="#fff" />
+                    <Text style={[styles.actionText, { color: '#fff' }]}>Keep</Text>
+                  </PressableScale>
+                </View>
+              </>
+            )}
+          </Glass>
         </Animated.View>
-      </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -257,15 +275,18 @@ function ItemPreview({ item }: { item: Item }) {
  * is rebuilt whenever the appearance flips and would otherwise leak sheet ids.
  */
 function makeDynamicStyles(c: ThemeColors) {
-  // SHADOW.floating is what lifts the sheet off the page on light; over a dark
-  // scrim there is nothing left for it to darken, so the sheet gets a lit edge.
-  const sheetEdge =
-    c.appearance === 'dark'
-      ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline }
-      : {};
   return {
     scrim: { backgroundColor: c.scrim },
-    sheet: { backgroundColor: c.card, ...sheetEdge },
+    // No fill: the glass IS the surface. What is left to draw is the rim on the
+    // one edge you can see — the top — which is what separates the sheet from
+    // whatever it is floating over, in both appearances.
+    sheet: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline },
+    // Glass borrows its colour from what is behind it, and on light that is a
+    // pale violet page — body text on bare material drifts under AA. `2e` ≈ 18%
+    // of the palette's own card colour: enough to hold text, far too little to
+    // read as a fill. (Both palettes state `card` as a 6-digit hex, so the alpha
+    // suffix is all this needs.)
+    sheetTint: `${c.card}2e`,
     grabber: { backgroundColor: c.field },
     headerTitle: { color: c.text },
     headerCount: { color: c.textTertiary },
@@ -284,16 +305,22 @@ function makeDynamicStyles(c: ThemeColors) {
 }
 
 const styles = StyleSheet.create({
-  scrim: {
+  root: {
     flex: 1,
     justifyContent: 'flex-end',
+  },
+  sheetLift: {
+    ...SHADOW.floating,
   },
   sheet: {
     borderTopLeftRadius: RADIUS.xxl,
     borderTopRightRadius: RADIUS.xxl,
+    // Flush with the bottom of the screen, so the corners the `radius` prop
+    // rounds by default get squared off again.
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     paddingHorizontal: SPACE.lg,
     paddingTop: SPACE.md,
-    ...SHADOW.floating,
   },
   grabber: {
     alignSelf: 'center',

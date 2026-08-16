@@ -133,3 +133,85 @@ it unblocks.
 **Domain note:** point the apex at the landing page and privacy policy, and
 consider a subdomain such as `api.silo.pro` as a custom domain for the Worker —
 Cloudflare makes that one click.
+
+---
+
+## 6. Accounts (optional)
+
+Accounts are off until you configure them. With the two env vars blank the app
+runs exactly as it always has — fully on-device, no account surface anywhere,
+sync by pairing code. This section turns on `docs/sync.md`'s **Mode 2**.
+
+**What the identity provider sees:** an email address and a user id. Nothing
+else. Saves — titles, URLs, screenshots, notes, tags — go to *your* Worker and
+D1, keyed by `spaceKey = user.id`. Swapping providers later means changing one
+file (`lib/auth.ts`), not migrating anyone's library.
+
+### 6a. Create the project
+
+- [ ] Create a free project at https://supabase.com — you are using **Auth
+      only**, so the database and storage quotas are irrelevant.
+- [ ] Project Settings → API: copy the **Project URL** and the **anon public**
+      key into the app's `.env`:
+
+```
+EXPO_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=<anon key>
+```
+
+The anon key is a public client key — it is safe in the app bundle, and every
+table is protected by row-level security regardless (we create no tables).
+
+### 6b. Tell the Worker how to verify a session
+
+The Worker refuses a bearer token it cannot check, so give it the same project:
+
+```sh
+cd workers
+npx wrangler secret put SUPABASE_URL              --config ../wrangler.toml
+npx wrangler secret put SUPABASE_ANON_KEY         --config ../wrangler.toml
+npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY --config ../wrangler.toml
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` is **server-only** and exists solely so
+`DELETE /api/account` can erase a user. It must never appear in the app, the
+extension, or git. Without it, account deletion returns a clean "not configured"
+message instead of failing silently.
+
+### 6c. Sign in with Apple
+
+Required by App Review as soon as you offer any third-party sign-in.
+
+- [ ] Apple Developer portal → Certificates, Identifiers & Profiles → your App
+      ID → enable **Sign in with Apple**.
+- [ ] Supabase → Authentication → Providers → Apple → enable. For the *native*
+      iOS flow you only need the bundle id (`com.silo.app`) in the Client IDs
+      field — the app uses `expo-apple-authentication` with a nonce, not the web
+      OAuth flow, so **there is no 6-monthly secret to rotate**.
+- [ ] `app.json` already declares the `expo-apple-authentication` plugin;
+      re-run `npx expo prebuild -p ios --clean` after enabling the capability.
+
+### 6d. Google (optional)
+
+- [ ] Google Cloud console → OAuth consent screen → Credentials → create an
+      **OAuth client**.
+- [ ] Supabase → Authentication → Providers → Google → paste the client id and
+      secret.
+- [ ] Supabase → Authentication → URL Configuration → add the app's redirect:
+      `silo://auth/callback` (and the Expo Go form while developing).
+
+### 6e. Email codes
+
+- [ ] Supabase → Authentication → Providers → Email → enable, and **turn off
+      "Confirm email"** — Silo uses a six-digit OTP, not a magic link, so the
+      confirmation step would strand the user.
+- [ ] Free tier email is rate-limited and fine for testing. Before launch, set a
+      real SMTP provider under Authentication → SMTP Settings, or codes will
+      quietly stop arriving at volume.
+
+### 6f. Requiring accounts (only if you want to)
+
+Everything above leaves accounts **optional**. To make the public deployment
+account-only, set `REQUIRE_AUTH = "true"` in `wrangler.toml` and redeploy: the
+Worker then rejects sync without a valid session. The app itself still works
+offline and on-device — this gates *sync*, not the product.

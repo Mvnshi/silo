@@ -44,6 +44,7 @@ import { configureNotifications, routeForResponse, syncNotifications } from '@/l
 import { ToastProvider } from '@/components/ui/Toast';
 import TextPromptHost from '@/components/ui/TextPrompt';
 import ThemeProvider from '@/components/ThemeProvider';
+import AuthProvider from '@/components/AuthProvider';
 import { useThemeColors } from '@/lib/useTheme';
 
 // Hold the native splash until we know whether to show onboarding or the tabs,
@@ -169,7 +170,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <AppShell needsOnboarding={needsOnboarding} />
+          <AuthProvider>
+            <AppShell needsOnboarding={needsOnboarding} />
+          </AuthProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
@@ -205,6 +208,12 @@ function AppShell({ needsOnboarding }: { needsOnboarding: boolean }) {
               invisible. Settings is reached from "Your Silo" via its gear, so a
               push is also the more consistent transition. */}
           <Stack.Screen name="settings" />
+          {/* Presented, not pushed: signing in is a detour from wherever you
+              were, and the sheet makes "you can leave" obvious. */}
+          <Stack.Screen
+            name="sign-in"
+            options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+          />
         </Stack>
         {/* Backs promptForText() — replaces the iOS-only Alert.prompt. */}
         <TextPromptHost />

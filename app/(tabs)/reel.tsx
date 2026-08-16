@@ -41,7 +41,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { format } from 'date-fns';
 import StreamCard from '@/components/StreamCard';
 import EmptyState from '@/components/ui/EmptyState';
-import GlassCard from '@/components/ui/GlassCard';
+import Glass from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import { BRAND, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
 import { Item, Classification } from '@/lib/types';
@@ -363,8 +363,10 @@ export default function ReelScreen() {
                 haptic="selection"
                 onPress={() => handleCategorySelect(cat.value)}
               >
-                {/* Dark glass pill; active swaps the interior for a brand gradient fill. */}
-                <GlassCard tint="dark" intensity={35} radius={RADIUS.pill}>
+                {/* Dark glass pill; active swaps the interior for a brand gradient
+                    fill. `clear` because this strip floats over the media itself —
+                    the thin material keeps the frame behind it readable. */}
+                <Glass tint="dark" variant="clear" intensity={35} radius={RADIUS.pill}>
                   {active ? (
                     <LinearGradient
                       colors={GRADIENTS.brand}
@@ -383,14 +385,20 @@ export default function ReelScreen() {
                       <Text style={styles.categoryChipText}>{cat.label}</Text>
                     </View>
                   )}
-                </GlassCard>
+                </Glass>
               </PressableScale>
             );
           })}
         </ScrollView>
       </View>
 
-      {/* Schedule Modal - Floating Popup */}
+      {/* Schedule Modal - Floating Popup.
+          The sheet stays an opaque surface, deliberately. `animationType="fade"`
+          is a UIKit cross-dissolve, i.e. an alpha animation on the presented
+          view — glass inside it would blank out for the whole transition rather
+          than fade. Its interior is also pinned light (INK text, light-variant
+          pickers), so a material that follows the appearance would lose its
+          contrast in dark mode. */}
       <Modal
         visible={showScheduleModal}
         animationType="fade"
@@ -604,7 +612,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   categoryChip: {
-    // Glass surface + radius come from the GlassCard wrapper.
+    // Glass surface + radius come from the Glass wrapper.
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,

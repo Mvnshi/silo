@@ -39,6 +39,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import PressableScale from '@/components/ui/PressableScale';
 import { setOnboarded } from '@/lib/storage';
+import { isAuthConfigured } from '@/lib/auth';
 import { requestCalendarPermissions } from '@/lib/scheduler';
 import { enterHero, enterList, usePrefersReducedMotion } from '@/lib/motion';
 import {
@@ -261,10 +262,31 @@ export default function Onboarding() {
     }
   }
 
-  /** Persist the flag and enter the app (every exit path funnels through here). */
+  /**
+   * Enter the app without an account. Every "not now" path funnels through
+   * here, so skipping is always one tap and always lands somewhere useful.
+   */
   async function finish() {
     await setOnboarded();
     router.replace('/(tabs)');
+  }
+
+  /**
+   * Hand off to sign-in as the last beat, rather than dropping the user
+   * straight into the tabs.
+   *
+   * `first=1` tells that screen it owns the end of onboarding: whichever way it
+   * exits — signed in or "not now" — it marks onboarding complete and replaces
+   * to the tabs. So the flag is deliberately NOT set here; setting it early
+   * would let a back-swipe out of sign-in strand the user on a screen that is
+   * no longer in the stack.
+   *
+   * When accounts aren't configured in this build there is nothing to offer, so
+   * we skip the detour entirely instead of showing a dead screen.
+   */
+  async function continueToSignIn() {
+    if (!isAuthConfigured()) return finish();
+    router.replace('/sign-in?first=1');
   }
 
   function next() {
@@ -281,7 +303,7 @@ export default function Onboarding() {
     if (granted) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     }
-    finish();
+    continueToSignIn();
   }
 
   // The footer CTA hands off to the prime slide's own buttons: fade it out with
@@ -320,7 +342,7 @@ export default function Onboarding() {
             scrollX={scrollX}
             reduced={reduced}
             onAllow={allowCalendar}
-            onDecline={finish}
+            onDecline={continueToSignIn}
           />
         ))}
       </Animated.ScrollView>

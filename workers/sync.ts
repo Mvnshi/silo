@@ -11,6 +11,7 @@
  * modes") — only auth + where the Worker runs differ.
  */
 import { Env } from './types';
+import { authorizeSpace, verifyRequest } from './auth';
 
 interface PutChange {
   op: 'put';
@@ -100,9 +101,21 @@ export async function handleSync(
     return json(400, { error: 'Invalid JSON' }, cors);
   }
 
-  const spaceKey = (body.spaceKey || '').trim();
-  if (!SPACE_KEY_RE.test(spaceKey)) {
+  const requestedSpaceKey = (body.spaceKey || '').trim();
+  if (!SPACE_KEY_RE.test(requestedSpaceKey)) {
     return json(400, { error: 'Invalid spaceKey' }, cors);
+  }
+
+  // A caller may only touch a space they can prove is theirs. Signed in, that
+  // means their own user id; anonymous, it means a pairing code (which is
+  // itself the secret). See workers/auth.ts.
+  const outcome = await verifyRequest(request, env);
+  if (outcome.kind === 'error') {
+    return json(outcome.status, { error: outcome.message }, cors);
+  }
+  const spaceKey = authorizeSpace(outcome, requestedSpaceKey);
+  if (!spaceKey) {
+    return json(403, { error: 'That space belongs to another account' }, cors);
   }
 
   const since = Number.isFinite(body.since) ? Math.max(0, Math.floor(body.since as number)) : 0;

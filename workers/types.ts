@@ -36,6 +36,17 @@ export interface Env {
   // When 'true', /api/sync requires an account session (Mode 2 / public).
   // Default/unset = pairing-code spaces with no accounts (Mode 1 / self-host).
   REQUIRE_AUTH?: string;
+
+  // --- Accounts (optional; see workers/auth.ts) ---
+  // Identity provider used to verify a caller's bearer token. Only needed when
+  // accounts are in play: unset means pairing-code spaces only, and any request
+  // that arrives WITH a token is refused rather than trusted.
+  // SUPABASE_URL is safe in wrangler.toml; the anon key is a public client key
+  // but is set as a secret anyway so it isn't in git.
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
+  // Server-only key for deleting a user. Never ship this to a client.
+  SUPABASE_SERVICE_ROLE_KEY?: string;
 }
 
 /**

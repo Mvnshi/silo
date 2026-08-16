@@ -333,6 +333,13 @@ export interface SyncState {
   cursor: number;
   serverUrl: string | null;
   lastSyncAt: string | null;
+  /**
+   * The pairing code this device minted for itself, parked while an account
+   * space is active. Signing out restores it, so the un-synced device goes back
+   * to exactly the space it had rather than stranding its rows behind a new
+   * random key.
+   */
+  localSpaceKey?: string | null;
 }
 
 /** A propagating delete: keeps the conflict clock of the moment of deletion. */

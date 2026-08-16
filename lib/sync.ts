@@ -25,6 +25,7 @@ import {
   getTombstones,
   setSyncState,
 } from './storage';
+import { getAccessToken } from './auth';
 
 // Same env vars lib/api.ts reads — sync talks to the same Worker by default,
 // authenticated by the same shared client token.
@@ -77,6 +78,46 @@ function adaptRemoteItem(raw: RemoteItem): Item {
     item.type = 'screenshot';
   }
   return item;
+}
+
+/* ---------------------------------------------------------------------------
+ * Account spaces (SYNC.md "Mode 2")
+ *
+ * Signing in swaps the device's self-minted pairing code for the account id, so
+ * every device on that account lands in the same space with nothing to type.
+ * Signing out puts the original pairing code back — the local library is
+ * untouched either way; only the address it syncs to changes.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Point sync at the signed-in user's space. Idempotent: re-adopting the space
+ * already in use is a no-op, so this is safe to call on every session event.
+ *
+ * The cursor resets because a different space has a different server history —
+ * an initial full push follows, which the server merge is idempotent about.
+ */
+export async function adoptAccountSpace(accountId: string): Promise<void> {
+  const state = await getSyncState();
+  if (state.spaceKey === accountId) return;
+
+  await setSyncState({
+    // Park the pairing code (once) so signing out can restore it.
+    localSpaceKey: state.localSpaceKey ?? state.spaceKey ?? newSpaceKey(),
+    spaceKey: accountId,
+    cursor: 0,
+  });
+}
+
+/** Restore the device's own pairing code after signing out. */
+export async function releaseAccountSpace(): Promise<void> {
+  const state = await getSyncState();
+  if (!state.localSpaceKey) return; // never adopted an account space
+
+  await setSyncState({
+    spaceKey: state.localSpaceKey,
+    localSpaceKey: null,
+    cursor: 0,
+  });
 }
 
 /** Coalesce overlapping callers (foreground listener + manual tap) onto one round-trip. */
@@ -137,6 +178,12 @@ async function doSync(): Promise<SyncResult> {
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (CLIENT_TOKEN) headers['X-Silo-Client'] = CLIENT_TOKEN; // same gate as lib/api.ts
+
+  // When signed in, prove the space is ours. Without this a caller could name
+  // any account id as their spaceKey and read someone else's library — the
+  // Worker rejects a mismatch (and, in Mode 2, a missing token outright).
+  const accessToken = await getAccessToken();
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
   const response = await fetch(`${serverUrl}/api/sync`, {
     method: 'POST',

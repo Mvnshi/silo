@@ -8,6 +8,10 @@
  *
  * The title is optically centred (the left and right slots are equal-width),
  * so it stays centred whether or not a right-hand action is present.
+ *
+ * The solid bar is Liquid Glass, not a filled rectangle: it is chrome, and the
+ * page wash reading faintly through it is what separates it from the content.
+ * `transparent` is unchanged — hero screens still scroll artwork underneath.
  */
 import React from 'react';
 import { StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
@@ -15,6 +19,7 @@ import Animated from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Glass from './Glass';
 import PressableScale from './PressableScale';
 import { HIT_SLOP, MIN_TAP, SPACE, TYPE } from '@/lib/theme';
 import { useThemeColors } from '@/lib/useTheme';
@@ -69,12 +74,21 @@ export default function ScreenHeader({
       style={[
         styles.bar,
         { paddingTop: insets.top + SPACE.md },
-        transparent
-          ? styles.transparent
-          : [styles.solid, { backgroundColor: c.card, borderBottomColor: c.hairline }],
+        transparent ? styles.transparent : [styles.solid, { borderBottomColor: c.hairline }],
         style,
       ]}
     >
+      {/*
+        The bar's material, as a SIBLING behind the row rather than a wrapper
+        around it. Two reasons: glass clips its own children (so the hairline
+        has to stay on this outer view), and `titleStyle` fades the title node —
+        an opacity animation anywhere above a glass surface stops it rendering.
+        Keeping the glass off that ancestry keeps both working.
+      */}
+      {!transparent && (
+        <Glass variant="regular" bordered={false} radius={0} style={StyleSheet.absoluteFill} />
+      )}
+
       <View style={styles.slot}>
         {!hideBack && (
           <PressableScale
@@ -117,7 +131,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     paddingBottom: SPACE.md,
   },
-  // Colours (background + border) are applied at the call site from the palette.
+  // Border colour comes from the palette above; the fill is the glass sibling.
   solid: {
     borderBottomWidth: StyleSheet.hairlineWidth,
   },

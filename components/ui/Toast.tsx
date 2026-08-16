@@ -20,7 +20,7 @@ import Animated from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import GlassCard from './GlassCard';
+import Glass, { LIQUID_GLASS } from './Glass';
 import PressableScale from './PressableScale';
 import { BRAND, DURATION, HIT_SLOP, RADIUS, SHADOW, SPACE, STATUS, TYPE } from '@/lib/theme';
 import { useIsDark } from '@/lib/useTheme';
@@ -111,11 +111,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           accessibilityLiveRegion="polite"
         >
           {/* tint is pinned dark: the toast's ground is the toast, not the page. */}
-          <GlassCard
+          <Glass
             tint="dark"
             intensity={60}
             radius={RADIUS.lg}
-            style={[styles.card, isDark && styles.cardOnDark]}
+            style={[
+              // The slate wash is how the blur FALLBACK reads as a floating
+              // surface rather than a smudge. Liquid Glass's dark material
+              // already does that on its own, and a 55%-opaque fill laid over it
+              // would smother the effect — so the wash stays fallback-only.
+              !LIQUID_GLASS && styles.cardWash,
+              isDark && styles.cardOnDark,
+            ]}
           >
             <View style={styles.row}>
               <Ionicons name={TONE_ICON[tone]} size={19} color={TONE_COLOR[tone]} />
@@ -138,7 +145,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 </PressableScale>
               )}
             </View>
-          </GlassCard>
+          </Glass>
         </Animated.View>
       )}
     </ToastContext.Provider>
@@ -152,11 +159,11 @@ const styles = StyleSheet.create({
     right: SPACE.base,
     ...SHADOW.floating,
   },
-  card: {
+  cardWash: {
     backgroundColor: 'rgba(15, 23, 42, 0.55)',
   },
   // On a light page the dark card plus SHADOW.floating separate on their own.
-  // On the dark page neither does: the shadow vanishes and GlassCard's default
+  // On the dark page neither does: the shadow vanishes and Glass's default
   // 14%-white edge is too faint against near-black, so brighten just the rim.
   cardOnDark: {
     borderColor: 'rgba(255, 255, 255, 0.22)',

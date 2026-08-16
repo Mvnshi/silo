@@ -43,7 +43,7 @@ import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import GlassCard from '@/components/ui/GlassCard';
+import Glass, { GlassGroup } from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import { GRADIENTS, RADIUS, SHADOW, SPACE, TYPE } from '@/lib/theme';
 import { Item } from '@/lib/types';
@@ -194,12 +194,16 @@ function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }:
   /** The action rail — identical for embed and gradient cards. */
   function renderActions(extra?: React.ReactNode) {
     return (
-      <View style={[styles.actions, { bottom: insets.bottom + 92 }]}>
+      // A cluster of sibling controls, so it's grouped: the buttons lens as one
+      // shape rather than three unrelated blurs. The merge distance stays tight
+      // because each button's label sits in the gap below it — widen it and the
+      // glass smears across the text.
+      <GlassGroup spacing={SPACE.md} style={[styles.actions, { bottom: insets.bottom + 92 }]}>
         {extra}
         <RailButton icon="calendar" label="Schedule" onPress={() => onSchedule(item.id)} />
         <RailButton icon="checkmark-circle" label="Done" onPress={() => onComplete(item.id)} />
         <RailButton icon="archive" label="Archive" onPress={() => onArchive(item.id)} />
-      </View>
+      </GlassGroup>
     );
   }
 
@@ -482,9 +486,12 @@ function RailButton({
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <GlassCard tint="dark" radius={27} style={styles.actionGlass}>
+      {/* Pinned dark: the rail is always over media, whatever the appearance.
+          `clear` is the thin material, so the frame behind the rail stays
+          readable; `interactive` gives the button its own specular press. */}
+      <Glass tint="dark" variant="clear" interactive radius={27} style={styles.actionGlass}>
         <Ionicons name={icon} size={24} color="#fff" />
-      </GlassCard>
+      </Glass>
       <Text style={styles.actionLabel}>{label}</Text>
     </PressableScale>
   );
@@ -645,13 +652,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: SPACE.base,
   },
-  // 54px circle behind each rail icon (GlassCard supplies blur + hairline).
+  // 54px circle behind each rail icon (Glass supplies the material + hairline).
+  // No shadow: the surface clips to its own rounded bounds, so a shadow set here
+  // never escaped them — the rim and the bottom scrim do the separating.
   actionGlass: {
     width: 54,
     height: 54,
     alignItems: 'center',
     justifyContent: 'center',
-    ...SHADOW.raised,
   },
   actionLabel: {
     ...TYPE.caption,

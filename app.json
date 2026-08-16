@@ -16,7 +16,9 @@
       "bundleIdentifier": "com.silo.app",
       "appleTeamId": "CZWR4XCLQ7",
       "entitlements": {
-        "com.apple.security.application-groups": ["group.com.silo.app"]
+        "com.apple.security.application-groups": [
+          "group.com.silo.app"
+        ]
       },
       "infoPlist": {
         "NSCalendarsUsageDescription": "Silo needs calendar access to schedule content review sessions.",
@@ -61,11 +63,11 @@
       "expo-image-picker",
       "expo-media-library",
       "expo-location",
-      "@bacons/apple-targets"
+      "@bacons/apple-targets",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
     }
   }
 }
-

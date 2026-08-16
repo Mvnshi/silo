@@ -11,11 +11,12 @@
  * undoable — this sheet just dismisses.
  */
 import React, { useMemo } from 'react';
-import { Modal, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { Modal, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Glass from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import { celebrationHaptic } from '@/lib/haptics';
 import { classConfig } from '@/lib/classification';
@@ -65,81 +66,96 @@ export default function ItemActionSheet({ item, onClose, onChanged, onDelete }: 
 
   return (
     <Modal transparent visible animationType="none" onRequestClose={onClose}>
-      <Animated.View
-        entering={FadeIn.duration(DURATION.fast)}
-        exiting={FadeOut.duration(DURATION.instant)}
-        style={[styles.scrim, dyn.scrim]}
-      >
-        <PressableScale
-          haptic="none"
-          scaleTo={1}
-          containerStyle={StyleSheet.absoluteFill}
-          onPress={onClose}
-          accessibilityLabel="Close actions"
-        >
-          <View style={StyleSheet.absoluteFill} />
-        </PressableScale>
-
+      <View style={styles.root}>
+        {/* The scrim fades as a SIBLING of the sheet, never as its parent: any
+            opacity animation above a glass surface deletes it instead of fading
+            it. It still covers the full screen, so tapping anywhere closes. */}
         <Animated.View
-          entering={enterFromBottom(0, reduced)}
-          exiting={exitToBottom(reduced)}
-          style={[styles.sheet, dyn.sheet, { paddingBottom: insets.bottom + SPACE.base }]}
+          entering={FadeIn.duration(DURATION.fast)}
+          exiting={FadeOut.duration(DURATION.instant)}
+          style={[StyleSheet.absoluteFill, dyn.scrim]}
         >
-          <View style={[styles.grabber, dyn.grabber]} />
-
-          <View style={styles.header}>
-            <Text style={[styles.eyebrow, { color: eyebrowColor }]}>{cfg.label.toUpperCase()}</Text>
-            <Text style={[styles.title, dyn.title]} numberOfLines={2}>
-              {item.title}
-            </Text>
-          </View>
-
-          <Row
-            icon={isDone ? 'arrow-undo' : 'checkmark-circle'}
-            label={isDone ? 'Mark as not done' : 'I did this'}
-            onPress={() =>
-              // Through buildReview so a completion actually registers as a use
-              // (times_done / last_done_at) — that is the north-star metric.
-              mutate(
-                isDone
-                  ? { viewed: false, status: 'inbox', completed_at: undefined }
-                  : buildReview(item, 'good'),
-                !isDone
-              )
-            }
-          />
-          <Row
-            icon={item.bucketlist ? 'bookmark' : 'bookmark-outline'}
-            label={item.bucketlist ? 'Remove from bucket list' : 'Add to bucket list'}
-            onPress={() => mutate({ bucketlist: !item.bucketlist })}
-          />
-          <Row
-            icon="calendar-outline"
-            label={item.scheduled_date ? 'Reschedule' : 'Schedule it'}
-            onPress={() => {
-              onClose();
-              router.push(`/item/${item.id}?schedule=true`);
-            }}
-          />
-          <Row
-            icon="archive-outline"
-            label={item.archived ? 'Unarchive' : 'Tuck away in Archive'}
-            onPress={() => mutate({ archived: !item.archived })}
-          />
-
-          <View style={[styles.divider, dyn.divider]} />
-
-          <Row
-            icon="trash-outline"
-            label="Delete"
-            tone="danger"
-            onPress={() => {
-              onClose();
-              void onDelete(item);
-            }}
-          />
+          <PressableScale
+            haptic="none"
+            scaleTo={1}
+            containerStyle={StyleSheet.absoluteFill}
+            onPress={onClose}
+            accessibilityLabel="Close actions"
+          >
+            <View style={StyleSheet.absoluteFill} />
+          </PressableScale>
         </Animated.View>
-      </Animated.View>
+
+        {/* Glass can't cast a shadow from inside its own clipped bounds, so the
+            lift that separated the opaque sheet lives on this wrapper — which is
+            also the only thing that animates (transform only). */}
+        <Animated.View entering={enterFromBottom(0, reduced)} exiting={exitToBottom(reduced)} style={styles.sheetLift}>
+          <Glass
+            variant="regular"
+            radius={RADIUS.xxl}
+            // The rim is drawn per-edge below — only the top edge is on screen.
+            bordered={false}
+            tintColor={dyn.sheetTint}
+            style={[styles.sheet, dyn.sheet, { paddingBottom: insets.bottom + SPACE.base }]}
+          >
+            <View style={[styles.grabber, dyn.grabber]} />
+
+            <View style={styles.header}>
+              <Text style={[styles.eyebrow, { color: eyebrowColor }]}>
+                {cfg.label.toUpperCase()}
+              </Text>
+              <Text style={[styles.title, dyn.title]} numberOfLines={2}>
+                {item.title}
+              </Text>
+            </View>
+
+            <Row
+              icon={isDone ? 'arrow-undo' : 'checkmark-circle'}
+              label={isDone ? 'Mark as not done' : 'I did this'}
+              onPress={() =>
+                // Through buildReview so a completion actually registers as a use
+                // (times_done / last_done_at) — that is the north-star metric.
+                mutate(
+                  isDone
+                    ? { viewed: false, status: 'inbox', completed_at: undefined }
+                    : buildReview(item, 'good'),
+                  !isDone
+                )
+              }
+            />
+            <Row
+              icon={item.bucketlist ? 'bookmark' : 'bookmark-outline'}
+              label={item.bucketlist ? 'Remove from bucket list' : 'Add to bucket list'}
+              onPress={() => mutate({ bucketlist: !item.bucketlist })}
+            />
+            <Row
+              icon="calendar-outline"
+              label={item.scheduled_date ? 'Reschedule' : 'Schedule it'}
+              onPress={() => {
+                onClose();
+                router.push(`/item/${item.id}?schedule=true`);
+              }}
+            />
+            <Row
+              icon="archive-outline"
+              label={item.archived ? 'Unarchive' : 'Tuck away in Archive'}
+              onPress={() => mutate({ archived: !item.archived })}
+            />
+
+            <View style={[styles.divider, dyn.divider]} />
+
+            <Row
+              icon="trash-outline"
+              label="Delete"
+              tone="danger"
+              onPress={() => {
+                onClose();
+                void onDelete(item);
+              }}
+            />
+          </Glass>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -176,15 +192,18 @@ function Row({
  * is rebuilt when the appearance flips and would otherwise leak stylesheet ids.
  */
 function makeDynamicStyles(c: ThemeColors) {
-  // SHADOW.floating is what separates the sheet from the scrim; over a dark
-  // scrim there is nothing left for it to darken, so the sheet gets a lit edge.
-  const sheetEdge: ViewStyle =
-    c.appearance === 'dark'
-      ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline }
-      : {};
   return {
     scrim: { backgroundColor: c.scrim },
-    sheet: { backgroundColor: c.card, ...sheetEdge },
+    // No fill: the glass IS the surface. What is left to draw is the rim on the
+    // one edge you can see — the top — which is what separates the sheet from
+    // whatever it is floating over, in both appearances.
+    sheet: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline },
+    // Glass borrows its colour from what is behind it, and on light that is a
+    // pale violet page — body text on bare material drifts under AA. `2e` ≈ 18%
+    // of the palette's own card colour: enough to hold text, far too little to
+    // read as a fill. (Both palettes state `card` as a 6-digit hex, so the alpha
+    // suffix is all this needs.)
+    sheetTint: `${c.card}2e`,
     grabber: { backgroundColor: c.field },
     title: { color: c.text },
     divider: { backgroundColor: c.hairline },
@@ -193,16 +212,22 @@ function makeDynamicStyles(c: ThemeColors) {
 
 // Colour for every rule below that needs one lives in `makeDynamicStyles`.
 const styles = StyleSheet.create({
-  scrim: {
+  root: {
     flex: 1,
     justifyContent: 'flex-end',
+  },
+  sheetLift: {
+    ...SHADOW.floating,
   },
   sheet: {
     borderTopLeftRadius: RADIUS.xxl,
     borderTopRightRadius: RADIUS.xxl,
+    // Flush with the bottom of the screen, so the corners the `radius` prop
+    // rounds by default get squared off again.
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     paddingHorizontal: SPACE.sm,
     paddingTop: SPACE.md,
-    ...SHADOW.floating,
   },
   grabber: {
     alignSelf: 'center',

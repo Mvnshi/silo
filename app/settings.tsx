@@ -47,6 +47,8 @@ import {
   DEFAULT_SETTINGS,
 } from '@/lib/storage';
 import { syncNow, newSpaceKey } from '@/lib/sync';
+import { useAuth } from '@/components/AuthProvider';
+import { deleteAccount, displayName, isAuthConfigured } from '@/lib/auth';
 import {
   cancelSiloNotifications,
   requestNotificationPermission,
@@ -80,7 +82,7 @@ const SPACE_KEY_RE = /^[A-Za-z0-9_-]{6,128}$/;
  * Entrance order — every block on this screen animates in with the same
  * stagger, so the indices have to be declared in one place to stay in sync.
  */
-const ORDER = { profile: 0, stats: 1, preferences: 2, devices: 3, data: 4, about: 5 } as const;
+const ORDER = { profile: 0, stats: 1, account: 2, preferences: 3, devices: 4, data: 5, about: 6 } as const;
 
 /** The three things the Appearance picker can be set to, in segment order. */
 const APPEARANCE_OPTIONS: { value: AppearancePreference; label: string }[] = [
@@ -275,14 +277,20 @@ export default function Settings() {
     () => ({
       brand: c.appearance === 'dark' ? BRAND[400] : BRAND[500],
       accent: c.appearance === 'dark' ? ACCENT[400] : ACCENT[500],
+      // Neutral + destructive rows. Both must stay 6-digit hex — the icon wash
+      // is built by appending an alpha pair.
+      ink: c.textSecondary,
+      danger: c.danger,
     }),
-    [c.appearance]
+    [c.appearance, c.textSecondary, c.danger]
   );
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [stats, setStats] = useState({ items: 0, stacks: 0, since: '' });
   // Until the first storage read resolves, the counts are meaningless zeroes —
   // show Skeletons instead of "0 Items".
   const [ready, setReady] = useState(false);
+  const { user, configured: authConfigured, signOut } = useAuth();
+  const [accountBusy, setAccountBusy] = useState(false);
 
   // --- Sync section state (S1) ---
   const [sync, setSync] = useState<SyncState>({
@@ -465,6 +473,59 @@ export default function Settings() {
     await syncNotifications(items, { ...current, notifications_enabled: true });
   };
 
+  /**
+   * Sign out. The library is local, so nothing is lost — the copy says so,
+   * because "sign out" in most apps means "lose your stuff".
+   */
+  function handleSignOut() {
+    Alert.alert('Sign out?', 'Your saves stay on this device. You can sign back in any time.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: async () => {
+          await signOut();
+          toast.show({ message: 'Signed out', tone: 'neutral' });
+        },
+      },
+    ]);
+  }
+
+  /**
+   * Delete the account. Genuinely irreversible and server-side, so this keeps a
+   * blocking confirm — the Toast+Undo pattern the rest of the app uses can't
+   * undo it. Required in-app by App Store Guideline 5.1.1(v).
+   */
+  function handleDeleteAccount() {
+    Alert.alert(
+      'Delete your account?',
+      'This erases your account and everything synced to it. Saves already on this device are kept — delete those separately from “Delete all data”.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete account',
+          style: 'destructive',
+          onPress: async () => {
+            setAccountBusy(true);
+            try {
+              const result = await deleteAccount(
+                sync.serverUrl || ENV_BASE_URL,
+                process.env.EXPO_PUBLIC_CLIENT_TOKEN || ''
+              );
+              if (result.ok) {
+                toast.show({ message: 'Account deleted', tone: 'success' });
+              } else {
+                toast.show({ message: result.message, tone: 'danger' });
+              }
+            } finally {
+              setAccountBusy(false);
+            }
+          },
+        },
+      ]
+    );
+  }
+
   const adjustDuration = (delta: number) => {
     const next = Math.min(120, Math.max(5, settings.default_duration + delta));
     update({ default_duration: next });
@@ -572,6 +633,49 @@ export default function Settings() {
         </Animated.View>
 
         {/* Preferences */}
+        {/* Account — only when this build has an identity provider. Showing a
+            sign-in row that can't work is worse than showing nothing. */}
+        {authConfigured && (
+          <Section title="Account" index={ORDER.account}>
+            {user ? (
+              <>
+                <Row
+                  icon="person-circle"
+                  tint={tint.brand}
+                  label={displayName(user)}
+                  sub={user.email ?? 'Signed in'}
+                />
+                <Row
+                  icon="log-out-outline"
+                  tint={tint.ink}
+                  label="Sign out"
+                  sub="Your saves stay on this device"
+                  onPress={handleSignOut}
+                />
+                <Row
+                  icon="trash-outline"
+                  tint={tint.danger}
+                  label="Delete account"
+                  sub="Erases your account and everything synced to it"
+                  danger
+                  divider={false}
+                  onPress={handleDeleteAccount}
+                  right={accountBusy ? <ActivityIndicator color={c.danger} /> : undefined}
+                />
+              </>
+            ) : (
+              <Row
+                icon="cloud-outline"
+                tint={tint.brand}
+                label="Sign in"
+                sub="Sync your saves across devices and restore after a reinstall"
+                divider={false}
+                onPress={() => router.push('/sign-in')}
+              />
+            )}
+          </Section>
+        )}
+
         <Section title="Preferences" index={ORDER.preferences}>
           <AppearanceRow tint={tint.brand} />
           <Row

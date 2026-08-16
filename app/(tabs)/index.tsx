@@ -46,7 +46,7 @@ import Animated, {
 import CompactCard from '@/components/CompactCard';
 import ItemCardPro from '@/components/ItemCardPro';
 import EmptyState from '@/components/ui/EmptyState';
-import GlassCard from '@/components/ui/GlassCard';
+import Glass, { LIQUID_GLASS } from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import Skeleton from '@/components/ui/Skeleton';
 import ItemActionSheet from '@/components/ItemActionSheet';
@@ -589,9 +589,12 @@ export default function StacksScreen() {
     <View style={styles.container}>
       <LinearGradient colors={[...c.pageGradient]} style={StyleSheet.absoluteFill} />
 
-      {/* Sticky search + stacks bar */}
+      {/* Sticky search + stacks bar.
+          Two layers on purpose: the outer view carries the brand glow, the
+          inner one clips (rounded bottom corners + the glass material), and a
+          layer that masks its own bounds can't cast a shadow out of them. */}
       <View
-        style={[styles.stickyHeader, dyn.stickyHeader, { paddingTop: insets.top + SPACE.sm }]}
+        style={styles.stickyShadow}
         onLayout={(e) => {
           // Guarded: an unconditional setState here re-renders every row on
           // every layout pass, which is what makes the memoized cards expensive.
@@ -599,145 +602,155 @@ export default function StacksScreen() {
           setHeaderHeight((h) => (Math.abs(h - next) > 1 ? next : h));
         }}
       >
-        <LinearGradient colors={[...c.headerGradient]} style={StyleSheet.absoluteFill} />
-
-        {/* Title + select + settings */}
-        <View style={styles.titleRow}>
-          <Text style={[styles.screenTitle, dyn.screenTitle]} accessibilityRole="header">
-            Stacks
-          </Text>
-          <View style={styles.titleActions}>
-            <PressableScale
-              haptic="medium"
-              scaleTo={0.92}
-              onPress={() => (selectMode ? exitSelect() : setSelectMode(true))}
-              accessibilityLabel={selectMode ? 'Cancel selection' : 'Select items'}
-            >
-              <Text style={[styles.selectAction, dyn.selectAction]}>
-                {selectMode ? 'Cancel' : 'Select'}
-              </Text>
-            </PressableScale>
-            <PressableScale
-              haptic="light"
-              scaleTo={0.92}
-              onPress={() => router.push('/stats')}
-              accessibilityLabel="Your Silo — stats and settings"
-            >
-              <LinearGradient
-                colors={[...GRADIENTS.brand]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.avatar}
-              >
-                <Ionicons name="person" size={19} color="#fff" />
-              </LinearGradient>
-            </PressableScale>
-          </View>
-        </View>
-
-        {/* Search */}
-        <View style={[styles.searchContainer, dyn.searchContainer]}>
-          <Ionicons name="search" size={20} color={c.decorative} />
-          <TextInput
-            style={[styles.searchInput, dyn.searchInput]}
-            placeholder="Search your saves"
-            placeholderTextColor={c.textPlaceholder}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="search"
-            clearButtonMode="never"
-            accessibilityLabel="Search your saves"
+        <View style={[styles.stickyHeader, dyn.stickyHeader, { paddingTop: insets.top + SPACE.sm }]}>
+          {/* Real material first, violet wash ON TOP of it: the header gradient
+              is opaque, so behind the glass it would just be a solid bar with
+              nothing to refract. At low alpha over the glass the brand identity
+              survives and the material still reads. */}
+          <Glass variant="regular" bordered={false} radius={0} style={StyleSheet.absoluteFill} />
+          <LinearGradient
+            colors={[...c.headerGradient]}
+            style={[StyleSheet.absoluteFill, styles.headerWash]}
           />
-          {isAiSearching && <ThinkingSparkle reduced={reduced} />}
-          {searchQuery.length > 0 && (
-            <PressableScale
-              haptic="light"
-              scaleTo={0.9}
-              hitSlop={HIT_SLOP}
-              onPress={() => setSearchQuery('')}
-              accessibilityLabel="Clear search"
-            >
-              <Ionicons name="close-circle" size={20} color={c.decorative} />
-            </PressableScale>
-          )}
-          <PressableScale
-            haptic="selection"
-            scaleTo={0.9}
-            hitSlop={HIT_SLOP}
-            style={styles.viewModeButton}
-            onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
-            accessibilityLabel={viewMode === 'list' ? 'Switch to grid view' : 'Switch to list view'}
-          >
-            <Ionicons name={viewMode === 'list' ? 'grid' : 'list'} size={20} color={c.brand} />
-          </PressableScale>
-        </View>
 
-        {/* Stack filter chips */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.stacksContainer}
-          keyboardShouldPersistTaps="handled"
-        >
-          <PressableScale
-            haptic="selection"
-            selected={!selectedStackId}
-            // `stackChipActive` last: the brand fill must win over the dynamic
-            // card/hairline pair that dresses the resting chip.
-            style={[styles.stackChip, dyn.stackChip, !selectedStackId && styles.stackChipActive]}
-            onPress={() => setSelectedStackId(null)}
-            accessibilityLabel="All stacks"
-          >
-            <Ionicons name="apps" size={16} color={!selectedStackId ? '#fff' : c.textSecondary} />
-            <Text
-              style={[
-                styles.stackChipText,
-                dyn.stackChipText,
-                !selectedStackId && styles.stackChipTextActive,
-              ]}
-            >
-              All
+          {/* Title + select + settings */}
+          <View style={styles.titleRow}>
+            <Text style={[styles.screenTitle, dyn.screenTitle]} accessibilityRole="header">
+              Stacks
             </Text>
-          </PressableScale>
-
-          {stacks.map((stack) => {
-            const active = selectedStackId === stack.id;
-            return (
+            <View style={styles.titleActions}>
               <PressableScale
-                key={stack.id}
-                haptic="selection"
-                selected={active}
-                style={[styles.stackChip, dyn.stackChip, active && styles.stackChipActive]}
-                onPress={() => setSelectedStackId(stack.id)}
-                onLongPress={() => handleStackLongPress(stack.id)}
-                accessibilityLabel={stack.name}
+                haptic="medium"
+                scaleTo={0.92}
+                onPress={() => (selectMode ? exitSelect() : setSelectMode(true))}
+                accessibilityLabel={selectMode ? 'Cancel selection' : 'Select items'}
               >
-                <View style={[styles.stackDot, { backgroundColor: stack.color }]} />
-                <Text
-                  style={[
-                    styles.stackChipText,
-                    dyn.stackChipText,
-                    active && styles.stackChipTextActive,
-                  ]}
-                >
-                  {stack.name}
+                <Text style={[styles.selectAction, dyn.selectAction]}>
+                  {selectMode ? 'Cancel' : 'Select'}
                 </Text>
               </PressableScale>
-            );
-          })}
+              <PressableScale
+                haptic="light"
+                scaleTo={0.92}
+                onPress={() => router.push('/stats')}
+                accessibilityLabel="Your Silo — stats and settings"
+              >
+                <LinearGradient
+                  colors={[...GRADIENTS.brand]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.avatar}
+                >
+                  <Ionicons name="person" size={19} color="#fff" />
+                </LinearGradient>
+              </PressableScale>
+            </View>
+          </View>
 
-          <PressableScale
-            haptic="light"
-            style={[styles.createStackButton, dyn.createStackButton]}
-            onPress={handleCreateStack}
-            accessibilityLabel="Create a new stack"
+          {/* Search */}
+          <View style={[styles.searchContainer, dyn.searchContainer]}>
+            <Ionicons name="search" size={20} color={c.decorative} />
+            <TextInput
+              style={[styles.searchInput, dyn.searchInput]}
+              placeholder="Search your saves"
+              placeholderTextColor={c.textPlaceholder}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              clearButtonMode="never"
+              accessibilityLabel="Search your saves"
+            />
+            {isAiSearching && <ThinkingSparkle reduced={reduced} />}
+            {searchQuery.length > 0 && (
+              <PressableScale
+                haptic="light"
+                scaleTo={0.9}
+                hitSlop={HIT_SLOP}
+                onPress={() => setSearchQuery('')}
+                accessibilityLabel="Clear search"
+              >
+                <Ionicons name="close-circle" size={20} color={c.decorative} />
+              </PressableScale>
+            )}
+            <PressableScale
+              haptic="selection"
+              scaleTo={0.9}
+              hitSlop={HIT_SLOP}
+              style={styles.viewModeButton}
+              onPress={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
+              accessibilityLabel={viewMode === 'list' ? 'Switch to grid view' : 'Switch to list view'}
+            >
+              <Ionicons name={viewMode === 'list' ? 'grid' : 'list'} size={20} color={c.brand} />
+            </PressableScale>
+          </View>
+
+          {/* Stack filter chips */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.stacksContainer}
+            keyboardShouldPersistTaps="handled"
           >
-            <Ionicons name="add" size={16} color={c.brand} />
-            <Text style={[styles.createStackText, dyn.createStackText]}>New stack</Text>
-          </PressableScale>
-        </ScrollView>
+            <PressableScale
+              haptic="selection"
+              selected={!selectedStackId}
+              // `stackChipActive` last: the brand fill must win over the dynamic
+              // card/hairline pair that dresses the resting chip.
+              style={[styles.stackChip, dyn.stackChip, !selectedStackId && styles.stackChipActive]}
+              onPress={() => setSelectedStackId(null)}
+              accessibilityLabel="All stacks"
+            >
+              <Ionicons name="apps" size={16} color={!selectedStackId ? '#fff' : c.textSecondary} />
+              <Text
+                style={[
+                  styles.stackChipText,
+                  dyn.stackChipText,
+                  !selectedStackId && styles.stackChipTextActive,
+                ]}
+              >
+                All
+              </Text>
+            </PressableScale>
+
+            {stacks.map((stack) => {
+              const active = selectedStackId === stack.id;
+              return (
+                <PressableScale
+                  key={stack.id}
+                  haptic="selection"
+                  selected={active}
+                  style={[styles.stackChip, dyn.stackChip, active && styles.stackChipActive]}
+                  onPress={() => setSelectedStackId(stack.id)}
+                  onLongPress={() => handleStackLongPress(stack.id)}
+                  accessibilityLabel={stack.name}
+                >
+                  <View style={[styles.stackDot, { backgroundColor: stack.color }]} />
+                  <Text
+                    style={[
+                      styles.stackChipText,
+                      dyn.stackChipText,
+                      active && styles.stackChipTextActive,
+                    ]}
+                  >
+                    {stack.name}
+                  </Text>
+                </PressableScale>
+              );
+            })}
+
+            <PressableScale
+              haptic="light"
+              style={[styles.createStackButton, dyn.createStackButton]}
+              onPress={handleCreateStack}
+              accessibilityLabel="Create a new stack"
+            >
+              <Ionicons name="add" size={16} color={c.brand} />
+              <Text style={[styles.createStackText, dyn.createStackText]}>New stack</Text>
+            </PressableScale>
+          </ScrollView>
+        </View>
       </View>
 
       {loading ? (
@@ -791,10 +804,15 @@ export default function StacksScreen() {
       {selectMode && (
         <Animated.View
           style={[styles.bulkBar, { bottom: insets.bottom + 90 }]}
-          entering={enterFromBottom(0, reduced)}
-          exiting={exitToBottom(reduced)}
+          // Both presets are transform-based (SlideIn/OutDown) — deliberately,
+          // because opacity anywhere above a glass surface stops the effect
+          // rendering. Their Reduce Motion fallback IS a cross-fade, so under
+          // real Liquid Glass we take an instant swap over a bar that never
+          // paints; the blur fallback fades fine and keeps it.
+          entering={reduced && LIQUID_GLASS ? undefined : enterFromBottom(0, reduced)}
+          exiting={reduced && LIQUID_GLASS ? undefined : exitToBottom(reduced)}
         >
-          <GlassCard tint={c.glassTint} intensity={55} radius={RADIUS.xl}>
+          <Glass variant="regular" intensity={55} radius={RADIUS.xl}>
             <View style={styles.bulkBarRow}>
               <Text style={[styles.bulkCount, dyn.bulkCount]}>
                 {bulkBusy ? 'Working…' : `${selectedIds.size} selected`}
@@ -820,7 +838,7 @@ export default function StacksScreen() {
                 <Text style={[styles.bulkActionText, { color: c.danger }]}>Delete</Text>
               </PressableScale>
             </View>
-          </GlassCard>
+          </Glass>
         </Animated.View>
       )}
 
@@ -894,18 +912,27 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  stickyHeader: {
+  // Placement + the brand glow live out here, above the clip: `overflow:
+  // hidden` masks the layer to its bounds, and a masked layer has no shadow.
+  stickyShadow: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     zIndex: 10,
+    ...SHADOW.brandCard,
+  },
+  stickyHeader: {
     paddingHorizontal: SPACE.base,
     paddingBottom: 14,
     borderBottomLeftRadius: RADIUS.xl,
     borderBottomRightRadius: RADIUS.xl,
     overflow: 'hidden',
-    ...SHADOW.brandCard,
+  },
+  // The violet wash, thinned so the glass under it still refracts the page.
+  // Static opacity on a SIBLING of the glass — never on the glass or above it.
+  headerWash: {
+    opacity: 0.45,
   },
   titleRow: {
     flexDirection: 'row',
