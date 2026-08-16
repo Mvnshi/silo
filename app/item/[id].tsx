@@ -33,7 +33,6 @@ import {
   Platform,
   TextInput,
   KeyboardAvoidingView,
-  type ViewStyle,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -67,6 +66,7 @@ import PressableScale from '@/components/ui/PressableScale';
 import ScreenHeader from '@/components/ui/ScreenHeader';
 import EmptyState from '@/components/ui/EmptyState';
 import Skeleton from '@/components/ui/Skeleton';
+import Glass, { GlassGroup } from '@/components/ui/Glass';
 import { useToast } from '@/components/ui/Toast';
 import {
   BRAND,
@@ -647,52 +647,72 @@ export default function ItemDetailScreen() {
             )
           )}
 
-          {/* Audio Player */}
+          {/* Audio Player — a control, so it takes the material and the
+              specular press that goes with it. */}
           {item.audio_url && (
             <PressableScale
               haptic="light"
-              style={[styles.audioPlayer, dyn.card]}
+              containerStyle={styles.cardLift}
               onPress={toggleAudio}
               accessibilityLabel={isPlaying ? 'Pause narration' : 'Play narration'}
             >
-              <Ionicons
-                name={isPlaying ? 'pause-circle' : 'play-circle'}
-                size={48}
-                color={c.brand}
-              />
-              <Text style={[styles.audioText, dyn.audioText]}>
-                {isPlaying ? 'Pause narration' : 'Play narration'}
-              </Text>
+              <Glass
+                interactive
+                variant="regular"
+                radius={RADIUS.lg}
+                bordered={false}
+                tintColor={dyn.cardTint}
+                style={[styles.audioPlayer, dyn.cardEdge]}
+              >
+                <Ionicons
+                  name={isPlaying ? 'pause-circle' : 'play-circle'}
+                  size={48}
+                  color={c.brand}
+                />
+                <Text style={[styles.audioText, dyn.audioText]}>
+                  {isPlaying ? 'Pause narration' : 'Play narration'}
+                </Text>
+              </Glass>
             </PressableScale>
           )}
 
-          {/* Metadata */}
-          <View style={[styles.metadata, dyn.card]}>
-            {item.duration && (
-              <View style={styles.metadataItem}>
-                <Ionicons name="time-outline" size={20} color={c.decorative} />
-                <Text style={[styles.metadataText, dyn.metadataText]}>{item.duration} min</Text>
-              </View>
-            )}
+          {/* Metadata — short labelled lines, never a block of prose, so the
+              material costs it nothing. The link row inside stays a plain row:
+              a second material stacked on this one reads as mud. */}
+          <View style={styles.cardLift}>
+            <Glass
+              variant="regular"
+              radius={RADIUS.lg}
+              bordered={false}
+              tintColor={dyn.cardTint}
+              style={[styles.metadata, dyn.cardEdge]}
+            >
+              {item.duration && (
+                <View style={styles.metadataItem}>
+                  <Ionicons name="time-outline" size={20} color={c.decorative} />
+                  <Text style={[styles.metadataText, dyn.metadataText]}>{item.duration} min</Text>
+                </View>
+              )}
 
-            {item.url && (
-              <PressableScale
-                haptic="light"
-                style={styles.metadataItem}
-                onPress={openUrl}
-                accessibilityLabel="Open link in browser"
-              >
-                <Ionicons name="link-outline" size={20} color={c.brand} />
-                <Text style={[styles.metadataText, styles.link, dyn.link]}>Open link</Text>
-              </PressableScale>
-            )}
+              {item.url && (
+                <PressableScale
+                  haptic="light"
+                  style={styles.metadataItem}
+                  onPress={openUrl}
+                  accessibilityLabel="Open link in browser"
+                >
+                  <Ionicons name="link-outline" size={20} color={c.brand} />
+                  <Text style={[styles.metadataText, styles.link, dyn.link]}>Open link</Text>
+                </PressableScale>
+              )}
 
-            {item.place_name && (
-              <View style={styles.metadataItem}>
-                <Ionicons name="location-outline" size={20} color={c.decorative} />
-                <Text style={[styles.metadataText, dyn.metadataText]}>{item.place_name}</Text>
-              </View>
-            )}
+              {item.place_name && (
+                <View style={styles.metadataItem}>
+                  <Ionicons name="location-outline" size={20} color={c.decorative} />
+                  <Text style={[styles.metadataText, dyn.metadataText]}>{item.place_name}</Text>
+                </View>
+              )}
+            </Glass>
           </View>
 
           {/* Tags */}
@@ -830,224 +850,279 @@ export default function ItemDetailScreen() {
             )}
           </View>
 
-          {/* Scheduled Info */}
+          {/* Scheduled Info — a two-line status readout, so it takes the
+              material like the metadata card above it. */}
           {item.scheduled_date && (
-            <View style={[styles.scheduledSection, dyn.card]}>
-              <Ionicons name="calendar" size={24} color={c.brand} />
-              <View style={styles.scheduledInfo}>
-                <Text style={[styles.scheduledLabel, dyn.scheduledLabel]}>Scheduled</Text>
-                <Text style={[styles.scheduledDate, dyn.scheduledDate]}>
-                  {format(parseLocalDate(item.scheduled_date), 'MMMM d, yyyy')}
-                  {item.scheduled_time && ` at ${item.scheduled_time}`}
-                </Text>
-              </View>
+            <View style={styles.cardLift}>
+              <Glass
+                variant="regular"
+                radius={RADIUS.lg}
+                bordered={false}
+                tintColor={dyn.cardTint}
+                style={[styles.scheduledSection, dyn.cardEdge]}
+              >
+                <Ionicons name="calendar" size={24} color={c.brand} />
+                <View style={styles.scheduledInfo}>
+                  <Text style={[styles.scheduledLabel, dyn.scheduledLabel]}>Scheduled</Text>
+                  <Text style={[styles.scheduledDate, dyn.scheduledDate]}>
+                    {format(parseLocalDate(item.scheduled_date), 'MMMM d, yyyy')}
+                    {item.scheduled_time && ` at ${item.scheduled_time}`}
+                  </Text>
+                </View>
+              </Glass>
             </View>
           )}
 
-          {/* Actions */}
-          <View style={styles.actions}>
+          {/* Actions — one lensed cluster of three controls, not three
+              unrelated blurs. Each is `interactive`, so the material responds
+              to the touch the way Apple's own controls do. */}
+          <GlassGroup spacing={SPACE.md} style={styles.actions}>
             <PressableScale
               haptic="light"
               containerStyle={styles.actionWrap}
-              style={[styles.actionButton, dyn.card]}
               onPress={handleSchedulePress}
               accessibilityLabel={item.scheduled_date ? 'Reschedule this save' : 'Schedule this save'}
             >
-              <Ionicons name="calendar-outline" size={24} color={c.brand} />
-              <Text style={[styles.actionText, dyn.scheduleText]}>
-                {item.scheduled_date ? 'Reschedule' : 'Schedule'}
-              </Text>
+              <Glass
+                interactive
+                variant="regular"
+                radius={RADIUS.lg}
+                bordered={false}
+                tintColor={dyn.cardTint}
+                style={[styles.actionButton, dyn.cardEdge]}
+              >
+                <Ionicons name="calendar-outline" size={24} color={c.brand} />
+                <Text style={[styles.actionText, dyn.scheduleText]}>
+                  {item.scheduled_date ? 'Reschedule' : 'Schedule'}
+                </Text>
+              </Glass>
             </PressableScale>
 
             <PressableScale
               haptic="light"
               containerStyle={styles.actionWrap}
-              style={[styles.actionButton, dyn.card]}
               onPress={handleArchive}
               accessibilityLabel="Archive this save"
             >
-              <Ionicons name="archive-outline" size={24} color={c.textSecondary} />
-              <Text style={[styles.actionText, dyn.actionText]}>Archive</Text>
+              <Glass
+                interactive
+                variant="regular"
+                radius={RADIUS.lg}
+                bordered={false}
+                tintColor={dyn.cardTint}
+                style={[styles.actionButton, dyn.cardEdge]}
+              >
+                <Ionicons name="archive-outline" size={24} color={c.textSecondary} />
+                <Text style={[styles.actionText, dyn.actionText]}>Archive</Text>
+              </Glass>
             </PressableScale>
 
             <PressableScale
               haptic="light"
               containerStyle={styles.actionWrap}
-              style={[styles.actionButton, dyn.card]}
               onPress={handleDelete}
               accessibilityLabel="Delete this save"
             >
-              <Ionicons name="trash-outline" size={24} color={c.danger} />
-              <Text style={[styles.actionText, dyn.deleteText]}>Delete</Text>
+              {/* The danger tint keeps Delete legible as the destructive one
+                  now that it has no fill of its own to carry that. */}
+              <Glass
+                interactive
+                variant="regular"
+                radius={RADIUS.lg}
+                bordered={false}
+                tintColor={dyn.dangerTint}
+                style={[styles.actionButton, dyn.cardEdge]}
+              >
+                <Ionicons name="trash-outline" size={24} color={c.danger} />
+                <Text style={[styles.actionText, dyn.deleteText]}>Delete</Text>
+              </Glass>
             </PressableScale>
-          </View>
+          </GlassGroup>
         </Animated.ScrollView>
 
         {/* Schedule Modal */}
         <Modal
           visible={showScheduleModal}
+          /*
+           * Kept native, and kept on `slide`. The presentation this animates is
+           * cover-vertical — a TRANSFORM, never an alpha — so the glass sheet
+           * below rides it intact, and it is the only path that keeps the
+           * dismissal animated: RN's Modal holds its children mounted through a
+           * native dismissal, but under `animationType="none"` it tears the host
+           * view down at once and a Reanimated `exiting` never gets to play.
+           */
           animationType="slide"
           transparent={true}
           onRequestClose={() => setShowScheduleModal(false)}
         >
-          <View style={[styles.modalOverlay, dyn.modalOverlay]}>
-            <View
-              style={[
-                styles.modalContent,
-                dyn.modalContent,
-                { paddingBottom: insets.bottom + SPACE.xxl },
-              ]}
-            >
-              <View style={[styles.modalHeader, dyn.modalHeader]}>
-                <Text style={[styles.modalTitle, dyn.modalTitle]}>Schedule Item</Text>
-                <PressableScale
-                  haptic="light"
-                  onPress={() => setShowScheduleModal(false)}
-                  style={styles.modalCloseButton}
-                  accessibilityLabel="Close scheduler"
-                >
-                  <Ionicons name="close" size={24} color={c.textSecondary} />
-                </PressableScale>
-              </View>
-
-              <View style={styles.modalBody}>
-                {/* Date Picker */}
-                <PressableScale
-                  haptic="light"
-                  style={[styles.pickerButton, dyn.pickerButton]}
-                  onPress={() => setShowDatePicker(true)}
-                  accessibilityLabel={`Date, ${format(scheduleDate, 'MMMM d, yyyy')}`}
-                >
-                  <Ionicons name="calendar-outline" size={24} color={c.brand} />
-                  <View style={styles.pickerContent}>
-                    <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Date</Text>
-                    <Text style={[styles.pickerValue, dyn.pickerValue]}>
-                      {format(scheduleDate, 'MMMM d, yyyy')}
-                    </Text>
-                  </View>
-                </PressableScale>
-
-                {/* Time Picker */}
-                <PressableScale
-                  haptic="light"
-                  style={[styles.pickerButton, dyn.pickerButton]}
-                  onPress={() => setShowTimePicker(true)}
-                  accessibilityLabel={`Time, ${format(scheduleTime, 'h:mm a')}`}
-                >
-                  <Ionicons name="time-outline" size={24} color={c.brand} />
-                  <View style={styles.pickerContent}>
-                    <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Time</Text>
-                    <Text style={[styles.pickerValue, dyn.pickerValue]}>
-                      {format(scheduleTime, 'h:mm a')}
-                    </Text>
-                  </View>
-                </PressableScale>
-
-                {/* Duration Picker */}
-                <View style={styles.durationSection}>
-                  <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Duration</Text>
-                  <View style={styles.durationOptions}>
-                    {durationOptions.map((duration) => (
-                      <PressableScale
-                        key={duration}
-                        haptic="selection"
-                        containerStyle={styles.durationWrap}
-                        selected={scheduleDuration === duration}
-                        accessibilityLabel={`${duration} minutes`}
-                        // `durationOptionActive` last: the brand fill must win
-                        // over the dynamic field/hairline pair beneath it.
-                        style={[
-                          styles.durationOption,
-                          dyn.durationOption,
-                          scheduleDuration === duration && styles.durationOptionActive,
-                        ]}
-                        onPress={() => setScheduleDuration(duration)}
-                      >
-                        <Text
-                          style={[
-                            styles.durationOptionText,
-                            dyn.durationOptionText,
-                            scheduleDuration === duration && styles.durationOptionTextActive,
-                          ]}
-                        >
-                          {duration} min
-                        </Text>
-                      </PressableScale>
-                    ))}
-                  </View>
+          <View style={[styles.modalOverlay, dyn.scrim]}>
+            {/* Glass can't cast a shadow from inside its own clipped bounds, so
+                the lift that separates the sheet from the scrim lives out here,
+                on a wrapper that matches its box exactly. */}
+            <View style={styles.sheetLift}>
+              <Glass
+                variant="regular"
+                radius={RADIUS.xl}
+                // The rim is drawn per-edge below — only the top edge is on screen.
+                bordered={false}
+                tintColor={dyn.sheetTint}
+                style={[
+                  styles.modalContent,
+                  dyn.sheetEdge,
+                  { paddingBottom: insets.bottom + SPACE.xxl },
+                ]}
+              >
+                <View style={[styles.modalHeader, dyn.modalHeader]}>
+                  <Text style={[styles.modalTitle, dyn.modalTitle]}>Schedule Item</Text>
+                  <PressableScale
+                    haptic="light"
+                    onPress={() => setShowScheduleModal(false)}
+                    style={styles.modalCloseButton}
+                    accessibilityLabel="Close scheduler"
+                  >
+                    <Ionicons name="close" size={24} color={c.textSecondary} />
+                  </PressableScale>
                 </View>
 
-                {/* Date Picker Component */}
-                {showDatePicker && (
-                  <View style={[styles.pickerContainer, dyn.pickerContainer]}>
-                    {/* Both picker props follow the appearance: pinned to light,
-                        the spinner paints black digits on the dark sheet. */}
-                    <DateTimePicker
-                      value={scheduleDate}
-                      mode="date"
-                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                      themeVariant={c.appearance}
-                      onChange={(event, selectedDate) => {
-                        setShowDatePicker(Platform.OS === 'android');
-                        if (selectedDate) {
-                          setScheduleDate(selectedDate);
-                        }
-                      }}
-                      minimumDate={new Date()}
-                      textColor={Platform.OS === 'ios' ? c.text : undefined}
-                    />
-                  </View>
-                )}
+                <View style={styles.modalBody}>
+                  {/* Date Picker */}
+                  <PressableScale
+                    haptic="light"
+                    style={[styles.pickerButton, dyn.pickerButton]}
+                    onPress={() => setShowDatePicker(true)}
+                    accessibilityLabel={`Date, ${format(scheduleDate, 'MMMM d, yyyy')}`}
+                  >
+                    <Ionicons name="calendar-outline" size={24} color={c.brand} />
+                    <View style={styles.pickerContent}>
+                      <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Date</Text>
+                      <Text style={[styles.pickerValue, dyn.pickerValue]}>
+                        {format(scheduleDate, 'MMMM d, yyyy')}
+                      </Text>
+                    </View>
+                  </PressableScale>
 
-                {/* Time Picker Component */}
-                {showTimePicker && (
-                  <View style={[styles.pickerContainer, dyn.pickerContainer]}>
-                    <DateTimePicker
-                      value={scheduleTime}
-                      mode="time"
-                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                      themeVariant={c.appearance}
-                      onChange={(event, selectedTime) => {
-                        setShowTimePicker(Platform.OS === 'android');
-                        if (selectedTime) {
-                          setScheduleTime(selectedTime);
-                        }
-                      }}
-                      textColor={Platform.OS === 'ios' ? c.text : undefined}
-                    />
-                  </View>
-                )}
+                  {/* Time Picker */}
+                  <PressableScale
+                    haptic="light"
+                    style={[styles.pickerButton, dyn.pickerButton]}
+                    onPress={() => setShowTimePicker(true)}
+                    accessibilityLabel={`Time, ${format(scheduleTime, 'h:mm a')}`}
+                  >
+                    <Ionicons name="time-outline" size={24} color={c.brand} />
+                    <View style={styles.pickerContent}>
+                      <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Time</Text>
+                      <Text style={[styles.pickerValue, dyn.pickerValue]}>
+                        {format(scheduleTime, 'h:mm a')}
+                      </Text>
+                    </View>
+                  </PressableScale>
 
-                {/* Action Buttons */}
-                <View style={styles.modalActions}>
-                  {item.scheduled_date && (
+                  {/* Duration Picker */}
+                  <View style={styles.durationSection}>
+                    <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Duration</Text>
+                    <View style={styles.durationOptions}>
+                      {durationOptions.map((duration) => (
+                        <PressableScale
+                          key={duration}
+                          haptic="selection"
+                          containerStyle={styles.durationWrap}
+                          selected={scheduleDuration === duration}
+                          accessibilityLabel={`${duration} minutes`}
+                          // `durationOptionActive` last: the brand fill must win
+                          // over the dynamic field/hairline pair beneath it.
+                          style={[
+                            styles.durationOption,
+                            dyn.durationOption,
+                            scheduleDuration === duration && styles.durationOptionActive,
+                          ]}
+                          onPress={() => setScheduleDuration(duration)}
+                        >
+                          <Text
+                            style={[
+                              styles.durationOptionText,
+                              dyn.durationOptionText,
+                              scheduleDuration === duration && styles.durationOptionTextActive,
+                            ]}
+                          >
+                            {duration} min
+                          </Text>
+                        </PressableScale>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* Date Picker Component */}
+                  {showDatePicker && (
+                    <View style={[styles.pickerContainer, dyn.pickerContainer]}>
+                      {/* Both picker props follow the appearance: pinned to light,
+                          the spinner paints black digits on the dark sheet. */}
+                      <DateTimePicker
+                        value={scheduleDate}
+                        mode="date"
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        themeVariant={c.appearance}
+                        onChange={(event, selectedDate) => {
+                          setShowDatePicker(Platform.OS === 'android');
+                          if (selectedDate) {
+                            setScheduleDate(selectedDate);
+                          }
+                        }}
+                        minimumDate={new Date()}
+                        textColor={Platform.OS === 'ios' ? c.text : undefined}
+                      />
+                    </View>
+                  )}
+
+                  {/* Time Picker Component */}
+                  {showTimePicker && (
+                    <View style={[styles.pickerContainer, dyn.pickerContainer]}>
+                      <DateTimePicker
+                        value={scheduleTime}
+                        mode="time"
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        themeVariant={c.appearance}
+                        onChange={(event, selectedTime) => {
+                          setShowTimePicker(Platform.OS === 'android');
+                          if (selectedTime) {
+                            setScheduleTime(selectedTime);
+                          }
+                        }}
+                        textColor={Platform.OS === 'ios' ? c.text : undefined}
+                      />
+                    </View>
+                  )}
+
+                  {/* Action Buttons */}
+                  <View style={styles.modalActions}>
+                    {item.scheduled_date && (
+                      <PressableScale
+                        haptic="light"
+                        containerStyle={styles.modalButtonWrap}
+                        style={[styles.modalButton, styles.removeButton]}
+                        onPress={handleRemoveSchedule}
+                        accessibilityLabel="Remove schedule"
+                      >
+                        <Text style={styles.removeButtonText}>Remove Schedule</Text>
+                      </PressableScale>
+                    )}
                     <PressableScale
                       haptic="light"
                       containerStyle={styles.modalButtonWrap}
-                      style={[styles.modalButton, styles.removeButton]}
-                      onPress={handleRemoveSchedule}
-                      accessibilityLabel="Remove schedule"
+                      onPress={handleSaveSchedule}
+                      accessibilityLabel="Save schedule"
                     >
-                      <Text style={styles.removeButtonText}>Remove Schedule</Text>
+                      <LinearGradient
+                        colors={GRADIENTS.brand}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={[styles.modalButton, styles.saveButton]}
+                      >
+                        <Text style={styles.saveButtonText}>Save</Text>
+                      </LinearGradient>
                     </PressableScale>
-                  )}
-                  <PressableScale
-                    haptic="light"
-                    containerStyle={styles.modalButtonWrap}
-                    onPress={handleSaveSchedule}
-                    accessibilityLabel="Save schedule"
-                  >
-                    <LinearGradient
-                      colors={GRADIENTS.brand}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={[styles.modalButton, styles.saveButton]}
-                    >
-                      <Text style={styles.saveButtonText}>Save</Text>
-                    </LinearGradient>
-                  </PressableScale>
+                  </View>
                 </View>
-              </View>
+              </Glass>
             </View>
           </View>
         </Modal>
@@ -1063,12 +1138,6 @@ export default function ItemDetailScreen() {
  * stylesheet ids on every flip would just leak them.
  */
 function makeDynamicStyles(c: ThemeColors) {
-  // The sheet's only separation from the page is the scrim it sits on; over a
-  // dark scrim there is nothing left to darken, so it gets a lit top edge.
-  const sheetEdge: ViewStyle =
-    c.appearance === 'dark'
-      ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline }
-      : {};
   return {
     container: { backgroundColor: c.page },
     editActionText: { color: c.textSecondary },
@@ -1079,13 +1148,33 @@ function makeDynamicStyles(c: ThemeColors) {
     title: { color: c.text },
     description: { color: c.textSecondary },
     /**
-     * Shared dress for every raised card on this screen (audio, metadata,
-     * checklist, notes, scheduled, the three action buttons). Each already
-     * carries a 1px border in the static sheet, so recolouring it to `hairline`
-     * is what gives them a visible edge on dark, where SHADOW.card separates
-     * nothing — card and page are both near-black.
+     * Shared dress for the raised cards that stay OPAQUE (checklist, notes).
+     * Each already carries a 1px border in the static sheet, so recolouring it
+     * to `hairline` is what gives them a visible edge on dark, where SHADOW.card
+     * separates nothing — card and page are both near-black.
      */
     card: { backgroundColor: c.card, borderColor: c.hairline },
+    /**
+     * The same dress MINUS the fill, for the surfaces that are glass (audio,
+     * metadata, scheduled, the three action buttons): a background colour on a
+     * glass view paints over the material. Only the edge is left to draw, and it
+     * stays the palette's hairline rather than the material's fainter own rim.
+     */
+    cardEdge: { borderColor: c.hairline },
+    /**
+     * Tints those glass surfaces. Glass borrows its colour from what is behind
+     * it, and on light that is a pale violet page — labels on bare material
+     * drift under AA. `2e` ≈ 18% of the palette's own card colour: enough to
+     * hold text, far too little to read as a fill.
+     */
+    cardTint: `${c.card}2e`,
+    /**
+     * Delete's wash. `1f` ≈ 12% of the palette's own danger red — the button
+     * reads as the destructive one without becoming a danger FILL (which is a
+     * different, louder promise, and would strand its red label).
+     * The rim stays `cardEdge` like its two neighbours: they lens as one row.
+     */
+    dangerTint: `${c.danger}1f`,
     audioText: { color: c.brand },
     metadataText: { color: c.textSecondary },
     link: { color: c.textBrand },
@@ -1095,8 +1184,15 @@ function makeDynamicStyles(c: ThemeColors) {
     actionText: { color: c.textSecondary },
     deleteText: { color: c.danger },
     scheduleText: { color: c.textBrand },
-    modalOverlay: { backgroundColor: c.scrim },
-    modalContent: { backgroundColor: c.card, ...sheetEdge },
+    scrim: { backgroundColor: c.scrim },
+    /**
+     * No fill: the glass IS the sheet. What is left to draw is the rim on the
+     * one edge you can see — the top — which is what separates the sheet from
+     * the scrim behind it, in both appearances now rather than on dark only.
+     */
+    sheetEdge: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline },
+    /** Holds the sheet's own labels over whatever the scrim is dimming. */
+    sheetTint: `${c.card}2e`,
     modalHeader: { borderBottomColor: c.hairline },
     modalTitle: { color: c.text },
     pickerContainer: { backgroundColor: c.card, borderColor: c.hairline },
@@ -1213,27 +1309,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     marginBottom: SPACE.base,
   },
+  /**
+   * The outer box of every GLASS card on this screen (audio, metadata,
+   * scheduled). It carries the margins and the lift, because a glass surface
+   * clips to its own rounded bounds — a shadow set on it never escapes them.
+   * The corner is repeated here so the shadow is cast in the sheet's own shape.
+   */
+  cardLift: {
+    marginHorizontal: SPACE.base,
+    marginBottom: SPACE.base,
+    borderRadius: RADIUS.lg,
+    ...SHADOW.card,
+  },
   audioPlayer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: SPACE.base,
-    marginBottom: SPACE.base,
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    ...SHADOW.card,
   },
   audioText: {
     ...TYPE.bodyStrong,
     marginLeft: SPACE.md,
   },
   metadata: {
-    marginHorizontal: SPACE.base,
-    marginBottom: SPACE.base,
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    ...SHADOW.card,
     gap: SPACE.md,
   },
   metadataItem: {
@@ -1275,12 +1377,9 @@ const styles = StyleSheet.create({
   scheduledSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: SPACE.base,
-    marginBottom: SPACE.base,
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    ...SHADOW.card,
   },
   scheduledInfo: {
     marginLeft: SPACE.md,
@@ -1299,8 +1398,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE.base,
     gap: SPACE.md,
   },
+  // The lift lives out here for the same reason as `cardLift`: the button
+  // itself is glass, and clips any shadow of its own away.
   actionWrap: {
     flex: 1,
+    borderRadius: RADIUS.lg,
+    ...SHADOW.card,
   },
   actionButton: {
     flexDirection: 'row',
@@ -1309,7 +1412,6 @@ const styles = StyleSheet.create({
     padding: SPACE.base,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    ...SHADOW.card,
   },
   actionText: {
     ...TYPE.subhead,
@@ -1319,9 +1421,18 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
+  // The sheet's lift, on the wrapper that also owns its (transform-only)
+  // entrance — glass cannot cast a shadow from inside its own clipped bounds.
+  sheetLift: {
+    ...SHADOW.floating,
+  },
   modalContent: {
     borderTopLeftRadius: RADIUS.xl,
     borderTopRightRadius: RADIUS.xl,
+    // Flush with the bottom of the screen, so the corners the `radius` prop
+    // rounds by default get squared off again.
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     maxHeight: '80%',
   },
   modalHeader: {

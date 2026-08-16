@@ -28,6 +28,7 @@ import * as Haptics from 'expo-haptics';
 import { Item } from '@/lib/types';
 import { classConfig } from '@/lib/classification';
 import { BRAND, RADIUS, SPRING } from '@/lib/theme';
+import Glass from '@/components/ui/Glass';
 import { useThemeColors } from '@/lib/useTheme';
 import { enterList, usePrefersReducedMotion } from '@/lib/motion';
 
@@ -139,21 +140,20 @@ function ItemCardPro({
             onPressOut={() => {
               scale.value = withSpring(1, SPRING.settle);
             }}
-            className="mb-3 flex-row items-center rounded-xl p-2.5"
+            className="mb-3"
             style={{
-              backgroundColor: c.card,
               shadowColor: cfg.from,
               shadowOffset: { width: 0, height: 8 },
               shadowOpacity: 0.16,
               shadowRadius: 16,
-              // The classification-tinted shadow is what lifts this card off the
-              // page — on a near-black ground it reads as nothing, so the card
-              // holds its own edge with a hairline instead.
-              ...(c.appearance === 'dark'
-                ? { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline }
-                : null),
             }}
           >
+            <Glass
+              variant="regular"
+              radius={RADIUS.xl}
+              tintColor={`${c.card}c0`}
+              style={styles.rowBody}
+            >
               {/* Thumbnail or gradient icon tile */}
               <View className="h-[68px] w-[68px] overflow-hidden rounded-lg">
                 {item.imageUri && !imageFailed ? (
@@ -279,12 +279,21 @@ function ItemCardPro({
                   style={{ marginLeft: 4 }}
                 />
               )}
+            </Glass>
           </Pressable>
         </Animated.View>
       </GestureDetector>
     </Animated.View>
   );
 }
+
+const styles = StyleSheet.create({
+  rowBody: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+  },
+});
 
 // Memoized: this is a FlatList row in the Stacks list feed.
 export default React.memo(ItemCardPro);

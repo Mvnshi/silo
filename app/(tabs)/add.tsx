@@ -22,7 +22,7 @@
  * - lib/api: backend AI analysis (cancellable, 20s budget)
  */
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -34,12 +34,19 @@ import {
   KeyboardAvoidingView,
   Linking,
   Platform,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 // expo-image handles iOS PHAsset `ph://` URIs (screenshots from the photo
 // library); RN's stock Image does not, so use this for any photo-library URI.
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated from 'react-native-reanimated';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -88,7 +95,7 @@ import ChatBot from '@/components/ChatBot';
 import { analyzeImage, extractLink, suggestScheduleTime } from '@/lib/api';
 import OptionCard from '@/components/ui/OptionCard';
 import PressableScale from '@/components/ui/PressableScale';
-import GlassCard from '@/components/ui/GlassCard';
+import Glass from '@/components/ui/Glass';
 import Skeleton from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -98,12 +105,13 @@ import {
   RADIUS,
   SHADOW,
   SPACE,
+  SPRING,
   TEXT,
   TYPE,
   type ThemeColors,
 } from '@/lib/theme';
 import { useThemeColors } from '@/lib/useTheme';
-import { enterList, LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
+import { enterList, LAYOUT, staggerDelay, usePrefersReducedMotion } from '@/lib/motion';
 import { celebrationHaptic } from '@/lib/haptics';
 import { addItem, addStack, updateItem, getItems, getStacks } from '@/lib/storage';
 import { scheduleItemReview } from '@/lib/scheduler';
@@ -163,6 +171,70 @@ function InlineNotice({ message, tone = 'info', actionLabel, onAction }: Notice)
 }
 
 /**
+ * Staggered entrance for a block that holds glass.
+ *
+ * `enterList` is a FADE, and an opacity animation on a glass surface — or on
+ * ANY ancestor of one — stops the material rendering rather than fading it: the
+ * clipboard offer would have arrived as an empty hole. Same stagger, on a
+ * transform instead. Blocks with no glass in them keep `enterList`.
+ */
+function RiseIn({
+  index,
+  style,
+  children,
+}: {
+  index: number;
+  style?: StyleProp<ViewStyle>;
+  children: React.ReactNode;
+}) {
+  const reduced = usePrefersReducedMotion();
+  const offset = useSharedValue<number>(SPACE.md);
+
+  useEffect(() => {
+    offset.value = reduced ? 0 : withDelay(staggerDelay(index), withSpring(0, SPRING.enter));
+  }, [index, offset, reduced]);
+
+  const rise = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
+
+  return <Animated.View style={[style, rise]}>{children}</Animated.View>;
+}
+
+/**
+ * The tint every glass surface on this screen hands to `Glass`.
+ *
+ * Bare material borrows its colour from the page wash beneath it, which on light
+ * is a pale violet that body text drifts under. `2e` ≈ 18% of the palette's own
+ * card colour: enough to hold the text, far too little to read as a fill. (Both
+ * palettes state `card` as a 6-digit hex, so the alpha suffix is all this needs.)
+ */
+function cardTint(c: ThemeColors): string {
+  return `${c.card}2e`;
+}
+
+/**
+ * The capture form's surface — the panel behind the URL / photo / note steps and
+ * the shared fields below them.
+ *
+ * It floats on the page gradient with nothing between it and the wash, which is
+ * the one place a material actually has something to lens. Two things it can't
+ * do, both handled here:
+ *  - cast a shadow: glass clips to its own bounds, so the lift that separated the
+ *    opaque card lives on the wrapper;
+ *  - hold a second material: every field inside it stays opaque (a caret over
+ *    moving glass is unreadable, and stacked materials read as mud).
+ */
+function FormCard({ children }: { children: React.ReactNode }) {
+  const c = useThemeColors();
+  return (
+    <View style={styles.formLift}>
+      <Glass radius={RADIUS.xl} tintColor={cardTint(c)} style={styles.form}>
+        {children}
+      </Glass>
+    </View>
+  );
+}
+
+/**
  * OptionCard derives its entrance delay as `index * 70`. Offsetting the index by
  * 160/70 pushes the whole (demoted) capture grid to ~160ms, so the primary
  * zones — clipboard, photos, recent saves — land first.
@@ -187,14 +259,12 @@ function makeDynamicStyles(c: ThemeColors) {
     clipUrl: { color: c.text },
     peekTitle: { color: c.textTertiary },
     peekTile: { backgroundColor: c.field, borderColor: c.hairline },
-    permTile: { backgroundColor: c.card, borderColor: c.hairline },
     permIcon: { backgroundColor: c.brandSoft },
     permTitle: { color: c.text },
     permSub: { color: c.textTertiary },
     recentRow: { backgroundColor: c.card, borderColor: c.hairline },
     recentTitle: { color: c.text },
     orTitle: { color: c.textTertiary },
-    form: { backgroundColor: c.card, borderColor: c.hairline },
     label: { color: c.textSecondary },
     // `sunken` keeps the field a step recessed from the card in both
     // appearances; the hairline is what actually draws the edge.
@@ -220,6 +290,8 @@ function makeDynamicStyles(c: ThemeColors) {
     previewPlatform: { color: c.textBrand },
     previewAuthor: { color: c.text },
     previewTitle: { color: c.textSecondary },
+    /** What every glass surface on this screen is tinted with — see `cardTint`. */
+    glassTint: cardTint(c),
   };
 }
 
@@ -835,13 +907,8 @@ export default function AddScreen() {
                 deliberately not read it — tapping Paste link is what spends the
                 one "pasted from" banner iOS allows. */}
             {clipboardOffer && (
-              <Animated.View entering={enterList(0, reduced)}>
-                <GlassCard
-                  tint={c.glassTint}
-                  intensity={45}
-                  radius={RADIUS.lg}
-                  style={styles.clipCard}
-                >
+              <RiseIn index={0}>
+                <Glass variant="regular" radius={RADIUS.lg} tintColor={dyn.glassTint} style={styles.clipCard}>
                   <View style={styles.clipInner}>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={[styles.clipEyebrow, dyn.clipEyebrow]}>FROM YOUR CLIPBOARD</Text>
@@ -872,8 +939,8 @@ export default function AddScreen() {
                       </LinearGradient>
                     </PressableScale>
                   </View>
-                </GlassCard>
-              </Animated.View>
+                </Glass>
+              </RiseIn>
             )}
 
             {/* Recent screenshots peek — one tap to import + analyze. Mounted
@@ -882,7 +949,7 @@ export default function AddScreen() {
             {(photoAccess === 'undetermined' ||
               photoAccess === 'denied' ||
               recentShots.length > 0) && (
-              <Animated.View entering={enterList(1, reduced)}>
+              <RiseIn index={1}>
                 {photoAccess === 'granted' && recentShots.length > 0 && (
                   <View style={styles.peekSection}>
                     <Text style={[styles.peekTitle, dyn.peekTitle]}>From your photos</Text>
@@ -911,26 +978,32 @@ export default function AddScreen() {
                   </View>
                 )}
 
-                {/* Opt-in tile. The permission sheet only ever fires from this tap. */}
+                {/* Opt-in tile. The permission sheet only ever fires from this tap.
+                    The tile IS a control, so it takes the material and the
+                    specular press that comes with it. */}
                 {photoAccess === 'undetermined' && (
                   <View style={styles.peekSection}>
                     <Text style={[styles.peekTitle, dyn.peekTitle]}>From your photos</Text>
-                    <PressableScale
-                      haptic="light"
-                      onPress={enablePhotoPeek}
-                      style={[styles.permTile, dyn.permTile]}
-                      scaleTo={0.985}
-                    >
-                      <View style={[styles.permIcon, dyn.permIcon]}>
-                        <Ionicons name="images" size={18} color={c.textBrand} />
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={[styles.permTitle, dyn.permTitle]}>
-                          Show my recent screenshots
-                        </Text>
-                        <Text style={[styles.permSub, dyn.permSub]}>Save one in a single tap.</Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={c.decorative} />
+                    <PressableScale haptic="light" onPress={enablePhotoPeek} scaleTo={0.985}>
+                      <Glass
+                        interactive
+                        radius={RADIUS.lg}
+                        tintColor={dyn.glassTint}
+                        style={styles.permTile}
+                      >
+                        <View style={[styles.permIcon, dyn.permIcon]}>
+                          <Ionicons name="images" size={18} color={c.textBrand} />
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={[styles.permTitle, dyn.permTitle]}>
+                            Show my recent screenshots
+                          </Text>
+                          <Text style={[styles.permSub, dyn.permSub]}>
+                            Save one in a single tap.
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={c.decorative} />
+                      </Glass>
                     </PressableScale>
                   </View>
                 )}
@@ -942,23 +1015,29 @@ export default function AddScreen() {
                     <PressableScale
                       haptic="light"
                       onPress={() => Linking.openSettings()}
-                      style={[styles.permTile, dyn.permTile]}
                       scaleTo={0.985}
                     >
-                      <View style={[styles.permIcon, dyn.permIcon]}>
-                        <Ionicons name="lock-closed" size={18} color={c.textBrand} />
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={[styles.permTitle, dyn.permTitle]}>Photo access is off</Text>
-                        <Text style={[styles.permSub, dyn.permSub]}>
-                          Turn it on in Settings to peek here.
-                        </Text>
-                      </View>
-                      <Ionicons name="chevron-forward" size={16} color={c.decorative} />
+                      <Glass
+                        interactive
+                        radius={RADIUS.lg}
+                        tintColor={dyn.glassTint}
+                        style={styles.permTile}
+                      >
+                        <View style={[styles.permIcon, dyn.permIcon]}>
+                          <Ionicons name="lock-closed" size={18} color={c.textBrand} />
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={[styles.permTitle, dyn.permTitle]}>Photo access is off</Text>
+                          <Text style={[styles.permSub, dyn.permSub]}>
+                            Turn it on in Settings to peek here.
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={c.decorative} />
+                      </Glass>
                     </PressableScale>
                   </View>
                 )}
-              </Animated.View>
+              </RiseIn>
             )}
 
             {/* Last 3 saves — re-enter recent items without rummaging. */}
@@ -1057,7 +1136,7 @@ export default function AddScreen() {
 
         {/* URL Input */}
         {inputType === 'url' && (
-          <View style={[styles.form, dyn.form]}>
+          <FormCard>
             <View style={styles.inputGroup}>
               <View style={styles.urlHeader}>
                 <PressableScale
@@ -1104,13 +1183,13 @@ export default function AddScreen() {
                 </LinearGradient>
               </PressableScale>
             </View>
-          </View>
+          </FormCard>
         )}
 
         {/* Image capture — the photo itself is the header, so a failed analysis
             still lands on something recognisable with a way back. */}
         {inputType === 'image' && (
-          <View style={[styles.form, dyn.form]}>
+          <FormCard>
             <View style={styles.inputGroup}>
               <View style={styles.urlHeader}>
                 <PressableScale
@@ -1134,12 +1213,12 @@ export default function AddScreen() {
               ) : null}
               {imageNotice ? <InlineNotice {...imageNotice} /> : null}
             </View>
-          </View>
+          </FormCard>
         )}
 
         {/* Note Input */}
         {inputType === 'note' && (
-          <View style={[styles.form, dyn.form]}>
+          <FormCard>
             <View style={styles.inputGroup}>
               <View style={styles.urlHeader}>
                 <PressableScale
@@ -1165,12 +1244,16 @@ export default function AddScreen() {
                 numberOfLines={5}
               />
             </View>
-          </View>
+          </FormCard>
         )}
 
         {/* Common Fields (shown after analysis or for manual entry) */}
         {(title || inputType === 'note') && (
-          <View style={[styles.form, dyn.form]}>
+          <FormCard>
+            {/* The link preview stays an opaque inset panel: it sits ON the
+                form's material, and two stacked materials read as mud. The
+                surface that floats over the page wash is the one that gets to
+                be glass. */}
             {inputType === 'url' && (thumbnailUri || author || platform) ? (
               <View style={[styles.previewCard, dyn.previewCard]}>
                 <View style={styles.previewRow}>
@@ -1361,11 +1444,13 @@ export default function AddScreen() {
             <PressableScale haptic="light" style={styles.cancelButton} onPress={() => resetForm()}>
               <Text style={[styles.cancelButtonText, dyn.cancelButtonText]}>Discard</Text>
             </PressableScale>
-          </View>
+          </FormCard>
         )}
 
         {loading && !title && (
-          <View style={styles.loadingContainer}>
+          // The wait gets a surface of its own: loose skeletons on the page wash
+          // read as the screen having broken, a panel reads as work in flight.
+          <Glass radius={RADIUS.xl} tintColor={dyn.glassTint} style={styles.loadingContainer}>
             {/* Preview-shaped skeleton so the analysis wait feels like content arriving. */}
             <Skeleton height={180} radius={RADIUS.lg} />
             <Skeleton width="72%" height={18} style={styles.loadingLine} />
@@ -1374,7 +1459,7 @@ export default function AddScreen() {
             <PressableScale haptic="light" style={styles.cancelButton} onPress={() => resetForm()}>
               <Text style={[styles.cancelButtonText, dyn.cancelButtonText]}>Cancel</Text>
             </PressableScale>
-          </View>
+          </Glass>
         )}
       </ScrollView>
     </KeyboardAvoidingView>
@@ -1452,15 +1537,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   peekImg: { width: '100%', height: '100%' },
-  /* Photo-access opt-in / recovery tile (same shape as a recent row). */
+  /**
+   * Photo-access opt-in / recovery tile (same shape as a recent row). Glass
+   * supplies the radius, the clip and the rim; the hairline shadow it used to
+   * carry can't escape a clipped surface anyway, and the rim replaces it.
+   */
   permTile: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.md,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1,
     padding: SPACE.md,
-    ...SHADOW.hairline,
   },
   permIcon: {
     width: 32,
@@ -1493,12 +1579,16 @@ const styles = StyleSheet.create({
     marginLeft: SPACE.xxs,
   },
   optionList: { marginTop: SPACE.xs },
+  // Lift + radius on the wrapper, padding inside: the material clips to its own
+  // bounds, so a shadow set on it would never leave them. The rim `Glass` draws
+  // replaces the card's old 1px border.
+  formLift: {
+    borderRadius: RADIUS.xl,
+    ...SHADOW.card,
+  },
   form: {
     gap: SPACE.lg,
-    borderRadius: RADIUS.xl,
-    borderWidth: 1,
     padding: SPACE.base,
-    ...SHADOW.card,
   },
   inputGroup: {
     gap: SPACE.sm,
@@ -1629,6 +1719,8 @@ const styles = StyleSheet.create({
   loadingContainer: {
     alignItems: 'center',
     paddingVertical: SPACE.xxxl,
+    // The skeletons can't run into the material's rim, so the panel insets them.
+    paddingHorizontal: SPACE.base,
   },
   // Skeleton text line under the preview-shaped block.
   loadingLine: {

@@ -27,6 +27,7 @@ import * as Haptics from 'expo-haptics';
 import { Item } from '@/lib/types';
 import { classConfig } from '@/lib/classification';
 import { BRAND, DURATION, RADIUS, SPRING, STATUS } from '@/lib/theme';
+import Glass from '@/components/ui/Glass';
 import { useThemeColors } from '@/lib/useTheme';
 import { usePrefersReducedMotion } from '@/lib/motion';
 
@@ -127,23 +128,28 @@ function CompactCard({
             onPressOut={() => {
               scale.value = withSpring(1, SPRING.settle);
             }}
-            className="m-1.5 flex-1 overflow-hidden rounded-xl"
+            className="m-1.5 flex-1"
             style={{
-              backgroundColor: c.card,
+              // Glass clips its own bounds, so the lift lives out here.
               shadowColor: cfg.from,
               shadowOffset: { width: 0, height: 6 },
               shadowOpacity: 0.16,
               shadowRadius: 14,
-              // The classification-tinted shadow vanishes on a near-black page,
-              // so an unselected tile falls back to a hairline edge in dark.
-              borderWidth: isPicked
-                ? 2
-                : c.appearance === 'dark'
-                  ? StyleSheet.hairlineWidth
-                  : 0,
-              borderColor: isPicked ? BRAND[500] : c.hairline,
             }}
           >
+            <Glass
+              variant="regular"
+              radius={RADIUS.xl}
+              // A wash of the card colour, so the thumbnail below still reads as
+              // the tile's own image rather than the page showing through it.
+              tintColor={`${c.card}c0`}
+              // Selection draws a 2px brand ring instead of the default rim.
+              bordered={!isPicked}
+              style={[
+                styles.tile,
+                isPicked ? { borderWidth: 2, borderColor: BRAND[500] } : null,
+              ]}
+            >
             <View className="aspect-square w-full overflow-hidden">
               {item.imageUri && !imageFailed ? (
                 <Image
@@ -212,12 +218,21 @@ function CompactCard({
                 {item.title}
               </Text>
             </View>
+            </Glass>
           </Pressable>
         </Animated.View>
       </GestureDetector>
     </Animated.View>
   );
 }
+
+const styles = StyleSheet.create({
+  // Colour comes from the Glass tint; this is shape + clipping only.
+  tile: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+});
 
 // Memoized: this is a FlatList row in the Stacks grid feed.
 export default React.memo(CompactCard);

@@ -11,6 +11,11 @@
  * - Rename or delete the stack
  * - Swipe an item to mark it done / not done
  *
+ * MATERIAL: this screen has exactly one piece of chrome of its own — the two
+ * header actions — and they deliberately stay opaque. See `headerButton` in the
+ * stylesheet. Everything else here is content (the meta line and the item
+ * list); the bar behind it all is already Liquid Glass, inside <ScreenHeader />.
+ *
  * Dependencies:
  * - expo-router: Navigation
  */
@@ -304,6 +309,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SPACE.sm,
   },
+  // Opaque on purpose, and it must stay that way: these sit ON the header bar,
+  // which <ScreenHeader /> already renders as Liquid Glass. A second material
+  // stacked on the first doesn't read as two surfaces — it reads as mud, both
+  // of them sampling the same pixels twice. The card fill plus the hairline is
+  // what separates the button from the bar underneath it.
   headerButton: {
     width: 35,
     height: 35,

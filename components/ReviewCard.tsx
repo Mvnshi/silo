@@ -11,15 +11,20 @@
  *   stops the nagging without scheduling or archiving anything.
  * - StaleCard: the "you haven't opened this in a while" nudge — [Keep] [Archive].
  *
+ * Both cards float above the day's content, so the surface is Liquid Glass
+ * (`ReviewSurface` below); their action pills stay opaque, because two stacked
+ * materials read as mud.
+ *
  * Pure presentation: every outcome is handed up to the parent, which owns
- * persistence + sync. Both cards exit with a fade and animate their layout, so
- * answering one doesn't make the list below it jump.
+ * persistence + sync. Both cards animate their layout, so answering one doesn't
+ * make the list below it jump.
  */
 import React, { useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Animated from 'react-native-reanimated';
+import Glass, { LIQUID_GLASS } from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import { Item } from '@/lib/types';
 import { ReviewOutcome, scheduledEnd } from '@/lib/resurface';
@@ -32,7 +37,15 @@ import {
   TYPE,
 } from '@/lib/theme';
 import { useThemeColors } from '@/lib/useTheme';
-import { exitFade, LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
+import { enterRise, exitFade, LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
+
+/**
+ * Alpha suffix on the palette's own `card` colour (both palettes state it as a
+ * 6-digit hex, so `#rrggbbaa` is all this needs). ~18%: enough to hold the
+ * title and prompt over whatever the page wash is doing beneath the card, far
+ * too little to read as a fill.
+ */
+const GLASS_TINT = '2e';
 
 /**
  * "Yesterday, 7:00 PM" — the elapsed slot, phrased the way a person would.
@@ -59,6 +72,47 @@ function endOfDay(d: Date): number {
   return copy.getTime();
 }
 
+/* ---------- the shared glass surface ---------- */
+
+/**
+ * The card both review surfaces sit on. Three things here are load-bearing:
+ *
+ * - The lift carries the shadow and the margin. Glass clips to its own rounded
+ *   bounds (`overflow: hidden`), so a shadow drawn on the material itself never
+ *   escapes them.
+ * - The entrance is a scale, not a fade. These cards used to inherit the
+ *   section's `enterList` rise-and-fade from TodayView; an opacity animation on
+ *   a glass view — or on ANY ancestor of one — stops the material rendering
+ *   instead of fading it, so the card would arrive as an empty hole.
+ * - The exit fade survives only on the pre-iOS-26 blur, for exactly that
+ *   reason. Under the real material the answered card just leaves, and `LAYOUT`
+ *   closes the gap beneath it so nothing jumps.
+ */
+function ReviewSurface({ children }: { children: React.ReactNode }) {
+  const reduced = usePrefersReducedMotion();
+  const c = useThemeColors();
+  return (
+    <Animated.View
+      style={styles.cardLift}
+      layout={LAYOUT}
+      entering={enterRise(0, reduced)}
+      exiting={LIQUID_GLASS ? undefined : exitFade(reduced)}
+    >
+      <Glass
+        variant="regular"
+        radius={RADIUS.lg}
+        // The card's own 1pt border is drawn in `styles.card`, so the material
+        // doesn't add a second rim on top of it.
+        bordered={false}
+        tintColor={`${c.card}${GLASS_TINT}`}
+        style={[styles.card, { borderColor: c.hairline }]}
+      >
+        {children}
+      </Glass>
+    </Animated.View>
+  );
+}
+
 /* ---------- after-event report ---------- */
 
 interface EventReviewProps {
@@ -69,16 +123,11 @@ interface EventReviewProps {
 
 export function EventReviewCard({ item, onOutcome, onReschedule }: EventReviewProps) {
   const [step, setStep] = useState<'ask' | 'did' | 'skip'>('ask');
-  const reduced = usePrefersReducedMotion();
   const c = useThemeColors();
   const cfg = classConfig(item.classification);
 
   return (
-    <Animated.View
-      style={[styles.card, { backgroundColor: c.card, borderColor: c.hairline }]}
-      layout={LAYOUT}
-      exiting={exitFade(reduced)}
-    >
+    <ReviewSurface>
       <View style={styles.headRow}>
         {step === 'ask' ? (
           <LinearGradient
@@ -144,7 +193,7 @@ export function EventReviewCard({ item, onOutcome, onReschedule }: EventReviewPr
           <Pill label="Retire" icon="archive" danger compact onPress={() => onOutcome(item, 'retire')} />
         </View>
       )}
-    </Animated.View>
+    </ReviewSurface>
   );
 }
 
@@ -159,14 +208,9 @@ interface StaleProps {
 
 export function StaleCard({ item, ageLabel, onKeep, onArchive }: StaleProps) {
   const cfg = classConfig(item.classification);
-  const reduced = usePrefersReducedMotion();
   const c = useThemeColors();
   return (
-    <Animated.View
-      style={[styles.card, { backgroundColor: c.card, borderColor: c.hairline }]}
-      layout={LAYOUT}
-      exiting={exitFade(reduced)}
-    >
+    <ReviewSurface>
       <View style={styles.headRow}>
         <LinearGradient
           colors={[cfg.from, cfg.to]}
@@ -189,7 +233,7 @@ export function StaleCard({ item, ageLabel, onKeep, onArchive }: StaleProps) {
         <Pill label="Keep" icon="bookmark" filled onPress={() => onKeep(item.id)} />
         <Pill label="Archive" icon="archive" danger onPress={() => onArchive(item.id)} />
       </View>
-    </Animated.View>
+    </ReviewSurface>
   );
 }
 
@@ -266,12 +310,18 @@ function Pill({
  * `SHADOW.card` is invisible there.
  */
 const styles = StyleSheet.create({
+  // Everything the glass can't hold: the drop shadow (clipped by the material's
+  // own bounds) and the gap to the next card (a margin inside the material
+  // would sit under it instead of below it).
+  cardLift: {
+    borderRadius: RADIUS.lg,
+    marginBottom: 10,
+    ...SHADOW.card,
+  },
   card: {
     borderRadius: RADIUS.lg,
     borderWidth: 1,
     padding: 14,
-    marginBottom: 10,
-    ...SHADOW.card,
   },
   headRow: { flexDirection: 'row', alignItems: 'center' },
   icon: {

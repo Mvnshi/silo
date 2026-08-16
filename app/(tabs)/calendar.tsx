@@ -46,6 +46,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   FadeIn,
+  FadeOut,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -62,7 +63,7 @@ import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import ItemCard from '@/components/ItemCard';
 import PressableScale from '@/components/ui/PressableScale';
-import GlassCard from '@/components/ui/GlassCard';
+import Glass from '@/components/ui/Glass';
 import EmptyState from '@/components/ui/EmptyState';
 import Skeleton from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
@@ -87,8 +88,23 @@ import { createItem } from '@/lib/items';
 import { requestCalendarPermissions, scheduleItemReview, REVIEW_PREFIX } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
 import { parseLocalDate, toLocalDateString } from '@/lib/datetime';
+import { enterFromBottom, exitToBottom, usePrefersReducedMotion } from '@/lib/motion';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+/**
+ * Alpha suffixes appended to the palette's own `card` colour — both palettes
+ * state it as a 6-digit hex, so the `#rrggbbaa` form is all this needs.
+ *
+ * - `TINT` (~18%) is the chrome tint: enough for a small label to hold its
+ *   contrast on bare material, far too little to read as a fill.
+ * - `VEIL` (~65%) is for the two surfaces whose ground is LIVE MAP TILES. The
+ *   map can be anything from white water to a dark park, so those overlays get
+ *   a heavier wash than app chrome does — still far thinner than the opaque
+ *   panel they replace.
+ */
+const GLASS_TINT = '2e';
+const GLASS_VEIL = 'a6';
 
 /** Map camera zoom used for "centre on me" and the initial region. */
 const REGION_DELTA = { latitudeDelta: 0.0922, longitudeDelta: 0.0421 };
@@ -140,6 +156,7 @@ export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const c = useThemeColors();
+  const reduced = usePrefersReducedMotion();
   // Rebuilt only when the appearance flips — this screen paints four panes of
   // small coloured chrome and re-deriving it every render would churn.
   const dyn = useMemo(() => makeDynamicStyles(c), [c]);
@@ -616,13 +633,16 @@ export default function CalendarScreen() {
   }));
 
   /**
-   * Right-edge scroll fade, ending on the control's own surface. Hardcoded to
-   * white it was a glowing bar on dark; the transparent stop is the same card
-   * colour at zero alpha (both palettes give `card` as 6-digit hex, and RN
-   * accepts the #rrggbbaa form) so the ramp never travels through grey.
+   * Right-edge scroll fade. It used to end on the opaque card colour, which was
+   * right when the control was an opaque pill — on glass it would be a solid
+   * plate stuck to the material's right edge. So the ramp now ends on the same
+   * card colour at ~65%: the material densifies and the label dissolves into
+   * it, which is what "there is more to scroll" should look like on glass. The
+   * transparent stop is that colour at zero alpha, so the ramp never travels
+   * through grey.
    */
   const segmentFadeColors = useMemo(
-    () => [`${c.card}00`, c.card] as [string, string],
+    () => [`${c.card}00`, `${c.card}${GLASS_VEIL}`] as [string, string],
     [c.card]
   );
 
@@ -798,10 +818,23 @@ export default function CalendarScreen() {
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Header with Segmented Control */}
+      {/* Header with Segmented Control.
+
+          This is the tab's floating chrome, so it is the material rather than a
+          white pill: the page gradient reads through it and the control stops
+          competing with the content it sits over. The shadow stays on the outer
+          wrapper — glass clips to its own rounded bounds and would swallow it. */}
       <View style={[styles.header, { paddingTop: insets.top + SPACE.md }]}>
-        <View style={[styles.segmentShadow, dyn.segmentShadow]}>
-          <View style={[styles.segmentClip, dyn.segmentClip]}>
+        <View style={styles.segmentShadow}>
+          <Glass
+            variant="regular"
+            radius={RADIUS.pill}
+            // The control's own 1pt rim is drawn in `segmentClip`, so the
+            // material must not add a second one on top of it.
+            bordered={false}
+            tintColor={dyn.chromeTint}
+            style={[styles.segmentClip, dyn.segmentClip]}
+          >
             <ScrollView
               ref={segScrollRef}
               horizontal
@@ -868,12 +901,18 @@ export default function CalendarScreen() {
                 pointerEvents="none"
               />
             )}
-          </View>
+          </Glass>
         </View>
       </View>
 
+      {/* None of the four panes cross-fades on entry any more. Each one now
+          contains Liquid Glass, and an opacity animation on an ancestor of a
+          glass surface stops the material rendering instead of fading it — the
+          pane would arrive with holes where its chrome should be. The segments
+          swap instantly, which is what a segmented control does anyway; Today's
+          own rows keep their staggered entrances. */}
       {viewMode === 'today' && (
-        <Animated.View style={styles.pane} entering={FadeIn.duration(DURATION.fast)}>
+        <Animated.View style={styles.pane}>
           <TodayView
             allItems={allItems}
             events={todayFeed}
@@ -893,9 +932,17 @@ export default function CalendarScreen() {
       )}
 
       {viewMode === 'calendar' && (
-        <Animated.View style={styles.calendarContainer} entering={FadeIn.duration(DURATION.fast)}>
-          {/* View Mode Toggle (Day/Week) */}
-          <View style={[styles.viewModeToggle, dyn.viewModeToggle]}>
+        <Animated.View style={styles.calendarContainer}>
+          {/* View Mode Toggle (Day/Week) — floating chrome over the page, so it
+              takes the material. The active segment keeps its brand fill: that
+              is a surface, not a material. */}
+          <Glass
+            variant="regular"
+            radius={RADIUS.pill}
+            bordered={false}
+            tintColor={dyn.chromeTint}
+            style={[styles.viewModeToggle, dyn.viewModeToggle]}
+          >
             <PressableScale
               haptic="selection"
               selected={calendarViewMode === 'day'}
@@ -942,143 +989,161 @@ export default function CalendarScreen() {
                 Week
               </Text>
             </PressableScale>
-          </View>
+          </Glass>
 
           {calendarViewMode === 'day' ? (
-            /* Day View */
-            <View style={[styles.dayViewContainer, dyn.dayViewContainer]}>
-              {/* Day Navigation */}
-              <View style={styles.dayHeader}>
-                <PressableScale
-                  haptic="light"
-                  onPress={() => setSelectedDate(addDays(selectedDate, -1))}
-                  style={styles.dayNavButton}
-                  accessibilityLabel="Previous day"
-                >
-                  <Ionicons name="chevron-back" size={24} color={c.textSecondary} />
-                </PressableScale>
-                <View style={styles.dayTitleContainer}>
-                  <Text style={[styles.dayTitle, dyn.dayTitle]}>
-                    {format(selectedDate, 'EEEE, MMMM d')}
-                  </Text>
+            /* Day View. The shadow that separated this panel lives on the outer
+               wrapper now — a glass surface can't cast one from inside its own
+               clipped bounds. */
+            <View style={styles.panelLift}>
+              <Glass
+                variant="regular"
+                radius={RADIUS.lg}
+                bordered={false}
+                tintColor={dyn.chromeTint}
+                style={[styles.dayViewContainer, dyn.dayViewContainer]}
+              >
+                {/* Day Navigation */}
+                <View style={styles.dayHeader}>
                   <PressableScale
-                    haptic="selection"
-                    onPress={() => setSelectedDate(new Date())}
-                    style={styles.todayButton}
-                    accessibilityLabel="Jump to today"
+                    haptic="light"
+                    onPress={() => setSelectedDate(addDays(selectedDate, -1))}
+                    style={styles.dayNavButton}
+                    accessibilityLabel="Previous day"
                   >
-                    <Text style={styles.todayButtonText}>Today</Text>
+                    <Ionicons name="chevron-back" size={24} color={c.textSecondary} />
+                  </PressableScale>
+                  <View style={styles.dayTitleContainer}>
+                    <Text style={[styles.dayTitle, dyn.dayTitle]}>
+                      {format(selectedDate, 'EEEE, MMMM d')}
+                    </Text>
+                    <PressableScale
+                      haptic="selection"
+                      onPress={() => setSelectedDate(new Date())}
+                      style={styles.todayButton}
+                      accessibilityLabel="Jump to today"
+                    >
+                      <Text style={styles.todayButtonText}>Today</Text>
+                    </PressableScale>
+                  </View>
+                  <PressableScale
+                    haptic="light"
+                    onPress={() => setSelectedDate(addDays(selectedDate, 1))}
+                    style={styles.dayNavButton}
+                    accessibilityLabel="Next day"
+                  >
+                    <Ionicons name="chevron-forward" size={24} color={c.textSecondary} />
                   </PressableScale>
                 </View>
-                <PressableScale
-                  haptic="light"
-                  onPress={() => setSelectedDate(addDays(selectedDate, 1))}
-                  style={styles.dayNavButton}
-                  accessibilityLabel="Next day"
-                >
-                  <Ionicons name="chevron-forward" size={24} color={c.textSecondary} />
-                </PressableScale>
-              </View>
+              </Glass>
             </View>
           ) : (
-            /* Week View */
-            <View style={[styles.weekViewContainer, dyn.weekViewContainer]}>
-              {/* Week Navigation */}
-              <View style={[styles.weekViewHeader, dyn.weekViewHeader]}>
-                <PressableScale
-                  haptic="light"
-                  onPress={() => {
-                    const prevWeek = addDays(currentWeekStart, -7);
-                    setCurrentWeekStart(prevWeek);
-                    setSelectedDate(prevWeek);
-                  }}
-                  style={styles.weekNavButton}
-                  accessibilityLabel="Previous week"
-                >
-                  <Ionicons name="chevron-back" size={24} color={c.textSecondary} />
-                </PressableScale>
-                <View style={styles.weekTitleContainer}>
-                  <Text style={[styles.weekTitle, dyn.weekTitle]}>
-                    {format(currentWeekStart, 'MMM d')} - {format(addDays(currentWeekStart, 6), 'MMM d, yyyy')}
-                  </Text>
+            /* Week View — same treatment: lift outside, material inside. */
+            <View style={styles.panelLift}>
+              <Glass
+                variant="regular"
+                radius={RADIUS.lg}
+                bordered={false}
+                tintColor={dyn.chromeTint}
+                style={[styles.weekViewContainer, dyn.weekViewContainer]}
+              >
+                {/* Week Navigation */}
+                <View style={[styles.weekViewHeader, dyn.weekViewHeader]}>
                   <PressableScale
-                    haptic="selection"
+                    haptic="light"
                     onPress={() => {
-                      const today = new Date();
-                      setCurrentWeekStart(startOfWeek(today, { weekStartsOn: 0 }));
-                      setSelectedDate(today);
+                      const prevWeek = addDays(currentWeekStart, -7);
+                      setCurrentWeekStart(prevWeek);
+                      setSelectedDate(prevWeek);
                     }}
-                    style={styles.todayButton}
-                    accessibilityLabel="Jump to this week"
+                    style={styles.weekNavButton}
+                    accessibilityLabel="Previous week"
                   >
-                    <Text style={styles.todayButtonText}>Today</Text>
+                    <Ionicons name="chevron-back" size={24} color={c.textSecondary} />
+                  </PressableScale>
+                  <View style={styles.weekTitleContainer}>
+                    <Text style={[styles.weekTitle, dyn.weekTitle]}>
+                      {format(currentWeekStart, 'MMM d')} - {format(addDays(currentWeekStart, 6), 'MMM d, yyyy')}
+                    </Text>
+                    <PressableScale
+                      haptic="selection"
+                      onPress={() => {
+                        const today = new Date();
+                        setCurrentWeekStart(startOfWeek(today, { weekStartsOn: 0 }));
+                        setSelectedDate(today);
+                      }}
+                      style={styles.todayButton}
+                      accessibilityLabel="Jump to this week"
+                    >
+                      <Text style={styles.todayButtonText}>Today</Text>
+                    </PressableScale>
+                  </View>
+                  <PressableScale
+                    haptic="light"
+                    onPress={() => {
+                      const nextWeek = addDays(currentWeekStart, 7);
+                      setCurrentWeekStart(nextWeek);
+                      setSelectedDate(nextWeek);
+                    }}
+                    style={styles.weekNavButton}
+                    accessibilityLabel="Next week"
+                  >
+                    <Ionicons name="chevron-forward" size={24} color={c.textSecondary} />
                   </PressableScale>
                 </View>
-                <PressableScale
-                  haptic="light"
-                  onPress={() => {
-                    const nextWeek = addDays(currentWeekStart, 7);
-                    setCurrentWeekStart(nextWeek);
-                    setSelectedDate(nextWeek);
-                  }}
-                  style={styles.weekNavButton}
-                  accessibilityLabel="Next week"
-                >
-                  <Ionicons name="chevron-forward" size={24} color={c.textSecondary} />
-                </PressableScale>
-              </View>
 
-              {/* Week Days */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={styles.weekDaysContainer}>
-                  {weekDays.map((date, index) => {
-                    const isSelected = isSameDay(date, selectedDate);
-                    const isToday = isSameDay(date, new Date());
-                    const eventCount = getAllEventsForDate(date).length;
+                {/* Week Days */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={styles.weekDaysContainer}>
+                    {weekDays.map((date, index) => {
+                      const isSelected = isSameDay(date, selectedDate);
+                      const isToday = isSameDay(date, new Date());
+                      const eventCount = getAllEventsForDate(date).length;
 
-                    return (
-                      <PressableScale
-                        key={index}
-                        haptic="selection"
-                        selected={isSelected}
-                        style={[
-                          styles.weekDayCell,
-                          dyn.weekDayCell,
-                          isToday && dyn.weekDayCellToday,
-                          // Brand fill last: the selected cell outranks both the
-                          // resting card surface and today's soft tint.
-                          isSelected && styles.weekDayCellSelected,
-                        ]}
-                        onPress={() => setSelectedDate(date)}
-                        accessibilityLabel={format(date, 'EEEE, MMMM d')}
-                      >
-                        <Text style={[styles.weekDayName, dyn.weekDayName]}>
-                          {format(date, 'EEE')}
-                        </Text>
-                        <Text
+                      return (
+                        <PressableScale
+                          key={index}
+                          haptic="selection"
+                          selected={isSelected}
                           style={[
-                            styles.weekDayNumber,
-                            dyn.weekDayNumber,
-                            isToday && dyn.weekDayNumberToday,
-                            isSelected && styles.weekDayNumberSelected,
+                            styles.weekDayCell,
+                            dyn.weekDayCell,
+                            isToday && dyn.weekDayCellToday,
+                            // Brand fill last: the selected cell outranks both the
+                            // resting card surface and today's soft tint.
+                            isSelected && styles.weekDayCellSelected,
                           ]}
+                          onPress={() => setSelectedDate(date)}
+                          accessibilityLabel={format(date, 'EEEE, MMMM d')}
                         >
-                          {format(date, 'd')}
-                        </Text>
-                        {eventCount > 0 && (
-                          <View
+                          <Text style={[styles.weekDayName, dyn.weekDayName]}>
+                            {format(date, 'EEE')}
+                          </Text>
+                          <Text
                             style={[
-                              styles.weekEventIndicator,
-                              dyn.weekEventIndicator,
-                              isSelected && styles.weekEventIndicatorSelected,
+                              styles.weekDayNumber,
+                              dyn.weekDayNumber,
+                              isToday && dyn.weekDayNumberToday,
+                              isSelected && styles.weekDayNumberSelected,
                             ]}
-                          />
-                        )}
-                      </PressableScale>
-                    );
-                  })}
-                </View>
-              </ScrollView>
+                          >
+                            {format(date, 'd')}
+                          </Text>
+                          {eventCount > 0 && (
+                            <View
+                              style={[
+                                styles.weekEventIndicator,
+                                dyn.weekEventIndicator,
+                                isSelected && styles.weekEventIndicatorSelected,
+                              ]}
+                            />
+                          )}
+                        </PressableScale>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              </Glass>
             </View>
           )}
 
@@ -1280,7 +1345,7 @@ export default function CalendarScreen() {
 
       {viewMode === 'map' && (
         /* Map View */
-        <Animated.View style={styles.mapContainer} entering={FadeIn.duration(DURATION.fast)}>
+        <Animated.View style={styles.mapContainer}>
           <MapView
             ref={mapRef}
             style={styles.map}
@@ -1318,11 +1383,22 @@ export default function CalendarScreen() {
             ))}
           </MapView>
 
-          {/* Location refused: say so, and offer the only route back. No `tint`
-              on the glass: this notice sits on the page chrome, not on media,
-              so it follows the app appearance. */}
+          {/* Location refused: say so, and offer the only route back.
+
+              The textbook case for `clear`: chrome floating over live content,
+              where the map has to keep reading through. No `tint` prop — the
+              notice is app chrome sitting on the map, not an overlay on media,
+              so it follows the appearance. The veil is the heavier of the two
+              tints because the ground here is map tiles, which can be anything
+              from white water to a dark park. */}
           {locationStatus === 'denied' && (
-            <GlassCard intensity={60} radius={RADIUS.lg} style={styles.locationNotice}>
+            <Glass
+              variant="clear"
+              intensity={60}
+              radius={RADIUS.lg}
+              tintColor={dyn.mapVeil}
+              style={styles.locationNotice}
+            >
               <View style={styles.locationNoticeInner}>
                 <Ionicons name="navigate-circle-outline" size={22} color={c.brand} />
                 <View style={{ flex: 1, minWidth: 0 }}>
@@ -1342,57 +1418,92 @@ export default function CalendarScreen() {
                   <Text style={styles.locationNoticeBtnText}>Settings</Text>
                 </PressableScale>
               </View>
-            </GlassCard>
+            </Glass>
           )}
 
-          {/* Map Items List */}
+          {/* Map Items List — the other overlay sitting on live map tiles, so
+              the same `clear` material and the same veil. The floating shadow
+              moved to the wrapper: glass clips it. What used to be a 92% white
+              wash on light and a fully opaque sheet on dark is now one surface
+              in both appearances, with a top hairline where the shadow used to
+              do the separating. */}
           {itemsWithLocations.length > 0 ? (
-            <View style={[styles.mapItemsList, dyn.mapItemsList]}>
-              <Text style={[styles.mapSectionTitle, dyn.mapSectionTitle]}>
-                Saved Places ({itemsWithLocations.length})
-              </Text>
-              <FlatList
-                data={itemsWithLocations}
-                renderItem={({ item }) => (
-                  <PressableScale
-                    style={[styles.mapItemCard, dyn.mapItemCard]}
-                    scaleTo={0.985}
-                    onPress={() => handleItemPress(item.id)}
-                  >
-                    <Ionicons name="location" size={20} color={c.brand} />
-                    <View style={styles.mapItemContent}>
-                      <Text style={[styles.mapItemTitle, dyn.mapItemTitle]} numberOfLines={1}>
-                        {item.title}
-                      </Text>
-                      <Text style={[styles.mapItemLocation, dyn.mapItemLocation]} numberOfLines={1}>
-                        {item.place_name || item.place_address || 'Location'}
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color={c.decorative} />
-                  </PressableScale>
-                )}
-                keyExtractor={item => item.id}
-                contentContainerStyle={[
-                  { paddingBottom: insets.bottom + 120 }
-                ]}
-                contentInsetAdjustmentBehavior="automatic"
-              />
+            <View style={styles.mapPanelLift}>
+              <Glass
+                variant="clear"
+                radius={RADIUS.lg}
+                bordered={false}
+                tintColor={dyn.mapVeil}
+                style={[styles.mapItemsList, dyn.mapItemsList]}
+              >
+                <Text style={[styles.mapSectionTitle, dyn.mapSectionTitle]}>
+                  Saved Places ({itemsWithLocations.length})
+                </Text>
+                <FlatList
+                  data={itemsWithLocations}
+                  renderItem={({ item }) => (
+                    <PressableScale
+                      style={[styles.mapItemCard, dyn.mapItemCard]}
+                      scaleTo={0.985}
+                      onPress={() => handleItemPress(item.id)}
+                    >
+                      <Ionicons name="location" size={20} color={c.brand} />
+                      <View style={styles.mapItemContent}>
+                        <Text style={[styles.mapItemTitle, dyn.mapItemTitle]} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        <Text
+                          style={[styles.mapItemLocation, dyn.mapItemLocation]}
+                          numberOfLines={1}
+                        >
+                          {item.place_name || item.place_address || 'Location'}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={c.decorative} />
+                    </PressableScale>
+                  )}
+                  keyExtractor={item => item.id}
+                  contentContainerStyle={[
+                    { paddingBottom: insets.bottom + 120 }
+                  ]}
+                  contentInsetAdjustmentBehavior="automatic"
+                />
+              </Glass>
             </View>
           ) : (
-            <View style={[styles.mapItemsList, dyn.mapItemsList, styles.mapEmptyPanel]}>
-              <EmptyState
-                icon="location-outline"
-                title="No places pinned yet"
-                subtitle="Save something with an address and it lands on this map."
-              />
+            <View style={styles.mapPanelLift}>
+              <Glass
+                variant="clear"
+                radius={RADIUS.lg}
+                bordered={false}
+                tintColor={dyn.mapVeil}
+                style={[styles.mapItemsList, dyn.mapItemsList, styles.mapEmptyPanel]}
+              >
+                <EmptyState
+                  icon="location-outline"
+                  title="No places pinned yet"
+                  subtitle="Save something with an address and it lands on this map."
+                />
+              </Glass>
             </View>
           )}
         </Animated.View>
       )}
 
       {viewMode === 'bucketlist' && (
-        <Animated.View style={styles.bucketlistContainer} entering={FadeIn.duration(DURATION.fast)}>
-          <View style={[styles.bucketlistHeader, dyn.bucketlistHeader]}>
+        <Animated.View style={styles.bucketlistContainer}>
+          {/* The pane's header block: edge-to-edge chrome the list runs beneath,
+              so it takes the material and its bottom hairline does the
+              separating. `radius={0}` because it spans the full width — the
+              default rounds corners that have no edge to round. The progress
+              track inside stays opaque: it sits ON the material. */}
+          <Glass
+            variant="regular"
+            radius={0}
+            bordered={false}
+            tintColor={dyn.chromeTint}
+            style={[styles.bucketlistHeader, dyn.bucketlistHeader]}
+          >
             <Text style={[styles.bucketlistTitle, dyn.bucketlistTitle]}>
               {bucketlistItems.length > 0
                 ? `${bucketDone} of ${bucketlistItems.length} done`
@@ -1406,7 +1517,7 @@ export default function CalendarScreen() {
                 <Animated.View style={[styles.progressFill, dyn.progressFill, bucketFillStyle]} />
               </View>
             )}
-          </View>
+          </Glass>
 
           {bucketlistItems.length === 0 ? (
             <View style={styles.emptyContainer}>
@@ -1459,179 +1570,210 @@ export default function CalendarScreen() {
         </Animated.View>
       )}
 
-      {/* Add Event Modal */}
+      {/* Add Event Modal — the same sheet treatment as ItemActionSheet.
+          `animationType="none"` because the sheet now brings its own entrance:
+          the OS slide would have been fine, but the scrim has to fade as a
+          SIBLING of the material rather than as its parent, and that only works
+          if this component owns both animations. */}
       <Modal
         visible={showAddEventModal}
-        animationType="slide"
+        animationType="none"
         transparent={true}
         onRequestClose={closeAddEventModal}
       >
-        <View style={[styles.modalOverlay, dyn.modalOverlay]}>
-          {/* Tap-outside-to-dismiss. A plain Pressable, not PressableScale —
-              scaling the scrim on touch would look like a glitch. */}
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={closeAddEventModal}
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss"
-          />
-          <View style={[styles.modalContent, dyn.modalContent]}>
-            <View style={[styles.modalHeader, dyn.modalHeader]}>
-              <Text style={[styles.modalTitle, dyn.modalTitle]}>New Event</Text>
-              <PressableScale
-                haptic="light"
-                onPress={closeAddEventModal}
-                style={styles.modalCloseButton}
-                accessibilityLabel="Close"
-              >
-                <Ionicons name="close" size={24} color={c.textSecondary} />
-              </PressableScale>
-            </View>
+        <View style={styles.modalRoot}>
+          {/* The scrim fades on its own; an opacity animation above the glass
+              would delete the sheet instead of fading it in with the scrim.
+              Tap-outside-to-dismiss lives here — a plain Pressable, not
+              PressableScale, since scaling a scrim reads as a glitch. */}
+          <Animated.View
+            entering={FadeIn.duration(DURATION.fast)}
+            exiting={FadeOut.duration(DURATION.instant)}
+            style={[StyleSheet.absoluteFill, dyn.scrim]}
+          >
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={closeAddEventModal}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss"
+            />
+          </Animated.View>
 
-            {/* Scrollable: two open 200pt spinners used to push "Create Event"
-                off the bottom of an 80%-height sheet with no way to reach it. */}
-            <ScrollView
-              style={styles.modalBody}
-              contentContainerStyle={styles.modalBodyContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
+          {/* Transform-only entrance, and the lift that separated the opaque
+              sheet — glass can't cast a shadow past its own clipped bounds. The
+              80% cap lives out here too: a percentage height needs a parent
+              with a definite one, which the flex:1 root is and the sheet is
+              not. */}
+          <Animated.View
+            entering={enterFromBottom(0, reduced)}
+            exiting={exitToBottom(reduced)}
+            style={styles.modalLift}
+          >
+            <Glass
+              variant="regular"
+              radius={RADIUS.lg}
+              // Only the top edge is on screen, and it's drawn in `dyn`.
+              bordered={false}
+              tintColor={dyn.sheetTint}
+              style={[styles.modalContent, dyn.modalContent]}
             >
-              <TextInput
-                style={[styles.input, dyn.input]}
-                placeholder="Event title"
-                value={newEventTitle}
-                onChangeText={setNewEventTitle}
-                placeholderTextColor={c.textPlaceholder}
-              />
-
-              <PressableScale
-                haptic="light"
-                style={[styles.pickerButton, dyn.pickerButton]}
-                // Mutually exclusive with the time picker — two open spinners
-                // don't fit the sheet.
-                onPress={() => {
-                  setShowTimePicker(false);
-                  setShowDatePicker(v => !v);
-                }}
-                accessibilityLabel="Choose date"
-              >
-                <Ionicons name="calendar-outline" size={24} color={c.brand} />
-                <View style={styles.pickerContent}>
-                  <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Date</Text>
-                  <Text style={[styles.pickerValue, dyn.pickerValue]}>
-                    {format(newEventDate, 'MMMM d, yyyy')}
-                  </Text>
-                </View>
-                <Ionicons
-                  name={showDatePicker ? 'chevron-up' : 'chevron-down'}
-                  size={18}
-                  color={c.decorative}
-                />
-              </PressableScale>
-
-              {showDatePicker && (
-                <View style={[styles.pickerContainer, dyn.pickerContainer]}>
-                  <DateTimePicker
-                    value={newEventDate}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    // The spinner is a native view: it can't inherit our palette,
-                    // so it's told which appearance it is being drawn into.
-                    themeVariant={c.appearance}
-                    onChange={(event, selectedDate) => {
-                      if (Platform.OS === 'android') {
-                        setShowDatePicker(false);
-                      }
-                      if (selectedDate) {
-                        setNewEventDate(selectedDate);
-                      }
-                    }}
-                    minimumDate={new Date()}
-                    style={Platform.OS === 'ios' ? styles.iosPicker : undefined}
-                    textColor={Platform.OS === 'ios' ? c.text : undefined}
-                  />
-                  {Platform.OS === 'ios' && (
-                    <PressableScale
-                      haptic="light"
-                      style={styles.pickerDoneButton}
-                      onPress={() => setShowDatePicker(false)}
-                    >
-                      <Text style={styles.pickerDoneText}>Done</Text>
-                    </PressableScale>
-                  )}
-                </View>
-              )}
-
-              <PressableScale
-                haptic="light"
-                style={[styles.pickerButton, dyn.pickerButton]}
-                onPress={() => {
-                  setShowDatePicker(false);
-                  setShowTimePicker(v => !v);
-                }}
-                accessibilityLabel="Choose time"
-              >
-                <Ionicons name="time-outline" size={24} color={c.brand} />
-                <View style={styles.pickerContent}>
-                  <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Time</Text>
-                  <Text style={[styles.pickerValue, dyn.pickerValue]}>
-                    {format(newEventTime, 'h:mm a')}
-                  </Text>
-                </View>
-                <Ionicons
-                  name={showTimePicker ? 'chevron-up' : 'chevron-down'}
-                  size={18}
-                  color={c.decorative}
-                />
-              </PressableScale>
-
-              {showTimePicker && (
-                <View style={[styles.pickerContainer, dyn.pickerContainer]}>
-                  <DateTimePicker
-                    value={newEventTime}
-                    mode="time"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    themeVariant={c.appearance}
-                    onChange={(event, selectedTime) => {
-                      if (Platform.OS === 'android') {
-                        setShowTimePicker(false);
-                      }
-                      if (selectedTime) {
-                        setNewEventTime(selectedTime);
-                      }
-                    }}
-                    style={Platform.OS === 'ios' ? styles.iosPicker : undefined}
-                    textColor={Platform.OS === 'ios' ? c.text : undefined}
-                  />
-                  {Platform.OS === 'ios' && (
-                    <PressableScale
-                      haptic="light"
-                      style={styles.pickerDoneButton}
-                      onPress={() => setShowTimePicker(false)}
-                    >
-                      <Text style={styles.pickerDoneText}>Done</Text>
-                    </PressableScale>
-                  )}
-                </View>
-              )}
-
-              <PressableScale
-                haptic="light"
-                style={styles.saveButton}
-                onPress={handleCreateEvent}
-                accessibilityLabel="Create event"
-              >
-                <LinearGradient
-                  colors={GRADIENTS.brand}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.saveButtonGradient}
+              <View style={[styles.modalHeader, dyn.modalHeader]}>
+                <Text style={[styles.modalTitle, dyn.modalTitle]}>New Event</Text>
+                <PressableScale
+                  haptic="light"
+                  onPress={closeAddEventModal}
+                  style={styles.modalCloseButton}
+                  accessibilityLabel="Close"
                 >
-                  <Text style={styles.saveButtonText}>Create Event</Text>
-                </LinearGradient>
-              </PressableScale>
-            </ScrollView>
-          </View>
+                  <Ionicons name="close" size={24} color={c.textSecondary} />
+                </PressableScale>
+              </View>
+
+              {/* Scrollable: two open 200pt spinners used to push "Create Event"
+                  off the bottom of an 80%-height sheet with no way to reach it. */}
+              <ScrollView
+                style={styles.modalBody}
+                contentContainerStyle={styles.modalBodyContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <TextInput
+                  style={[styles.input, dyn.input]}
+                  placeholder="Event title"
+                  value={newEventTitle}
+                  onChangeText={setNewEventTitle}
+                  placeholderTextColor={c.textPlaceholder}
+                />
+
+                <PressableScale
+                  haptic="light"
+                  style={[styles.pickerButton, dyn.pickerButton]}
+                  // Mutually exclusive with the time picker — two open spinners
+                  // don't fit the sheet.
+                  onPress={() => {
+                    setShowTimePicker(false);
+                    setShowDatePicker(v => !v);
+                  }}
+                  accessibilityLabel="Choose date"
+                >
+                  <Ionicons name="calendar-outline" size={24} color={c.brand} />
+                  <View style={styles.pickerContent}>
+                    <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Date</Text>
+                    <Text style={[styles.pickerValue, dyn.pickerValue]}>
+                      {format(newEventDate, 'MMMM d, yyyy')}
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name={showDatePicker ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color={c.decorative}
+                  />
+                </PressableScale>
+
+                {showDatePicker && (
+                  <View style={[styles.pickerContainer, dyn.pickerContainer]}>
+                    <DateTimePicker
+                      value={newEventDate}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      // The spinner is a native view: it can't inherit our palette,
+                      // so it's told which appearance it is being drawn into.
+                      themeVariant={c.appearance}
+                      onChange={(event, selectedDate) => {
+                        if (Platform.OS === 'android') {
+                          setShowDatePicker(false);
+                        }
+                        if (selectedDate) {
+                          setNewEventDate(selectedDate);
+                        }
+                      }}
+                      minimumDate={new Date()}
+                      style={Platform.OS === 'ios' ? styles.iosPicker : undefined}
+                      textColor={Platform.OS === 'ios' ? c.text : undefined}
+                    />
+                    {Platform.OS === 'ios' && (
+                      <PressableScale
+                        haptic="light"
+                        style={styles.pickerDoneButton}
+                        onPress={() => setShowDatePicker(false)}
+                      >
+                        <Text style={styles.pickerDoneText}>Done</Text>
+                      </PressableScale>
+                    )}
+                  </View>
+                )}
+
+                <PressableScale
+                  haptic="light"
+                  style={[styles.pickerButton, dyn.pickerButton]}
+                  onPress={() => {
+                    setShowDatePicker(false);
+                    setShowTimePicker(v => !v);
+                  }}
+                  accessibilityLabel="Choose time"
+                >
+                  <Ionicons name="time-outline" size={24} color={c.brand} />
+                  <View style={styles.pickerContent}>
+                    <Text style={[styles.pickerLabel, dyn.pickerLabel]}>Time</Text>
+                    <Text style={[styles.pickerValue, dyn.pickerValue]}>
+                      {format(newEventTime, 'h:mm a')}
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name={showTimePicker ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color={c.decorative}
+                  />
+                </PressableScale>
+
+                {showTimePicker && (
+                  <View style={[styles.pickerContainer, dyn.pickerContainer]}>
+                    <DateTimePicker
+                      value={newEventTime}
+                      mode="time"
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      themeVariant={c.appearance}
+                      onChange={(event, selectedTime) => {
+                        if (Platform.OS === 'android') {
+                          setShowTimePicker(false);
+                        }
+                        if (selectedTime) {
+                          setNewEventTime(selectedTime);
+                        }
+                      }}
+                      style={Platform.OS === 'ios' ? styles.iosPicker : undefined}
+                      textColor={Platform.OS === 'ios' ? c.text : undefined}
+                    />
+                    {Platform.OS === 'ios' && (
+                      <PressableScale
+                        haptic="light"
+                        style={styles.pickerDoneButton}
+                        onPress={() => setShowTimePicker(false)}
+                      >
+                        <Text style={styles.pickerDoneText}>Done</Text>
+                      </PressableScale>
+                    )}
+                  </View>
+                )}
+
+                <PressableScale
+                  haptic="light"
+                  style={styles.saveButton}
+                  onPress={handleCreateEvent}
+                  accessibilityLabel="Create event"
+                >
+                  <LinearGradient
+                    colors={GRADIENTS.brand}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.saveButtonGradient}
+                  >
+                    <Text style={styles.saveButtonText}>Create Event</Text>
+                  </LinearGradient>
+                </PressableScale>
+              </ScrollView>
+            </Glass>
+          </Animated.View>
         </View>
       </Modal>
     </View>
@@ -1654,19 +1796,34 @@ function makeDynamicStyles(c: ThemeColors) {
       : {};
   return {
     container: { backgroundColor: c.page },
-    segmentShadow: { backgroundColor: c.card },
+    /**
+     * The tint every glass surface on this screen carries. Glass borrows its
+     * colour from whatever is behind it, and on light that is a pale violet
+     * page — small labels on bare material drift under AA. ~18% of the
+     * palette's own card colour holds them without reading as a fill.
+     */
+    chromeTint: `${c.card}${GLASS_TINT}`,
+    /** The heavier wash, for the two overlays whose ground is live map tiles. */
+    mapVeil: `${c.card}${GLASS_VEIL}`,
+    /** The add-event sheet: same tint, named for what it is. */
+    sheetTint: `${c.card}${GLASS_TINT}`,
+    // Border only, on every surface that became glass: an opaque fill on the
+    // same node would paint straight over the material.
     segmentClip: { borderColor: c.hairline },
     segmentText: { color: c.textSecondary },
-    viewModeToggle: { backgroundColor: c.card, borderColor: c.hairline },
+    viewModeToggle: { borderColor: c.hairline },
     viewModeText: { color: c.textSecondary },
-    dayViewContainer: { backgroundColor: c.card, borderColor: c.hairline },
+    dayViewContainer: { borderColor: c.hairline },
     dayTitle: { color: c.text },
-    weekViewContainer: { backgroundColor: c.card, borderColor: c.hairline },
+    weekViewContainer: { borderColor: c.hairline },
     weekViewHeader: { borderBottomColor: c.hairline },
     weekTitle: { color: c.text },
-    // The cell sits on the week panel, which is the same card surface — on dark
-    // the hairline is what makes each day read as its own tap target.
-    weekDayCell: { backgroundColor: c.card, ...darkEdge },
+    // No resting fill: the cell used to be the same card colour as the panel it
+    // sits on, so it painted nothing — and on glass that same fill would turn
+    // every day into a visible opaque chip. Today's tint and the selected
+    // brand fill still paint. On dark the hairline keeps each day reading as
+    // its own tap target.
+    weekDayCell: { ...darkEdge },
     // Today's tint: BRAND[100] verbatim on light, and the palette's soft violet
     // on dark, where an opaque BRAND[100] block would glow.
     weekDayCellToday: {
@@ -1688,23 +1845,19 @@ function makeDynamicStyles(c: ThemeColors) {
     eventCardTime: { color: c.textTertiary },
     locationNoticeTitle: { color: c.text },
     locationNoticeSub: { color: c.textSecondary },
-    // Floats over live map tiles, so light keeps its translucency. On dark the
-    // same 92% wash over dark tiles reads as grey mud — the sheet goes opaque,
-    // and the top hairline replaces the shadow that near-black swallows.
-    mapItemsList:
-      c.appearance === 'dark'
-        ? {
-            backgroundColor: c.card,
-            borderTopWidth: StyleSheet.hairlineWidth,
-            borderTopColor: c.hairline,
-          }
-        : { backgroundColor: 'rgba(255, 255, 255, 0.92)' },
+    // One surface in both appearances now: the material carries the
+    // translucency that a hand-mixed 92% white used to fake on light, and the
+    // top hairline is the only edge on screen (the panel is flush with the
+    // bottom of the phone).
+    mapItemsList: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline },
     mapSectionTitle: { color: c.text },
     mapItemCard: { borderBottomColor: c.hairline },
     mapItemTitle: { color: c.text },
     mapItemLocation: { color: c.textTertiary },
-    modalOverlay: { backgroundColor: c.scrim },
-    modalContent: { backgroundColor: c.card },
+    scrim: { backgroundColor: c.scrim },
+    // No fill: the glass IS the sheet. What is left to draw is the rim on the
+    // one edge you can see — the top.
+    modalContent: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.hairline },
     modalHeader: { borderBottomColor: c.hairline },
     modalTitle: { color: c.text },
     input: { backgroundColor: c.field, color: c.text },
@@ -1714,7 +1867,7 @@ function makeDynamicStyles(c: ThemeColors) {
     // Card-on-card inside the sheet: on dark only the hairline says where the
     // spinner's panel starts.
     pickerContainer: { backgroundColor: c.card, ...darkEdge },
-    bucketlistHeader: { backgroundColor: c.card, borderBottomColor: c.hairline },
+    bucketlistHeader: { borderBottomColor: c.hairline },
     bucketlistTitle: { color: c.text },
     bucketlistSubtitle: { color: c.textSecondary },
     progressTrack: { backgroundColor: c.field },
@@ -1734,8 +1887,9 @@ const styles = StyleSheet.create({
     paddingBottom: SPACE.md,
     paddingHorizontal: SPACE.base,
   },
-  // Shadow and clipping have to be separate views: `overflow: hidden` (needed
-  // for the scroll fade + pill) clips an iOS shadow off the same node.
+  // Shadow and material have to be separate views: the glass clips to its own
+  // rounded bounds, and `overflow: hidden` on that node takes an iOS shadow
+  // with it.
   segmentShadow: {
     borderRadius: RADIUS.pill,
     ...SHADOW.card,
@@ -1744,6 +1898,13 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     overflow: 'hidden',
     borderWidth: 1,
+  },
+  // Shared by the day and week panels: the lift the glass can't carry.
+  panelLift: {
+    borderRadius: RADIUS.lg,
+    margin: SPACE.md,
+    marginTop: SPACE.sm,
+    ...SHADOW.card,
   },
   segmentedControl: {
     padding: SPACE.xs,
@@ -1814,10 +1975,7 @@ const styles = StyleSheet.create({
   },
   dayViewContainer: {
     borderRadius: RADIUS.lg,
-    margin: SPACE.md,
-    marginTop: SPACE.sm,
     borderWidth: 1,
-    ...SHADOW.card,
   },
   dayHeader: {
     flexDirection: 'row',
@@ -1848,10 +2006,7 @@ const styles = StyleSheet.create({
   },
   weekViewContainer: {
     borderRadius: RADIUS.lg,
-    margin: SPACE.md,
-    marginTop: SPACE.sm,
     borderWidth: 1,
-    ...SHADOW.card,
   },
   weekViewHeader: {
     flexDirection: 'row',
@@ -1974,8 +2129,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // No shadow token here: GlassCard clips to its radius (overflow: hidden),
-  // which would swallow an iOS shadow drawn on the same node.
+  // No shadow token here: the glass clips to its radius (overflow: hidden),
+  // which would swallow an iOS shadow drawn on the same node. The rim it draws
+  // is what separates it from the map.
   locationNotice: {
     position: 'absolute',
     top: SPACE.md,
@@ -2008,16 +2164,25 @@ const styles = StyleSheet.create({
     ...TYPE.caption,
     color: '#fff',
   },
-  mapItemsList: {
+  // Position + lift; the material and its clipping live on the child.
+  mapPanelLift: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
+    borderTopLeftRadius: RADIUS.lg,
+    borderTopRightRadius: RADIUS.lg,
+    ...SHADOW.floating,
+  },
+  mapItemsList: {
     maxHeight: SCREEN_HEIGHT * 0.4,
     borderTopLeftRadius: RADIUS.lg,
     borderTopRightRadius: RADIUS.lg,
+    // Flush with the bottom of the screen, so the corners the `radius` prop
+    // rounds by default get squared off again.
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     paddingTop: SPACE.base,
-    ...SHADOW.floating,
   },
   // EmptyState is `flex: 1`, which collapses to zero inside an auto-height
   // parent — the panel needs a concrete height for it to lay out.
@@ -2048,15 +2213,30 @@ const styles = StyleSheet.create({
   mapItemLocation: {
     ...TYPE.footnote,
   },
-  modalOverlay: {
+  modalRoot: {
     flex: 1,
     justifyContent: 'flex-end',
+  },
+  // The sheet's lift and its height cap. `maxHeight` needs a parent with a
+  // definite height to resolve a percentage against, which `modalRoot` (flex:1)
+  // is and the auto-height sheet is not.
+  modalLift: {
+    maxHeight: '80%',
+    borderTopLeftRadius: RADIUS.lg,
+    borderTopRightRadius: RADIUS.lg,
+    ...SHADOW.floating,
   },
   modalContent: {
     borderTopLeftRadius: RADIUS.lg,
     borderTopRightRadius: RADIUS.lg,
+    // Flush with the bottom of the screen: square off the corners the `radius`
+    // prop rounds by default.
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     paddingBottom: SPACE.xxl,
-    maxHeight: '80%',
+    // Lets the sheet shrink inside the wrapper's 80% cap instead of overflowing
+    // it (flexShrink is not the RN default).
+    flexShrink: 1,
   },
   modalHeader: {
     flexDirection: 'row',

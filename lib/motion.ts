@@ -89,6 +89,24 @@ export function exitToBottom(reduced = false) {
   return SlideOutDown.duration(DURATION.fast);
 }
 
+/**
+ * Rise-in WITHOUT a fade — the entrance for a glass surface.
+ *
+ * `enterList` is the app's normal arrival, but it is a fade, and a fade on a
+ * glass view (or any ancestor) stops the material rendering. `enterHero` is
+ * safe but is a ZoomIn, which pops harder than the surrounding UI. This is the
+ * same rise as the rest of the app, expressed purely as a transform, so a glass
+ * card arrives like everything else.
+ */
+export function enterRise(index = 0, reduced = false) {
+  const delay = staggerDelay(index);
+  if (reduced) return undefined;
+  return SlideInDown.duration(DURATION.base)
+    .delay(delay)
+    .springify()
+    .damping(SPRING.enter.damping);
+}
+
 /*
  * glassSafeNote
  * -------------

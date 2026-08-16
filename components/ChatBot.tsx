@@ -35,6 +35,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { aiSearch, ragQuery } from '@/lib/api';
 import { getItems } from '@/lib/storage';
 import type { Item } from '@/lib/types';
+import Glass from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import EmptyState from '@/components/ui/EmptyState';
 import { usePrefersReducedMotion } from '@/lib/motion';
@@ -56,6 +57,17 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 /** Resting sheet height; shrinks to fit when the keyboard is up. */
 const SHEET_HEIGHT = Math.round(SCREEN_HEIGHT * 0.55);
+
+/** FAB diameter. Also its corner radius — glass rounds to a number, not `pill`. */
+const FAB_SIZE = 60;
+
+/**
+ * The FAB is glass, but it is still the brand control: violet dense enough to
+ * hold a white glyph, thin enough that the material behind it keeps lensing.
+ * Pinned to BRAND[600] in both appearances — the palette's `brand` lightens two
+ * steps on dark, and white on that pale violet drops under 3:1.
+ */
+const FAB_TINT = `${BRAND[600]}bf`;
 
 /** How many retrieved items we hand the model. Enough context, bounded cost. */
 const RETRIEVAL_LIMIT = 30;
@@ -144,15 +156,13 @@ function makeDynamicStyles(c: ThemeColors) {
   return {
     backdropTint: { backgroundColor: c.scrim },
     /**
-     * SHADOW.floating is what lifts the sheet off the page on light; on dark a
-     * shadow over a dark backdrop is invisible, so the hairline draws the edge.
+     * The sheet is glass, so it has no fill — but bare material borrows its
+     * colour from the (blurred, arbitrary) page beneath, and a chat is a wall of
+     * body text. `2e` ≈ 18% of the palette's own card colour: enough to hold the
+     * text, far too little to read as a fill. Both palettes state `card` as a
+     * 6-digit hex, so the alpha suffix is all this needs.
      */
-    sheetInner: {
-      backgroundColor: c.card,
-      ...(c.appearance === 'dark'
-        ? { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline }
-        : null),
-    },
+    sheetTint: `${c.card}2e`,
     header: { borderBottomColor: c.hairline },
     avatar: { backgroundColor: c.brandSoft },
     headerTitle: { color: c.text },
@@ -165,7 +175,12 @@ function makeDynamicStyles(c: ThemeColors) {
     retryText: { color: c.danger },
     sourceChip: { backgroundColor: c.brandSoft, borderColor: c.brandBorder },
     sourceChipText: { color: c.textBrand },
-    composer: { backgroundColor: c.card, borderTopColor: c.hairline },
+    /**
+     * No fill of its own — a solid slab across the bottom of a glass sheet
+     * would read as a patch. The hairline separates it; the field inside it
+     * stays opaque, because a caret over moving material is unreadable.
+     */
+    composer: { borderTopColor: c.hairline },
     input: { backgroundColor: c.field, color: c.text },
     sendButtonDisabled: { backgroundColor: c.field },
   };
@@ -189,11 +204,13 @@ export default function ChatBot({ onClose }: ChatBotProps) {
   const [libraryEmpty, setLibraryEmpty] = useState<boolean | null>(null);
 
   const scrollRef = useRef<ScrollView>(null);
+  /** 0 = parked below the screen, 1 = open. Drives a translate, never opacity. */
   const progress = useSharedValue(0);
 
   useEffect(() => {
-    progress.value = withSpring(isExpanded ? 1 : 0, SPRING.settle);
-  }, [isExpanded, progress]);
+    const target = isExpanded ? 1 : 0;
+    progress.value = reduced ? target : withSpring(target, SPRING.settle);
+  }, [isExpanded, progress, reduced]);
 
   // An empty library has nothing to ground an answer on — check on open so we
   // can short-circuit the model entirely instead of paying for "you have none".
@@ -213,18 +230,25 @@ export default function ChatBot({ onClose }: ChatBotProps) {
   /** Bottom anchor: clears the home indicator without hugging the edge. */
   const bottomGap = Math.max(insets.bottom, SPACE.md) + SPACE.sm;
 
+  /**
+   * Height, keyboard lift, and open/closed — as ONE transform.
+   *
+   * The sheet used to fade and scale in on `progress`. It is glass now, and an
+   * opacity animation on a glass view doesn't fade it, it deletes it: the
+   * closed sheet would have been an empty hole rather than an invisible one. So
+   * "closed" is parked below the screen instead — its own height, plus the gap
+   * it sits in, plus enough to clear the shadow.
+   */
   const sheetStyle = useAnimatedStyle(() => {
     // The keyboard frame is measured from the screen edge, so it already
     // contains the inset we reserve below the sheet.
     const lift = Math.max(keyboard.height.value - bottomGap, 0);
     const available = SCREEN_HEIGHT - insets.top - SPACE.base - bottomGap - lift;
+    const height = Math.min(SHEET_HEIGHT, available);
+    const parked = (1 - progress.value) * (height + bottomGap + SPACE.huge);
     return {
-      height: Math.min(SHEET_HEIGHT, available),
-      opacity: progress.value,
-      transform: [
-        { translateY: -lift + (1 - progress.value) * 24 },
-        { scale: 0.94 + progress.value * 0.06 },
-      ],
+      height,
+      transform: [{ translateY: parked - lift }],
     };
   });
 
@@ -326,11 +350,17 @@ export default function ChatBot({ onClose }: ChatBotProps) {
           accessibilityLabel="Open assistant"
           // Sits above the floating tab bar on every device.
           containerStyle={[styles.fabContainer, { bottom: insets.bottom + 66 }]}
-          style={styles.fab}
+          // Glass clips to its own bounds, so the brand lift that separates the
+          // FAB from the page has to live outside it.
+          style={styles.fabLift}
           onPress={() => setIsExpanded(true)}
         >
-          {/* The FAB is a brand fill in both appearances, so its glyph is white. */}
-          <Ionicons name="chatbubbles" size={26} color={TEXT.inverse} />
+          {/* A control, so the material takes the press (Apple's specular
+              response) — and a brand tint so it still reads as THE button
+              rather than a blurred hole. The glyph stays white on it. */}
+          <Glass interactive radius={FAB_SIZE / 2} tintColor={FAB_TINT} style={styles.fab}>
+            <Ionicons name="chatbubbles" size={26} color={TEXT.inverse} />
+          </Glass>
         </PressableScale>
       )}
 
@@ -358,7 +388,15 @@ export default function ChatBot({ onClose }: ChatBotProps) {
         accessibilityElementsHidden={!isExpanded}
         importantForAccessibility={isExpanded ? 'auto' : 'no-hide-descendants'}
       >
-        <View style={[styles.sheetInner, dyn.sheetInner]}>
+        {/* The material IS the sheet: no fill, just a whisper of the card
+            colour so a wall of chat text stays legible over whatever page the
+            sheet is floating on. */}
+        <Glass
+          variant="regular"
+          radius={RADIUS.xl}
+          tintColor={dyn.sheetTint}
+          style={styles.sheetInner}
+        >
           <View style={[styles.header, dyn.header]}>
             <View style={styles.headerLeft}>
               <View style={[styles.avatar, dyn.avatar]}>
@@ -523,7 +561,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
               </View>
             </>
           )}
-        </View>
+        </Glass>
       </Animated.View>
     </View>
   );
@@ -569,14 +607,17 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: SPACE.lg,
   },
+  // The brand lift, on the wrapper — the glass itself clips to its own bounds,
+  // so a shadow set on it would never escape them.
+  fabLift: {
+    borderRadius: FAB_SIZE / 2,
+    ...SHADOW.brandFloating,
+  },
   fab: {
-    width: 60,
-    height: 60,
-    borderRadius: RADIUS.pill,
-    backgroundColor: BRAND[600],
+    width: FAB_SIZE,
+    height: FAB_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
-    ...SHADOW.brandFloating,
   },
   sheet: {
     position: 'absolute',
@@ -585,12 +626,10 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.xl,
     ...SHADOW.floating,
   },
-  // Clipping lives on an inner view: `overflow: hidden` on the shadow view
-  // would clip the shadow away on iOS.
+  // Fills the animated height above it; Glass supplies the radius, the clip and
+  // the rim, so all this has left to do is stretch.
   sheetInner: {
     flex: 1,
-    borderRadius: RADIUS.xl,
-    overflow: 'hidden',
   },
   header: {
     flexDirection: 'row',

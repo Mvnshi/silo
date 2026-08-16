@@ -3,7 +3,8 @@
  * Profile + stats, real preferences (persisted to UserSettings), device sync
  * ("Your devices"), data export + delete-all (privacy/trust), and About.
  *
- * Sections fade/rise in on mount (index-staggered) and the profile + stat tiles
+ * Every card here is glass (see `RiseIn` for why that changes the entrance),
+ * sections rise in on mount (index-staggered), and the profile + stat tiles
  * hold Skeletons until the first storage read lands, so the screen never shows
  * a frame of placeholder zeroes.
  */
@@ -20,20 +21,27 @@ import {
   ActivityIndicator,
   Platform,
   StyleSheet,
+  type StyleProp,
   type ViewStyle,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated from 'react-native-reanimated';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+} from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { format } from 'date-fns';
+import Glass from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import ScreenHeader from '@/components/ui/ScreenHeader';
 import Skeleton from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
-import { enterList, usePrefersReducedMotion } from '@/lib/motion';
+import { staggerDelay, usePrefersReducedMotion } from '@/lib/motion';
 import {
   getItems,
   getStacks,
@@ -61,6 +69,7 @@ import {
   RADIUS,
   SHADOW,
   SPACE,
+  SPRING,
   TEXT,
   TYPE,
   type ThemeColors,
@@ -92,14 +101,45 @@ const APPEARANCE_OPTIONS: { value: AppearancePreference; label: string }[] = [
 ];
 
 /**
- * On dark, SHADOW.card is effectively invisible — the card and the page are
- * both near-black, so the drop shadow that separates them in light does nothing.
- * A hairline is what actually draws the edge there.
+ * The tint every card on this page hands to `Glass`.
+ *
+ * Bare material borrows its colour from whatever is behind it, and this is a
+ * long scroll of body text over a flat page wash — on the light palette that
+ * lands too close to the text. `2e` ≈ 18% of the palette's own card colour:
+ * enough to hold a row label, far too little to read as a fill. (Both palettes
+ * state `card` as a 6-digit hex, so the alpha suffix is all this needs.)
  */
-function darkEdge(c: ThemeColors): ViewStyle | null {
-  return c.appearance === 'dark'
-    ? { borderWidth: StyleSheet.hairlineWidth, borderColor: c.hairline }
-    : null;
+function cardTint(c: ThemeColors): string {
+  return `${c.card}2e`;
+}
+
+/**
+ * Staggered entrance for a block that holds glass.
+ *
+ * `enterList` is a FADE, and an opacity animation on a glass surface — or on
+ * ANY ancestor of one — stops the material rendering rather than fading it: the
+ * card would arrive as a hole. Every card on this page is glass now, so the
+ * whole screen rises on a transform instead, keeping `enterList`'s stagger.
+ */
+function RiseIn({
+  index,
+  style,
+  children,
+}: {
+  index: number;
+  style?: StyleProp<ViewStyle>;
+  children: React.ReactNode;
+}) {
+  const reduced = usePrefersReducedMotion();
+  const offset = useSharedValue<number>(SPACE.md);
+
+  useEffect(() => {
+    offset.value = reduced ? 0 : withDelay(staggerDelay(index), withSpring(0, SPRING.enter));
+  }, [index, offset, reduced]);
+
+  const rise = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
+
+  return <Animated.View style={[style, rise]}>{children}</Animated.View>;
 }
 
 /**
@@ -136,17 +176,19 @@ function Section({
   index: number;
   children: React.ReactNode;
 }) {
-  const reduced = usePrefersReducedMotion();
   const c = useThemeColors();
   return (
-    <Animated.View style={styles.section} entering={enterList(index, reduced)}>
+    <RiseIn index={index} style={styles.section}>
       <Text style={[styles.sectionTitle, { color: c.textTertiary }]}>{title}</Text>
-      {/* Shadow lives on the outer view: the inner one clips its rows to the
-          corner radius, and `overflow: hidden` would clip the shadow too. */}
-      <View style={[styles.cardShadow, { backgroundColor: c.card }, darkEdge(c)]}>
-        <View style={styles.card}>{children}</View>
+      {/* Shadow lives on the outer view: the glass clips its rows to the corner
+          radius, and `overflow: hidden` would clip the shadow too. The rim the
+          material draws is also what replaces the dark-mode hairline. */}
+      <View style={styles.cardShadow}>
+        <Glass radius={RADIUS.xl} tintColor={cardTint(c)}>
+          {children}
+        </Glass>
       </View>
-    </Animated.View>
+    </RiseIn>
   );
 }
 
@@ -233,6 +275,9 @@ function AppearanceRow({ tint }: { tint: string }) {
         </View>
       </View>
 
+      {/* The track stays an opaque field, not a second material: it sits INSIDE
+          the section's glass, and two stacked materials read as mud. The active
+          segment is a brand fill either way. */}
       <View style={[styles.segment, { backgroundColor: c.field }]}>
         {APPEARANCE_OPTIONS.map((opt) => {
           const active = preference === opt.value;
@@ -269,7 +314,6 @@ export default function Settings() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const toast = useToast();
-  const reduced = usePrefersReducedMotion();
   const c = useThemeColors();
   // Row glyph tints. The brand/accent steps tuned for white go muddy on the
   // dark card, so each lightens a step; the status roles already flip themselves.
@@ -582,55 +626,64 @@ export default function Settings() {
       <ScreenHeader title="Settings" />
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + SPACE.xxxl }}>
-        {/* Profile card */}
-        <Animated.View
-          style={[styles.profileCard, { backgroundColor: c.card }, darkEdge(c)]}
-          entering={enterList(ORDER.profile, reduced)}
-        >
-          {/* Brand gradient + white glyph in both appearances — this is a brand
-              surface, not a page surface. */}
-          <LinearGradient
-            colors={GRADIENTS.brand}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.avatar}
-          >
-            <Ionicons name="person" size={28} color={TEXT.inverse} />
-          </LinearGradient>
-          <View style={styles.profileText}>
-            {ready ? (
-              <>
-                <Text style={[styles.profileName, { color: c.text }]}>Your Silo</Text>
-                <Text style={[styles.profileMeta, { color: c.textTertiary }]}>
-                  {stats.since ? `On this device · since ${stats.since}` : 'On this device'}
-                </Text>
-              </>
-            ) : (
-              <>
-                <Skeleton width={110} height={19} radius={RADIUS.xs} />
-                <Skeleton width={170} height={13} radius={RADIUS.xs} style={styles.skeletonLine} />
-              </>
-            )}
+        {/* Profile card. The brand lift stays on the wrapper — glass clips to
+            its own bounds and would swallow a shadow set on it. */}
+        <RiseIn index={ORDER.profile}>
+          <View style={styles.profileLift}>
+            <Glass radius={RADIUS.xl} tintColor={cardTint(c)} style={styles.profileCard}>
+              {/* Brand gradient + white glyph in both appearances — this is a
+                  brand surface, not a page surface. */}
+              <LinearGradient
+                colors={GRADIENTS.brand}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.avatar}
+              >
+                <Ionicons name="person" size={28} color={TEXT.inverse} />
+              </LinearGradient>
+              <View style={styles.profileText}>
+                {ready ? (
+                  <>
+                    <Text style={[styles.profileName, { color: c.text }]}>Your Silo</Text>
+                    <Text style={[styles.profileMeta, { color: c.textTertiary }]}>
+                      {stats.since ? `On this device · since ${stats.since}` : 'On this device'}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Skeleton width={110} height={19} radius={RADIUS.xs} />
+                    <Skeleton
+                      width={170}
+                      height={13}
+                      radius={RADIUS.xs}
+                      style={styles.skeletonLine}
+                    />
+                  </>
+                )}
+              </View>
+            </Glass>
           </View>
-        </Animated.View>
+        </RiseIn>
 
         {/* Stats */}
-        <Animated.View style={styles.statRow} entering={enterList(ORDER.stats, reduced)}>
+        <RiseIn index={ORDER.stats} style={styles.statRow}>
           {[
             { n: stats.items, l: 'Items', i: 'documents' as const, c: tint.brand },
             { n: stats.stacks, l: 'Stacks', i: 'albums' as const, c: tint.accent },
           ].map((s) => (
-            <View key={s.l} style={[styles.statTile, { backgroundColor: c.card }, darkEdge(c)]}>
-              <Ionicons name={s.i} size={18} color={s.c} />
-              {ready ? (
-                <Text style={[styles.statNum, { color: c.text }]}>{s.n}</Text>
-              ) : (
-                <Skeleton width={34} height={22} radius={RADIUS.xs} style={styles.skeletonStat} />
-              )}
-              <Text style={[styles.statLabel, { color: c.textTertiary }]}>{s.l}</Text>
+            <View key={s.l} style={styles.statLift}>
+              <Glass radius={RADIUS.xl} tintColor={cardTint(c)} style={styles.statTile}>
+                <Ionicons name={s.i} size={18} color={s.c} />
+                {ready ? (
+                  <Text style={[styles.statNum, { color: c.text }]}>{s.n}</Text>
+                ) : (
+                  <Skeleton width={34} height={22} radius={RADIUS.xs} style={styles.skeletonStat} />
+                )}
+                <Text style={[styles.statLabel, { color: c.textTertiary }]}>{s.l}</Text>
+              </Glass>
             </View>
           ))}
-        </Animated.View>
+        </RiseIn>
 
         {/* Preferences */}
         {/* Account — only when this build has an identity provider. Showing a
@@ -988,7 +1041,6 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.xl,
     ...SHADOW.card,
   },
-  card: { borderRadius: RADIUS.xl, overflow: 'hidden' },
 
   row: {
     flexDirection: 'row',
@@ -1025,14 +1077,17 @@ const styles = StyleSheet.create({
   },
   segmentText: { ...TYPE.footnote, fontWeight: '700' },
 
+  // Margin + lift out here, material inside: see `cardShadow`.
+  profileLift: {
+    marginHorizontal: SPACE.base,
+    marginTop: SPACE.base,
+    borderRadius: RADIUS.xl,
+    ...SHADOW.brandCard,
+  },
   profileCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: SPACE.base,
-    marginTop: SPACE.base,
     padding: SPACE.base,
-    borderRadius: RADIUS.xl,
-    ...SHADOW.brandCard,
   },
   avatar: {
     width: 60,
@@ -1052,12 +1107,16 @@ const styles = StyleSheet.create({
     marginHorizontal: SPACE.base,
     marginTop: SPACE.md,
   },
-  statTile: {
+  // `flex` has to sit on the wrapper — it is what the row lays out — and the
+  // lift with it, for the same reason as `cardShadow`.
+  statLift: {
     flex: 1,
-    alignItems: 'center',
-    paddingVertical: SPACE.base,
     borderRadius: RADIUS.xl,
     ...SHADOW.card,
+  },
+  statTile: {
+    alignItems: 'center',
+    paddingVertical: SPACE.base,
   },
   statNum: { ...TYPE.title2, marginTop: 6 },
   skeletonStat: { marginTop: 8, marginBottom: 4 },

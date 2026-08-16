@@ -23,7 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import Animated from 'react-native-reanimated';
 import PressableScale from '@/components/ui/PressableScale';
-import GlassCard from '@/components/ui/GlassCard';
+import Glass from '@/components/ui/Glass';
 import Skeleton from '@/components/ui/Skeleton';
 import {
   GRADIENTS,
@@ -34,7 +34,13 @@ import {
   type ThemeColors,
 } from '@/lib/theme';
 import { useThemeColors } from '@/lib/useTheme';
-import { enterList, exitFade, LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
+import {
+  enterRise,
+  enterList,
+  exitFade,
+  LAYOUT,
+  usePrefersReducedMotion,
+} from '@/lib/motion';
 import { Item, Classification } from '@/lib/types';
 import { classConfig } from '@/lib/classification';
 import { toLocalDateString } from '@/lib/datetime';
@@ -45,6 +51,14 @@ import {
   isRepeatableDue,
   ReviewOutcome,
 } from '@/lib/resurface';
+
+/**
+ * Alpha suffix on the palette's own `card` colour (both palettes state it as a
+ * 6-digit hex, so `#rrggbbaa` is all this needs). ~18% is enough to hold the
+ * footnote-sized text on the hero and the picks card over the page's violet
+ * wash, and far too little to read as a fill.
+ */
+const GLASS_TINT = '2e';
 
 export interface TodayEvent {
   title: string;
@@ -308,7 +322,10 @@ export default function TodayView({
         <>
           <Skeleton height={92} radius={RADIUS.xl} style={styles.heroSkeleton} />
           <Text style={[styles.picksOverline, dyn.picksOverline]}>PICKED FOR YOU</Text>
-          <View style={[styles.picksCard, dyn.picksCard, styles.picksCardSpaced]}>
+          {/* The placeholder stays opaque: there is nothing to see through a
+              card that is still loading, and the shimmer reads better on a
+              flat ground than on a moving material. */}
+          <View style={[styles.picksCard, dyn.picksCardOpaque, styles.picksCardSpaced]}>
             {[0, 1, 2].map((i) => (
               <View
                 key={i}
@@ -321,10 +338,17 @@ export default function TodayView({
         </>
       ) : (
         <>
-          {/* Check-in: close the loop on things you scheduled. */}
+          {/* Check-in: close the loop on things you scheduled.
+
+              The section's rise-and-fade wraps the HEADING only. The cards
+              below it are glass, and an opacity animation on any ancestor of a
+              glass surface stops the material rendering rather than fading it —
+              so each card brings its own transform-only entrance instead. */}
           {pendingReviews.length > 0 && (
-            <Animated.View entering={enterList(1, reduced)}>
-              <Text style={[styles.sectionTitle, dyn.sectionTitle]}>How did it go?</Text>
+            <>
+              <Animated.View entering={enterList(1, reduced)}>
+                <Text style={[styles.sectionTitle, dyn.sectionTitle]}>How did it go?</Text>
+              </Animated.View>
               {pendingReviews.map((item) => (
                 <EventReviewCard
                   key={item.id}
@@ -333,13 +357,15 @@ export default function TodayView({
                   onReschedule={onScheduleItem}
                 />
               ))}
-            </Animated.View>
+            </>
           )}
 
-          {/* Resurface: things going stale in the pile. */}
+          {/* Resurface: things going stale in the pile. Same split as above. */}
           {staleItems.length > 0 && (
-            <Animated.View entering={enterList(2, reduced)}>
-              <Text style={[styles.sectionTitle, dyn.sectionTitle]}>Still want these?</Text>
+            <>
+              <Animated.View entering={enterList(2, reduced)}>
+                <Text style={[styles.sectionTitle, dyn.sectionTitle]}>Still want these?</Text>
+              </Animated.View>
               {staleItems.map((item) => (
                 <StaleCard
                   key={item.id}
@@ -349,12 +375,26 @@ export default function TodayView({
                   onArchive={onArchiveStale}
                 />
               ))}
-            </Animated.View>
+            </>
           )}
 
-          {/* Now / Next Up */}
-          <Animated.View entering={enterList(3, reduced)} layout={LAYOUT} exiting={exitFade(reduced)}>
-            <GlassCard tint={c.glassTint} intensity={50} radius={RADIUS.xl} style={styles.heroCard}>
+          {/* Now / Next Up.
+
+              Transform-only entrance and no exit fade: the card IS the glass,
+              so an opacity animation on this wrapper would blank the material
+              instead of fading it. `LAYOUT` is safe — it moves and resizes, it
+              never touches opacity. */}
+          <Animated.View
+            entering={enterRise((3), reduced)}
+            layout={LAYOUT}
+            style={styles.heroLift}
+          >
+            <Glass
+              variant="regular"
+              intensity={50}
+              radius={RADIUS.xl}
+              tintColor={`${c.card}${GLASS_TINT}`}
+            >
               <View style={styles.heroInner}>
                 <View style={{ flex: 1 }}>
                   <Text
@@ -388,7 +428,7 @@ export default function TodayView({
                   </PressableScale>
                 )}
               </View>
-            </GlassCard>
+            </Glass>
           </Animated.View>
 
           {/* Free time */}
@@ -405,99 +445,134 @@ export default function TodayView({
           )}
 
           {/* The picks — the product's headline claim, so it gets a hero block
-              rather than looking like the fifth section header on the page. */}
-          <Animated.View entering={enterList(5, reduced)} style={styles.picksBlock}>
-            <Text style={[styles.picksOverline, dyn.picksOverline]}>PICKED FOR YOU</Text>
-            <Text style={[styles.picksHeading, dyn.picksHeading]}>
-              {picksHeading(topThree.length)}
-            </Text>
+              rather than looking like the fifth section header on the page.
+
+              The block is glass at the CONTAINER, and the rows inside it stay
+              flat. That is the way round that works: the rows have no fill of
+              their own (just hairline dividers), so one material holds the
+              whole card, where three stacked row materials would each sample a
+              different slice of the page and separate into bands. */}
+          <View style={styles.picksBlock}>
+            {/* Text only — the fade can't reach the material below it. */}
+            <Animated.View entering={enterList(5, reduced)}>
+              <Text style={[styles.picksOverline, dyn.picksOverline]}>PICKED FOR YOU</Text>
+              <Text style={[styles.picksHeading, dyn.picksHeading]}>
+                {picksHeading(topThree.length)}
+              </Text>
+            </Animated.View>
 
             {topThree.length === 0 ? (
-              <View style={[styles.emptyRow, dyn.emptyRow]}>
-                <Text style={[styles.emptyText, dyn.emptyText]}>
-                  Inbox is clear — share a link into Silo to get started.
-                </Text>
-              </View>
+              <Animated.View entering={enterRise((5), reduced)}>
+                <Glass
+                  variant="regular"
+                  radius={RADIUS.xl}
+                  // The brand rim is this block's identity and is drawn in
+                  // `styles.emptyRow`; the material must not add a second one.
+                  bordered={false}
+                  tintColor={`${c.card}${GLASS_TINT}`}
+                  style={[styles.emptyRow, dyn.emptyRow]}
+                >
+                  <Text style={[styles.emptyText, dyn.emptyText]}>
+                    Inbox is clear — share a link into Silo to get started.
+                  </Text>
+                </Glass>
+              </Animated.View>
             ) : (
-              <View style={[styles.picksCard, dyn.picksCard]}>
-                {topThree.map(({ item, repeat }, index) => {
-                  const cfg = classConfig(item.classification);
-                  return (
-                    <Animated.View
-                      key={item.id}
-                      layout={LAYOUT}
-                      exiting={exitFade(reduced)}
-                      style={[
-                        styles.picksRow,
-                        index > 0 && [styles.picksDivider, dyn.picksDivider],
-                      ]}
-                    >
-                      {/* PressableScale's outer Pressable doesn't carry `flex`,
-                          so containerStyle is what takes the row width. */}
-                      <PressableScale
-                        haptic="light"
-                        onPress={() => onOpenItem(item.id)}
-                        containerStyle={{ flex: 1 }}
-                        style={styles.rowMain}
+              // The violet lift lives out here: glass clips to its own rounded
+              // bounds, so a shadow drawn on the material never escapes them.
+              <Animated.View
+                entering={enterRise((5), reduced)}
+                style={styles.picksLift}
+              >
+                <Glass
+                  variant="regular"
+                  radius={RADIUS.xl}
+                  bordered={false}
+                  tintColor={`${c.card}${GLASS_TINT}`}
+                  style={[styles.picksCard, dyn.picksCard]}
+                >
+                  {topThree.map(({ item, repeat }, index) => {
+                    const cfg = classConfig(item.classification);
+                    return (
+                      // Safe to fade: this row is a CHILD of the glass, not an
+                      // ancestor of it — content on the material, not the
+                      // material itself.
+                      <Animated.View
+                        key={item.id}
+                        layout={LAYOUT}
+                        exiting={exitFade(reduced)}
+                        style={[
+                          styles.picksRow,
+                          index > 0 && [styles.picksDivider, dyn.picksDivider],
+                        ]}
                       >
-                        <LinearGradient
-                          colors={[cfg.from, cfg.to]}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                          style={styles.rowIcon}
+                        {/* PressableScale's outer Pressable doesn't carry `flex`,
+                            so containerStyle is what takes the row width. */}
+                        <PressableScale
+                          haptic="light"
+                          onPress={() => onOpenItem(item.id)}
+                          containerStyle={{ flex: 1 }}
+                          style={styles.rowMain}
                         >
-                          <Ionicons name={cfg.icon} size={22} color="#fff" />
-                        </LinearGradient>
-                        <View style={{ flex: 1, marginLeft: SPACE.md, minWidth: 0 }}>
-                          <Text style={[styles.rowTitle, dyn.rowTitle]} numberOfLines={1}>
-                            {item.title}
-                          </Text>
-                          {repeat ? (
-                            <View style={styles.lovedTag}>
-                              <Ionicons name="heart" size={11} color={c.textBrand} />
-                              <Text style={[styles.lovedTagText, dyn.lovedTagText]}>
-                                You loved this last time
-                              </Text>
-                            </View>
-                          ) : item.description ? (
-                            <Text style={[styles.rowSub, dyn.rowSub]} numberOfLines={1}>
-                              {item.description}
+                          <LinearGradient
+                            colors={[cfg.from, cfg.to]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={styles.rowIcon}
+                          >
+                            <Ionicons name={cfg.icon} size={22} color="#fff" />
+                          </LinearGradient>
+                          <View style={{ flex: 1, marginLeft: SPACE.md, minWidth: 0 }}>
+                            <Text style={[styles.rowTitle, dyn.rowTitle]} numberOfLines={1}>
+                              {item.title}
                             </Text>
-                          ) : null}
+                            {repeat ? (
+                              <View style={styles.lovedTag}>
+                                <Ionicons name="heart" size={11} color={c.textBrand} />
+                                <Text style={[styles.lovedTagText, dyn.lovedTagText]}>
+                                  You loved this last time
+                                </Text>
+                              </View>
+                            ) : item.description ? (
+                              <Text style={[styles.rowSub, dyn.rowSub]} numberOfLines={1}>
+                                {item.description}
+                              </Text>
+                            ) : null}
+                          </View>
+                        </PressableScale>
+                        <View style={styles.rowActions}>
+                          <PressableScale
+                            haptic="light"
+                            onPress={() => onScheduleItem(item)}
+                            style={[styles.actionBtn, dyn.actionBtn]}
+                            accessibilityLabel={`Schedule ${item.title}`}
+                          >
+                            <Ionicons name="calendar-outline" size={18} color={c.brand} />
+                          </PressableScale>
+                          <PressableScale
+                            haptic="selection"
+                            onPress={() => onDoneItem(item.id)}
+                            style={[styles.actionBtn, dyn.actionBtn]}
+                            accessibilityLabel={`Mark ${item.title} done`}
+                          >
+                            <Ionicons name="checkmark" size={20} color={c.brand} />
+                          </PressableScale>
+                          <PressableScale
+                            haptic="light"
+                            onPress={() => onSnoozeItem(item.id)}
+                            style={[styles.actionBtn, dyn.actionBtn]}
+                            accessibilityLabel={`Snooze ${item.title} to tomorrow`}
+                          >
+                            <Ionicons name="moon-outline" size={18} color={c.brand} />
+                          </PressableScale>
                         </View>
-                      </PressableScale>
-                      <View style={styles.rowActions}>
-                        <PressableScale
-                          haptic="light"
-                          onPress={() => onScheduleItem(item)}
-                          style={[styles.actionBtn, dyn.actionBtn]}
-                          accessibilityLabel={`Schedule ${item.title}`}
-                        >
-                          <Ionicons name="calendar-outline" size={18} color={c.brand} />
-                        </PressableScale>
-                        <PressableScale
-                          haptic="selection"
-                          onPress={() => onDoneItem(item.id)}
-                          style={[styles.actionBtn, dyn.actionBtn]}
-                          accessibilityLabel={`Mark ${item.title} done`}
-                        >
-                          <Ionicons name="checkmark" size={20} color={c.brand} />
-                        </PressableScale>
-                        <PressableScale
-                          haptic="light"
-                          onPress={() => onSnoozeItem(item.id)}
-                          style={[styles.actionBtn, dyn.actionBtn]}
-                          accessibilityLabel={`Snooze ${item.title} to tomorrow`}
-                        >
-                          <Ionicons name="moon-outline" size={18} color={c.brand} />
-                        </PressableScale>
-                      </View>
-                    </Animated.View>
-                  );
-                })}
-              </View>
+                      </Animated.View>
+                    );
+                  })}
+                </Glass>
+              </Animated.View>
             )}
-          </Animated.View>
+          </View>
 
           {/* Near you — or the row that primes for location. The OS dialog only
               ever follows an explicit tap here, never a tab open. */}
@@ -627,7 +702,9 @@ const styles = StyleSheet.create({
   greetingSub: { ...TYPE.callout, marginTop: SPACE.xxs },
 
   heroSkeleton: { marginBottom: SPACE.lg },
-  heroCard: { marginBottom: SPACE.md },
+  // The gap below the hero belongs to the wrapper, not the material: a margin
+  // inside the glass would sit under the surface instead of below it.
+  heroLift: { marginBottom: SPACE.md },
   heroInner: { flexDirection: 'row', alignItems: 'center', padding: 18, gap: SPACE.md },
   eyebrow: { ...TYPE.overline },
   heroTitle: { ...TYPE.title3, marginTop: SPACE.xs },
@@ -670,12 +747,18 @@ const styles = StyleSheet.create({
   picksBlock: { marginBottom: SPACE.lg },
   picksOverline: { ...TYPE.overline, marginBottom: SPACE.xs },
   picksHeading: { ...TYPE.title1, marginBottom: SPACE.md },
+  // The violet lift sits on the wrapper — `overflow: 'hidden'` on the glass
+  // clips any shadow drawn on the material itself.
+  picksLift: {
+    borderRadius: RADIUS.xl,
+    ...SHADOW.brandCard,
+  },
   picksCard: {
     borderRadius: RADIUS.xl,
     borderWidth: 1,
-    ...SHADOW.brandCard,
   },
-  picksCardSpaced: { marginTop: SPACE.md },
+  // The skeleton stand-in is an ordinary view, so it keeps the lift inline.
+  picksCardSpaced: { marginTop: SPACE.md, ...SHADOW.brandCard },
   picksRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -785,10 +868,13 @@ function makeDynamicStyles(c: ThemeColors) {
 
     picksOverline: { color: c.textBrand },
     picksHeading: { color: c.text },
-    picksCard: { backgroundColor: c.card, borderColor: c.brandBorder },
+    // Border only: the picks card and the empty row are glass now, and any
+    // opaque fill on the same node would paint straight over the material.
+    picksCard: { borderColor: c.brandBorder },
+    picksCardOpaque: { backgroundColor: c.card, borderColor: c.brandBorder },
     picksDivider: { borderTopColor: c.hairline },
 
-    emptyRow: { backgroundColor: c.card, borderColor: c.brandBorder },
+    emptyRow: { borderColor: c.brandBorder },
     emptyText: { color: c.textTertiary },
 
     rowTitle: { color: c.text },

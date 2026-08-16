@@ -66,6 +66,7 @@ import {
   DURATION,
   GRADIENTS,
   HAIRLINE_DARK,
+  INK,
   RADIUS,
   SHADOW,
   SPACE,
@@ -77,13 +78,14 @@ import {
 import { useThemeColors } from '@/lib/useTheme';
 import {
   enterFromBottom,
+  enterHero,
   enterList,
   exitToBottom,
   usePrefersReducedMotion,
 } from '@/lib/motion';
 import Skeleton from '@/components/ui/Skeleton';
 import PressableScale from '@/components/ui/PressableScale';
-import GlassCard from '@/components/ui/GlassCard';
+import Glass, { GlassGroup, LIQUID_GLASS } from '@/components/ui/Glass';
 import EmptyState from '@/components/ui/EmptyState';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -659,42 +661,67 @@ export default function ScreenshotsScreen() {
    */
   function renderActions() {
     return (
-      <View style={styles.actionRow}>
-        <PressableScale
-          haptic="medium"
-          disabled={analyzing}
-          onPress={() => triage('left')}
-          accessibilityRole="button"
-          accessibilityLabel="Skip this screenshot"
-          accessibilityHint="Moves to the next screenshot without importing"
-          style={[
-            styles.actionCircle,
-            styles.skipCircle,
-            dyn.skipCircle,
-            analyzing && styles.actionDisabled,
-          ]}
-        >
-          <Ionicons name="close" size={28} color={c.danger} />
-        </PressableScale>
-        <PressableScale
-          haptic="medium"
-          disabled={analyzing}
-          onPress={() => triage('right')}
-          accessibilityRole="button"
-          accessibilityLabel="Save this screenshot to Silo"
-          accessibilityHint="Imports the screenshot and analyzes it"
-          style={[styles.saveCircleShadow, analyzing && styles.actionDisabled]}
-        >
-          <LinearGradient
-            colors={[...GRADIENTS.brand]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.actionCircle}
+      // The row rises rather than fading: an opacity animation on a glass
+      // surface — or on any ancestor — stops the material rendering instead of
+      // fading it. `enterFromBottom` is transform-only (and no-ops under Reduce
+      // Motion when the real effect is live).
+      <Animated.View entering={enterFromBottom(0, reduced)}>
+        {/* Skip is the group's only material — Save is the primary action and
+            stays a brand fill — but grouping is what makes the pair lens
+            towards each other instead of reading as one blur and one button. */}
+        <GlassGroup spacing={SPACE.md} style={styles.actionRow}>
+          <PressableScale
+            haptic="medium"
+            disabled={analyzing}
+            onPress={() => triage('left')}
+            accessibilityRole="button"
+            accessibilityLabel="Skip this screenshot"
+            accessibilityHint="Moves to the next screenshot without importing"
+            // The lift that separated the opaque circle moves out here: glass
+            // clips to its own bounds, so a shadow set on it never escapes them.
+            containerStyle={styles.skipLift}
           >
-            <Ionicons name="checkmark" size={30} color={TEXT.inverse} />
-          </LinearGradient>
-        </PressableScale>
-      </View>
+            <Glass
+              interactive
+              variant="regular"
+              radius={RADIUS.pill}
+              // The 1px edge is drawn by `skipCircle` below, at the palette's
+              // own hairline — brighter than the material's default rim.
+              bordered={false}
+              tintColor={dyn.surfaceTint}
+              style={[styles.actionCircle, styles.skipCircle, dyn.skipCircle]}
+            >
+              {/* The disabled dim lands on the GLYPH, not on the button: an
+                  opacity below 1 on the glass view itself blanks the material
+                  rather than fading it. */}
+              <Ionicons
+                name="close"
+                size={28}
+                color={c.danger}
+                style={analyzing ? styles.actionDisabled : undefined}
+              />
+            </Glass>
+          </PressableScale>
+          <PressableScale
+            haptic="medium"
+            disabled={analyzing}
+            onPress={() => triage('right')}
+            accessibilityRole="button"
+            accessibilityLabel="Save this screenshot to Silo"
+            accessibilityHint="Imports the screenshot and analyzes it"
+            style={[styles.saveCircleShadow, analyzing && styles.actionDisabled]}
+          >
+            <LinearGradient
+              colors={[...GRADIENTS.brand]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.actionCircle}
+            >
+              <Ionicons name="checkmark" size={30} color={TEXT.inverse} />
+            </LinearGradient>
+          </PressableScale>
+        </GlassGroup>
+      </Animated.View>
     );
   }
 
@@ -821,47 +848,71 @@ export default function ScreenshotsScreen() {
       </Animated.View>
 
       {/* Filter chips */}
-      <Animated.View entering={enterList(0, reduced).delay(140)} style={styles.filterScroller}>
+      {/* `enterHero`, not `enterList`: the chips are glass now, and enterList is
+          a cross-fade — a fade above a glass surface deletes the material
+          instead of revealing it. enterHero animates scale only, and returns no
+          animation at all under Reduce Motion. */}
+      <Animated.View entering={enterHero(140, reduced)} style={styles.filterScroller}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterStrip}
         >
-          {FILTERS.map((f) => {
-            const active = activeFilter === f.key;
-            return (
-              <PressableScale
-                key={f.key}
-                haptic="selection"
-                selected={active}
-                accessibilityLabel={`${f.label} screenshots`}
-                onPress={() => setActiveFilter(f.key)}
-                style={[styles.chip, dyn.chip, active && styles.chipActive]}
-              >
-                <Text
-                  style={[styles.chipText, dyn.chipText, active && styles.chipTextActive]}
+          {/* Grouped so the strip lenses as ONE cluster of controls rather than
+              four unrelated blurs sitting next to each other. */}
+          <GlassGroup spacing={SPACE.sm} style={styles.filterCluster}>
+            {FILTERS.map((f) => {
+              const active = activeFilter === f.key;
+              // The selected chip is a brand SURFACE, not a material: it keeps
+              // the violet fill (and its white label) in both appearances.
+              return (
+                <PressableScale
+                  key={f.key}
+                  haptic="selection"
+                  selected={active}
+                  accessibilityLabel={`${f.label} screenshots`}
+                  onPress={() => setActiveFilter(f.key)}
+                  style={active ? [styles.chip, styles.chipActive] : undefined}
                 >
-                  {f.label}
-                </Text>
-              </PressableScale>
-            );
-          })}
+                  {active ? (
+                    <Text style={[styles.chipText, styles.chipTextActive]}>{f.label}</Text>
+                  ) : (
+                    <Glass
+                      interactive
+                      variant="regular"
+                      radius={RADIUS.pill}
+                      // `chip` already carries the 1px edge, so the material's
+                      // own rim would double it.
+                      bordered={false}
+                      tintColor={dyn.surfaceTint}
+                      style={[styles.chip, dyn.chip]}
+                    >
+                      <Text style={[styles.chipText, dyn.chipText]}>{f.label}</Text>
+                    </Glass>
+                  )}
+                </PressableScale>
+              );
+            })}
+          </GlassGroup>
         </ScrollView>
       </Animated.View>
 
       {/* Deck */}
-      <Animated.View
-        entering={enterList(0, reduced).delay(220)}
+      <View
         style={[styles.deckArea, dyn.pageBase, { paddingBottom: insets.bottom + TAB_BAR_INSET }]}
       >
-        <View
+        {/* The entrance sits on the deck ALONE. It is a cross-fade, and the Skip
+            / Save row below it is glass — one shared animated ancestor would
+            blank that material on every open. */}
+        <Animated.View
+          entering={enterList(0, reduced).delay(220)}
           style={styles.deck}
           onLayout={(e) => setDeckHeight(Math.round(e.nativeEvent.layout.height))}
         >
           {renderDeck()}
-        </View>
+        </Animated.View>
         {showActions && renderActions()}
-      </Animated.View>
+      </View>
 
       {/* Undo snackbar */}
       {lastAction && (
@@ -878,9 +929,23 @@ export default function ScreenshotsScreen() {
           {/*
             Stays dark glass in BOTH appearances: its contents are white-on-dark
             (inverse text + BRAND[300] actions), and a light-tinted snackbar
-            would strand them. GlassCard already draws HAIRLINE_DARK on `dark`.
+            would strand them. Same treatment as the app's Toast — this is the
+            same object, shown from a screen that owns its own undo window.
           */}
-          <GlassCard tint="dark" intensity={60} radius={RADIUS.lg}>
+          <Glass
+            tint="dark"
+            variant="regular"
+            intensity={60}
+            radius={RADIUS.lg}
+            style={[
+              // Fallback path only: the slate wash is what makes the blur read
+              // as a floating surface rather than a smudge. Liquid Glass's dark
+              // material already does that, and a 55% fill over it would
+              // smother the effect.
+              !LIQUID_GLASS && styles.snackbarWash,
+              c.appearance === 'dark' && styles.snackbarRimOnDark,
+            ]}
+          >
             <View style={styles.snackbarInner}>
               <Ionicons name={snackbarIcon(lastAction)} size={18} color={TEXT.inverse} />
               <Text style={styles.snackbarText}>{snackbarLabel(lastAction)}</Text>
@@ -909,7 +974,7 @@ export default function ScreenshotsScreen() {
             <View style={styles.snackbarExpiryTrack}>
               <Animated.View style={[styles.snackbarExpiryFill, expiryStyle]} />
             </View>
-          </GlassCard>
+          </Glass>
         </Animated.View>
       )}
     </View>
@@ -932,6 +997,11 @@ const styles = StyleSheet.create({
   filterStrip: {
     paddingHorizontal: SPACE.base,
     paddingBottom: SPACE.sm,
+  },
+  // The row itself, so the gap between chips lives on the glass group rather
+  // than on the ScrollView's content container.
+  filterCluster: {
+    flexDirection: 'row',
     gap: SPACE.sm,
   },
   chip: {
@@ -1040,8 +1110,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // No shadow here: the glass clips to its own rounded bounds, so one set on it
+  // would never escape them. The lift lives on `skipLift` (the outer Pressable).
   skipCircle: {
     borderWidth: 1,
+  },
+  skipLift: {
+    borderRadius: RADIUS.pill,
     ...SHADOW.card,
   },
   // Opaque + rounded so iOS can derive the shadow path from the bounds rather
@@ -1092,6 +1167,13 @@ const styles = StyleSheet.create({
     paddingTop: SPACE.md,
     paddingBottom: SPACE.sm,
   },
+  // Fallback-only wash (see the call site) — INK[900] at 55%, the same slate the
+  // Toast uses so the two surfaces are the same object in two places.
+  snackbarWash: { backgroundColor: `${INK[900]}8c` },
+  // On the light page the dark surface separates on its own. On the dark page it
+  // doesn't, and the material's default 14%-white rim is too faint against
+  // near-black — so brighten just the rim (white at 22%).
+  snackbarRimOnDark: { borderColor: `${TEXT.inverse}38` },
   snackbarText: { ...TYPE.subhead, color: TEXT.inverse, flexShrink: 1 },
   snackbarActions: { flexDirection: 'row', alignItems: 'center', gap: SPACE.base },
   snackbarAction: { ...TYPE.subhead, fontWeight: '800', color: BRAND[300] },
@@ -1129,14 +1211,22 @@ function makeDynamicStyles(c: ThemeColors) {
     pageBase: { backgroundColor: c.pageGradient[2] },
     headerTitle: { color: c.text },
     headerSubtitle: { color: c.textTertiary },
-    chip: { backgroundColor: c.card, borderColor: c.hairline },
+    /**
+     * Tints the glass controls (chips, Skip). Glass borrows its colour from what
+     * is behind it, and here that is a pale violet page — a chip label on bare
+     * material drifts under AA. `2e` ≈ 18% of the palette's own card colour:
+     * enough to hold text, far too little to read as a fill.
+     */
+    surfaceTint: `${c.card}2e`,
+    /** No fill — the glass IS the surface; only the 1px edge is left to draw. */
+    chip: { borderColor: c.hairline },
     chipText: { color: c.textSecondary },
     card: { backgroundColor: c.card, ...darkEdge },
     /** Placeholder behind the screenshot while it decodes. */
     cardImage: { backgroundColor: c.field },
     analyzingPill: { backgroundColor: c.card, ...darkEdge },
     analyzingText: { color: c.textSecondary },
-    skipCircle: { backgroundColor: c.card, borderColor: c.hairline },
+    skipCircle: { borderColor: c.hairline },
     caughtUpTitle: { color: c.text },
     caughtUpSub: { color: c.textTertiary },
   };

@@ -10,13 +10,26 @@
  * It also owns the anti-hoarding flow: when saves go stale, this is where the
  * app offers to help you let go of them, a few at a time.
  */
-import React, { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+} from 'react-native-reanimated';
+import Glass from '@/components/ui/Glass';
 import ScreenHeader from '@/components/ui/ScreenHeader';
 import PressableScale from '@/components/ui/PressableScale';
 import Skeleton from '@/components/ui/Skeleton';
@@ -33,33 +46,65 @@ import {
   type SiloStats,
   type WeekBucket,
 } from '@/lib/stats';
-import { enterList, usePrefersReducedMotion } from '@/lib/motion';
+import { staggerDelay, usePrefersReducedMotion } from '@/lib/motion';
 import {
   ACCENT,
   BRAND,
-  DURATION,
   GRADIENTS,
   RADIUS,
   SHADOW,
   SPACE,
+  SPRING,
   TYPE,
   type ThemeColors,
 } from '@/lib/theme';
 import { useThemeColors } from '@/lib/useTheme';
 
 /**
- * On dark, SHADOW.card does nothing — card and page are both near-black — so a
- * hairline is what actually draws the card's edge. The metric/rate/chart cards
- * already carry a 1px border, so only its colour has to follow the palette.
+ * The tint the metric / rate / chart cards hand to `Glass`.
+ *
+ * Bare material borrows its colour from whatever is behind it — here a violet
+ * page wash with other cards scrolling under it — and these cards carry the
+ * screen's biggest numbers. `2e` ≈ 18% of the palette's own card colour: enough
+ * to hold the type, far too little to read as a fill. (Both palettes state
+ * `card` as a 6-digit hex, so the alpha suffix is all this needs.)
  */
-function cardEdge(c: ThemeColors): ViewStyle {
-  return { backgroundColor: c.card, borderColor: c.hairline };
+function cardTint(c: ThemeColors): string {
+  return `${c.card}2e`;
+}
+
+/**
+ * Staggered entrance for a block that holds glass.
+ *
+ * `enterList` is a FADE, and an opacity animation on a glass surface — or on
+ * ANY ancestor of one — stops the material rendering rather than fading it, so
+ * every card on this screen would arrive as a hole. The scoreboard rises on a
+ * transform instead, keeping `enterList`'s stagger.
+ */
+function RiseIn({
+  index,
+  style,
+  children,
+}: {
+  index: number;
+  style?: StyleProp<ViewStyle>;
+  children: React.ReactNode;
+}) {
+  const reduced = usePrefersReducedMotion();
+  const offset = useSharedValue<number>(SPACE.md);
+
+  useEffect(() => {
+    offset.value = reduced ? 0 : withDelay(staggerDelay(index), withSpring(0, SPRING.enter));
+  }, [index, offset, reduced]);
+
+  const rise = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
+
+  return <Animated.View style={[style, rise]}>{children}</Animated.View>;
 }
 
 export default function StatsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const reduced = usePrefersReducedMotion();
   const c = useThemeColors();
   const [items, setItems] = useState<Item[] | null>(null);
   const [cleanupOpen, setCleanupOpen] = useState(false);
@@ -131,11 +176,11 @@ export default function StatsScreen() {
           />
         ) : stats ? (
           <>
-            <Animated.View entering={enterList(0, reduced)}>
+            <RiseIn index={0}>
               <LevelCard stats={stats} />
-            </Animated.View>
+            </RiseIn>
 
-            <Animated.View entering={enterList(1, reduced)} style={styles.metricGrid}>
+            <RiseIn index={1} style={styles.metricGrid}>
               <Metric
                 icon="checkmark-done"
                 value={String(stats.usedThisWeek)}
@@ -160,23 +205,23 @@ export default function StatsScreen() {
                 label="Going stale"
                 tone={stats.staleCount > 0 ? 'warn' : 'default'}
               />
-            </Animated.View>
+            </RiseIn>
 
-            <Animated.View entering={enterList(2, reduced)}>
+            <RiseIn index={2}>
               <RateCard stats={stats} />
-            </Animated.View>
+            </RiseIn>
 
-            <Animated.View entering={enterList(3, reduced)}>
+            <RiseIn index={3}>
               <WeeklyChart weeks={weeks} />
-            </Animated.View>
+            </RiseIn>
 
             {cleanupCandidates.length > 0 && (
-              <Animated.View entering={enterList(4, reduced)}>
+              <RiseIn index={4}>
                 <CleanupCard
                   count={cleanupCandidates.length}
                   onPress={() => setCleanupOpen(true)}
                 />
-              </Animated.View>
+              </RiseIn>
             )}
           </>
         ) : null}
@@ -260,22 +305,26 @@ function Metric({
 
   return (
     <View style={styles.metricCell}>
-      <View style={[styles.metricCard, cardEdge(c)]}>
-        <Ionicons name={icon} size={18} color={color} />
-        <View style={styles.metricValueRow}>
-          <Text style={[styles.metricValue, { color: c.text }]}>{value}</Text>
-          {typeof delta === 'number' && delta !== 0 && (
-            <Text
-              style={[
-                styles.metricDelta,
-                { color: delta > 0 ? c.success : c.textTertiary },
-              ]}
-            >
-              {delta > 0 ? `+${delta}` : delta}
-            </Text>
-          )}
-        </View>
-        <Text style={[styles.metricLabel, { color: c.textTertiary }]}>{label}</Text>
+      {/* Lift on the wrapper, material inside: glass clips to its own bounds,
+          so a shadow set on it would never leave them. */}
+      <View style={styles.cardLift}>
+        <Glass radius={RADIUS.xl} tintColor={cardTint(c)} style={styles.metricCard}>
+          <Ionicons name={icon} size={18} color={color} />
+          <View style={styles.metricValueRow}>
+            <Text style={[styles.metricValue, { color: c.text }]}>{value}</Text>
+            {typeof delta === 'number' && delta !== 0 && (
+              <Text
+                style={[
+                  styles.metricDelta,
+                  { color: delta > 0 ? c.success : c.textTertiary },
+                ]}
+              >
+                {delta > 0 ? `+${delta}` : delta}
+              </Text>
+            )}
+          </View>
+          <Text style={[styles.metricLabel, { color: c.textTertiary }]}>{label}</Text>
+        </Glass>
       </View>
     </View>
   );
@@ -285,24 +334,29 @@ function RateCard({ stats }: { stats: SiloStats }) {
   const c = useThemeColors();
   const pct = stats.resurfacingRate === null ? null : Math.round(stats.resurfacingRate * 100);
   return (
-    <View style={[styles.card, cardEdge(c)]}>
-      <Text style={[styles.cardEyebrow, { color: c.textTertiary }]}>SAVE → DO RATE</Text>
-      <View style={styles.rateRow}>
-        <Text style={[styles.rateValue, { color: c.text }]}>{pct === null ? '—' : `${pct}%`}</Text>
-        <Text style={[styles.rateWindow, { color: c.textTertiary }]}>last 30 days</Text>
-      </View>
-      <View style={[styles.rateTrack, { backgroundColor: c.field }]}>
-        {/* The fill is a brand surface and keeps its gradient in both appearances. */}
-        <LinearGradient
-          colors={[...GRADIENTS.brand]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={[styles.rateFill, { width: `${pct ?? 0}%` }]}
-        />
-      </View>
-      <Text style={[styles.cardCaption, { color: c.textSecondary }]}>
-        {describeRate(stats.resurfacingRate)}
-      </Text>
+    <View style={[styles.cardLift, styles.cardSpacing]}>
+      <Glass radius={RADIUS.xl} tintColor={cardTint(c)} style={styles.card}>
+        <Text style={[styles.cardEyebrow, { color: c.textTertiary }]}>SAVE → DO RATE</Text>
+        <View style={styles.rateRow}>
+          <Text style={[styles.rateValue, { color: c.text }]}>
+            {pct === null ? '—' : `${pct}%`}
+          </Text>
+          <Text style={[styles.rateWindow, { color: c.textTertiary }]}>last 30 days</Text>
+        </View>
+        {/* Track stays an opaque field and the fill stays a brand gradient —
+            a meter is a surface, not a material. */}
+        <View style={[styles.rateTrack, { backgroundColor: c.field }]}>
+          <LinearGradient
+            colors={[...GRADIENTS.brand]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[styles.rateFill, { width: `${pct ?? 0}%` }]}
+          />
+        </View>
+        <Text style={[styles.cardCaption, { color: c.textSecondary }]}>
+          {describeRate(stats.resurfacingRate)}
+        </Text>
+      </Glass>
     </View>
   );
 }
@@ -320,33 +374,38 @@ function WeeklyChart({ weeks }: { weeks: WeekBucket[] }) {
   const savesColor = c.appearance === 'dark' ? BRAND[800] : BRAND[200];
 
   return (
-    <Animated.View entering={FadeIn.duration(DURATION.base)} style={[styles.card, cardEdge(c)]}>
-      <Text style={[styles.cardEyebrow, { color: c.textTertiary }]}>LAST 12 WEEKS</Text>
-      <View style={styles.chart}>
-        {weeks.map((w) => (
-          <View key={w.start} style={styles.chartColumn}>
-            <View style={styles.chartStack}>
-              <View
-                style={[
-                  styles.chartBar,
-                  { backgroundColor: savesColor, height: `${(w.saves / peak) * 100}%` },
-                ]}
-              />
-              <View
-                style={[
-                  styles.chartBarUses,
-                  { backgroundColor: c.brand, height: `${(w.uses / peak) * 100}%` },
-                ]}
-              />
+    // The card used to fade itself in on top of the screen's own entrance. It is
+    // glass now, and a fade above glass deletes the material — the stagger it
+    // already gets from `RiseIn` is the entrance.
+    <View style={[styles.cardLift, styles.cardSpacing]}>
+      <Glass radius={RADIUS.xl} tintColor={cardTint(c)} style={styles.card}>
+        <Text style={[styles.cardEyebrow, { color: c.textTertiary }]}>LAST 12 WEEKS</Text>
+        <View style={styles.chart}>
+          {weeks.map((w) => (
+            <View key={w.start} style={styles.chartColumn}>
+              <View style={styles.chartStack}>
+                <View
+                  style={[
+                    styles.chartBar,
+                    { backgroundColor: savesColor, height: `${(w.saves / peak) * 100}%` },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.chartBarUses,
+                    { backgroundColor: c.brand, height: `${(w.uses / peak) * 100}%` },
+                  ]}
+                />
+              </View>
             </View>
-          </View>
-        ))}
-      </View>
-      <View style={styles.legend}>
-        <Legend color={savesColor} label="Saved" />
-        <Legend color={c.brand} label="Done" />
-      </View>
-    </Animated.View>
+          ))}
+        </View>
+        <View style={styles.legend}>
+          <Legend color={savesColor} label="Saved" />
+          <Legend color={c.brand} label="Done" />
+        </View>
+      </Glass>
+    </View>
   );
 }
 
@@ -366,27 +425,36 @@ function CleanupCard({ count, onPress }: { count: number; onPress: () => void })
     <PressableScale
       haptic="light"
       scaleTo={0.985}
-      // The warning tint + a wash of the same hue for the border and glyph well,
-      // so the card reads as "attention" on either ground.
-      style={[
-        styles.cleanupCard,
-        { backgroundColor: c.warningSoft, borderColor: c.warning + '38' },
-      ]}
+      containerStyle={styles.cleanupSpacing}
       onPress={onPress}
       accessibilityLabel={`Tidy up ${count} stale saves`}
     >
-      <View style={[styles.cleanupIcon, { backgroundColor: c.warning + '1F' }]}>
-        <Ionicons name="sparkles" size={20} color={c.warning} />
-      </View>
-      <View style={styles.cleanupBody}>
-        <Text style={[styles.cleanupTitle, { color: c.text }]}>
-          {count} {count === 1 ? 'save is' : 'saves are'} going stale
-        </Text>
-        <Text style={[styles.cleanupSub, { color: c.textSecondary }]}>
-          Keep the ones you still want. Let the rest go — it takes a minute.
-        </Text>
-      </View>
-      <Ionicons name="chevron-forward" size={18} color={c.decorative} />
+      {/* The warning still comes through the material, as a tint rather than a
+          fill: `24` ≈ 14%, which is the alpha the dark palette's own
+          `warningSoft` uses. `bordered={false}` because the amber edge below is
+          doing that job — the plain rim would read as ordinary chrome, and this
+          card is the one thing on the page asking for attention. It IS a
+          control, so the glass takes the press. */}
+      <Glass
+        interactive
+        bordered={false}
+        radius={RADIUS.xl}
+        tintColor={c.warning + '24'}
+        style={[styles.cleanupCard, { borderColor: c.warning + '38' }]}
+      >
+        <View style={[styles.cleanupIcon, { backgroundColor: c.warning + '1F' }]}>
+          <Ionicons name="sparkles" size={20} color={c.warning} />
+        </View>
+        <View style={styles.cleanupBody}>
+          <Text style={[styles.cleanupTitle, { color: c.text }]}>
+            {count} {count === 1 ? 'save is' : 'saves are'} going stale
+          </Text>
+          <Text style={[styles.cleanupSub, { color: c.textSecondary }]}>
+            Keep the ones you still want. Let the rest go — it takes a minute.
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={c.decorative} />
+      </Glass>
     </PressableScale>
   );
 }
@@ -469,11 +537,16 @@ const styles = StyleSheet.create({
     width: '50%',
     padding: SPACE.xs,
   },
-  metricCard: {
+  // Lift + radius on the wrapper (glass clips a shadow away), padding inside.
+  cardLift: {
     borderRadius: RADIUS.xl,
-    padding: SPACE.base,
-    borderWidth: 1,
     ...SHADOW.card,
+  },
+  cardSpacing: {
+    marginTop: SPACE.base,
+  },
+  metricCard: {
+    padding: SPACE.base,
   },
   metricValueRow: {
     flexDirection: 'row',
@@ -494,11 +567,7 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    borderRadius: RADIUS.xl,
     padding: SPACE.lg,
-    marginTop: SPACE.base,
-    borderWidth: 1,
-    ...SHADOW.card,
   },
   cardEyebrow: {
     ...TYPE.overline,
@@ -577,14 +646,17 @@ const styles = StyleSheet.create({
     ...TYPE.caption,
   },
 
+  cleanupSpacing: {
+    marginTop: SPACE.base,
+  },
   cleanupCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.md,
-    borderRadius: RADIUS.xl,
+    // Its own amber edge instead of the material's neutral rim — the colour is
+    // half of what makes this read as "attention".
     borderWidth: 1,
     padding: SPACE.base,
-    marginTop: SPACE.base,
   },
   cleanupIcon: {
     width: 40,
