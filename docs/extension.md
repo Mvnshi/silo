@@ -228,7 +228,7 @@ The free-vs-paid line mymind draws (AI summaries, Reading Mode, Article Backup a
 
 ## 10. Open questions for the team
 
-These need a decision before M0 lands. Surface in the founder's launch checklist (`FOUNDER_SETUP.md`):
+These need a decision before M0 lands — they're on the launch checklist ([`releasing.md`](releasing.md)):
 
 1. **Sync model** at v2 — push-only via KV inbox vs E2E bidirectional. KV is cheaper and faster to ship; E2E is the right principled answer. Decide based on retention data from v1.
 2. **Bundler** — WXT (opinionated, cross-browser) vs Plasmo (more flexible, React-first) vs vanilla Vite + crxjs (full control). Recommendation: **WXT** unless someone has a hard reason otherwise.

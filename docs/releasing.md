@@ -1,15 +1,15 @@
-# Silo — Founder Setup Runbook
+# Releasing
 
-> Account-level config that only you can do (it needs your Cloudflare / Expo /
-> Apple logins). Everything code-side is already scaffolded and wired; this fills
-> in the **values + cloud resources**. Pairs with `AUDIT.md` / `TODO.md` / `LAUNCH_REPORT.md`.
+> The account-level setup — Cloudflare, Expo/EAS and Apple — plus the App Store
+> checklist. Everything code-side is already wired; this fills in the values and
+> the cloud resources. For local development, see [`setup.md`](setup.md).
 >
-> **Already done for you (code-side, committed):**
-> - `.env` created locally (gitignored) with a freshly generated 64-char `EXPO_PUBLIC_CLIENT_TOKEN`.
-> - `.env.example` (template), `eas.json` (build profiles), `wrangler.toml` (worker config + documented KV binding).
-> - Client↔worker auth is wired: app sends `X-Silo-Client` (`lib/api.ts`), worker validates it (`workers/middleware.ts`).
+> Already in the repo: `.env.example`, `eas.json` (build profiles) and
+> `wrangler.toml` (Worker config + a documented KV binding). Client↔Worker auth
+> is wired end to end — the app sends `X-Silo-Client` (`lib/api.ts`) and the
+> Worker validates it (`workers/middleware.ts`).
 >
-> Run all commands from the **project root** unless noted. Check items off as you go.
+> Run all commands from the project root unless noted.
 
 ---
 
@@ -22,8 +22,7 @@
 - [ ] **Verify:** `npx wrangler whoami` → shows your account.
 
 ### 1a. Set the one API secret (your Gemini key — never commit it)
-Silo uses exactly ONE external service: **Google Gemini**. (ElevenLabs + Vultr
-were removed — they were sponsor prizes, not requirements; see LAUNCH_REPORT.md.)
+Silo uses exactly one external service: **Google Gemini**.
 Grab a free key at https://aistudio.google.com/apikey, then:
 - [ ] `npx wrangler secret put GEMINI_API_KEY`  — prompts for the value; paste your key.
 
@@ -61,7 +60,7 @@ Grab a free key at https://aistudio.google.com/apikey, then:
 module that can't run in Expo Go (RevenueCat in Phase 5).
 
 - [ ] `npx expo login` (or `npx eas-cli login`).
-- [ ] `npx eas-cli init` — links the project and writes `extra.eas.projectId` into `app.json`. **Tell me the projectId** (or just let it write app.json) so EAS builds are reproducible.
+- [ ] `npx eas-cli init` — links the project and writes `extra.eas.projectId` into `app.json`. Let it write `app.json` so EAS builds stay reproducible.
 - [ ] First dev build for the simulator (validates the EAS pipeline; profiles are already in `eas.json`):
       `npx eas-cli build --profile development --platform ios`
 
@@ -76,7 +75,7 @@ module that can't run in Expo Go (RevenueCat in Phase 5).
 **Prereq:** Apple Developer Program membership ($99/yr) — required for TestFlight,
 push, and auto-renewable subscriptions.
 
-- [ ] Confirm enrollment status and your **Team ID**.
+- [ ] Note the **Team ID** from the developer portal.
 - [ ] Bundle ID is already `com.silo.app` (`app.json`) — register it in the Apple Developer portal (or let EAS create it during the first build).
 - [ ] Later (Phase 5/6): create the subscription products in App Store Connect
       (`silo_monthly` $6.99 / `silo_yearly` $39.99, 7-day trial) and a RevenueCat project + entitlement `premium`.
@@ -111,19 +110,11 @@ Expo Go** — it needs a dev build. Verified so far: `expo prebuild` generates t
 > classify pipeline as in-app capture (so shared items get title/author/thumbnail +
 > category/tags + an inline embed). Shared images travel through the App Group.
 
-## What I need back from you to proceed deeper
-1. The **Worker URL** (after deploy) — unblocks live backend verification.
-2. The **EAS `projectId`** (after `eas init`) — unblocks reproducible cloud builds.
-3. **Apple Team ID** + enrollment status — unblocks TestFlight/IAP setup.
-4. Confirmation the **Gemini API key** is set (the only one now) — unblocks AI ingestion + assistant verification.
 
-Until then I'll keep moving on everything that doesn't require these (SSRF
-hardening, calendar fix, feature hardening) and flag each gate as I reach it.
+## 5. Launch checklist
 
-## 5. Launch checklist (founder-side, in order)
-
-Everything code-side is done locally; these are the account/asset gates only
-**you** can clear. Each line says what it unblocks.
+Code-side work is done; these are the account and asset gates. Each row says what
+it unblocks.
 
 | # | Action | Cost | Unblocks |
 |---|---|---|---|
@@ -135,10 +126,10 @@ Everything code-side is done locally; these are the account/asset gates only
 | 6 | **App Store Connect**: create the app record (bundle `com.silo.app`), reserve the name "Silo" | — | TestFlight + submission |
 | 7 | **Expo/EAS** account → `npx eas init` → `npx eas build --platform ios --profile production` | free tier OK | Reproducible cloud builds (no local Xcode needed) |
 | 8 | **Support email + privacy policy URL** (App Review requires both; `SUPPORT_EMAIL` in `lib/config.ts` is a placeholder — set the real one). Host the privacy policy anywhere public (GitHub Pages works). | $0 | Passing App Review |
-| 9 | **App Store assets**: the generated `assets/icon.png` is a solid v1; commission a designer pass when budget allows. Screenshots: 6.7" + 6.5" sets (capture from the sim). | $0–ish | Store listing |
-| 10 | **Pricing decision**: launch free (recommended — build resurfacing habit first) vs. enable the $6.99/mo / $39.99/yr config (then: RevenueCat account + StoreKit products) | — | Revenue path |
+| 9 | **App Store assets**: `assets/icon.png` is a serviceable v1; a designer pass is worth it before launch. Screenshots: 6.7" + 6.5" sets (capture from the sim). | $0–ish | Store listing |
+| 10 | **Pricing**: launch free to build the resurfacing habit first, or enable the $6.99/mo · $39.99/yr config (RevenueCat account + StoreKit products) | — | Revenue path |
 | 11 | (Android later) Google Maps API key + Play Console — explicitly deferred; iOS-first. | — | Android release |
 
-**Domain note:** you mentioned `silo.pro` — point it at the privacy policy +
-landing page, and consider `api.silo.pro` as a custom domain for the Worker
-(Cloudflare makes this one click).
+**Domain note:** point the apex at the landing page and privacy policy, and
+consider a subdomain such as `api.silo.pro` as a custom domain for the Worker —
+Cloudflare makes that one click.

@@ -5,7 +5,7 @@ Everything you need to run Silo with **only the repo**, two ways:
 - **Track A — Personal:** everything on your Mac + your phone. No cloud, no accounts, **$0**. Start here.
 - **Track B — Public:** deploy so friends / strangers can download and use it.
 
-> Background reading (optional): [`SYNC.md`](SYNC.md) explains the sync design and the three modes; [`README.md`](README.md) is the architecture overview; [`FOUNDER_SETUP.md`](FOUNDER_SETUP.md) is the App-Store launch checklist.
+> Background reading (optional): [`sync.md`](sync.md) explains the sync design and the three modes; [`README.md`](README.md) is the architecture overview; [`releasing.md`](releasing.md) is the App-Store launch checklist.
 
 Silo has **three parts**: the **phone app** (Expo/React Native), the **Worker** (Cloudflare — the AI proxy + sync server), and the **browser extension**. They all talk to the one Worker.
 
@@ -168,7 +168,7 @@ Now sync works over the public internet — users leave the Server URL field def
   npx eas init            # one-time, links an Expo project
   npx eas build -p ios --profile production
   ```
-  Then submit to **TestFlight** (friends) → **App Store** (public). Full checklist: [`FOUNDER_SETUP.md §5`](FOUNDER_SETUP.md).
+  Then submit to **TestFlight** (friends) → **App Store** (public). Full checklist: [`releasing.md` §5](releasing.md).
 - **Browser extension:**
   ```bash
   cd extension && npm run zip      # → .output/silo-extension-<v>-chrome.zip
@@ -179,7 +179,7 @@ Now sync works over the public internet — users leave the Server URL field def
 
 - Each person installs the app + extension, opens **Settings → Sync**, generates their **own Space code**, and pairs their phone + browser with it. Their data lives in its **own isolated space** in your D1. Strangers can't see each other's saves (different codes).
 - The `APP_CLIENT_TOKEN` is shared (baked into the build) — it gates *anonymous abuse* of your Worker, not per-user identity.
-- **Real accounts** (email/password login, `REQUIRE_AUTH` enforcement, per-account spaces) are the **documented next step — not built yet** (see [`SYNC.md`](SYNC.md) milestone **S4**). For friends and early users, per-person pairing codes work today. Build S4 before opening to true public scale where you don't want to share one client token.
+- **Real accounts** (email/password login, `REQUIRE_AUTH` enforcement, per-account spaces) are the **documented next step — not built yet** (see [`sync.md`](sync.md) milestone **S4**). For friends and early users, per-person pairing codes work today. Build S4 before opening to true public scale where you don't want to share one client token.
 
 ### B5 · What it costs
 

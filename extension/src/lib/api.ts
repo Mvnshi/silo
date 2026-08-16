@@ -79,8 +79,9 @@ export function extractLink(req: ExtractRequest): Promise<ExtractedLink> {
 
 /**
  * Worker response for `classify_image`. Mirrors the phone's
- * `AnalyzeImageResponse` shape (see ../../lib/types.ts) — kept LOCAL so
- * we don't fight the m0 agent over lib/types.ts ownership.
+ * `AnalyzeImageResponse` (see ../../lib/types.ts) but is declared locally: the
+ * extension is a separate build with its own tsconfig, and reaching across the
+ * repo root for a type would couple the two bundles for no benefit.
  */
 interface AnalyzeImageResponse {
   classification: string;

@@ -1,6 +1,7 @@
-# Silo — Product Vision
+# Product thesis
 
-> North-star doc. Read this before TODO.md/AUDIT.md — it explains **why** Silo exists and where the AI system is going. Pairs with [`README.md`](README.md) (what's built) and [`TODO.md`](TODO.md) (what's next).
+> Why Silo exists and where the AI system is going. Pairs with
+> [`README.md`](README.md) (what's built) and [`ROADMAP.md`](ROADMAP.md) (what's next).
 
 ## The thesis
 

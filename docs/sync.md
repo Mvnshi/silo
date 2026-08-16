@@ -2,7 +2,7 @@
 
 > How the phone app, the browser extension, and (later) the web app stay in
 > sync — across **three deployment modes** from **one codebase**. Pairs with
-> [`VISION.md`](VISION.md), [`EXTENSION_SPEC.md`](EXTENSION_SPEC.md).
+> [`VISION.md`](VISION.md), [`extension.md`](extension.md).
 
 ## The one idea that makes this simple
 
@@ -211,4 +211,4 @@ cost *you* nothing — Mode 1 is your laptop, Mode 3 is their bill.
 - [ ] **S5 — E2E encryption (optional)**: encrypt `json` client-side from the pairing-code-derived key.
 
 Mode 1 is fully working end-to-end as of S3. S4 turns on the public path when
-the founder is ready; S5 hardens it.
+we're ready to open it up; S5 hardens it.

@@ -11,9 +11,10 @@ node_modules/
 .env
 .env.local
 
-# IDE
+# IDE / local tooling
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
