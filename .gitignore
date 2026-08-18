@@ -39,3 +39,6 @@ yarn-error.log*
 
 # apple-targets generated per-prebuild artifact (do not commit)
 targets/**/generated.entitlements
+
+# Session handoff notes (local)
+.handoff/
