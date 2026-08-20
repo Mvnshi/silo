@@ -25,6 +25,45 @@ const BROWSERS = [
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Retry an in-page evaluation past the transient CDP failures.
+ *
+ * A page that is still settling can tear down its execution context under an
+ * in-flight `evaluate`, which surfaces as "Execution context was destroyed" or
+ * a detached frame and takes the whole run down with a stack trace rather than
+ * a failed check. That is a harness race, not a product defect — retrying it
+ * is the difference between a gate you trust and one you re-run.
+ */
+async function retry(fn, { attempts = 4, delay = 500, label = 'evaluate' } = {}) {
+  let lastError;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const transient =
+        /execution context|detached|Target closed|Session closed|Cannot find context/i.test(
+          String(error?.message ?? error)
+        );
+      if (!transient || i === attempts - 1) throw error;
+      await sleep(delay * (i + 1));
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Screenshots are diagnostics, not assertions. A failed capture must never fail
+ * the run — the popup page in particular can close underneath one.
+ */
+async function safeShot(target, path) {
+  try {
+    await target.screenshot({ path });
+  } catch {
+    /* diagnostic only */
+  }
+}
 let failures = 0;
 const check = (name, ok, detail = '') => {
   console.log(`${ok ? '✅' : '❌'} ${name}${detail ? ` — ${detail}` : ''}`);
@@ -77,7 +116,7 @@ try {
     () => Boolean(document.querySelector('[data-silo-spotlight]'))
   );
   check('spotlight overlay mounted on example.com', hasOverlay);
-  await page.screenshot({ path: '/tmp/silo-e2e-spotlight.png' });
+  await safeShot(page, '/tmp/silo-e2e-spotlight.png');
 
   // Input is autofocused inside the closed shadow root — type blind.
   const NOTE_TITLE = 'E2E spotlight note';
@@ -90,10 +129,15 @@ try {
   await popupPage.goto(`chrome-extension://${extId}/popup.html`, {
     waitUntil: 'domcontentloaded',
   });
+  // Wait for the popup to actually mount rather than guessing at a duration —
+  // the fixed sleep is what let an evaluate land mid-teardown.
+  await popupPage
+    .waitForFunction(() => document.querySelector('#root')?.children.length > 0, { timeout: 10000 })
+    .catch(() => {});
   await sleep(2500); // give extractLink a chance to settle (or fail gracefully)
 
   const readItems = () =>
-    popupPage.evaluate(
+    retry(() => popupPage.evaluate(
       () =>
         new Promise((resolve, reject) => {
           const req = indexedDB.open('silo');
@@ -106,7 +150,7 @@ try {
           };
           req.onerror = () => reject(req.error);
         })
-    );
+    ), { label: 'readItems' });
 
   let items = await readItems();
   const spotlightNote = items.find((i) => i.title === NOTE_TITLE);
@@ -119,7 +163,7 @@ try {
   // ---- Popup renders + Save works -------------------------------------------
   const headerText = await popupPage.evaluate(() => document.body.innerText.slice(0, 200));
   check('popup rendered', headerText.includes('Silo'), headerText.split('\n')[0]);
-  await popupPage.screenshot({ path: '/tmp/silo-e2e-popup.png' });
+  await safeShot(popupPage, '/tmp/silo-e2e-popup.png');
 
   // Without a user invocation gesture, activeTab grants nothing — the popup
   // can't read the tab URL and must fall back to NOTE-MODE (the same path a
@@ -167,7 +211,7 @@ try {
     items = await readItems();
     const popupNote = items.find((i) => i.title === POPUP_NOTE);
     check('popup note-mode save persisted', Boolean(popupNote), `items=${items.length}`);
-    await popupPage.screenshot({ path: '/tmp/silo-e2e-popup-saved.png' });
+    await safeShot(popupPage, '/tmp/silo-e2e-popup-saved.png');
   }
 
   // ---- Library page shows everything ----------------------------------------
@@ -186,7 +230,7 @@ try {
     libText.includes(POPUP_NOTE)
   );
   check('library shows the saved count', /\d+ saved/.test(libText));
-  await libPage.screenshot({ path: '/tmp/silo-e2e-library.png' });
+  await safeShot(libPage, '/tmp/silo-e2e-library.png');
 
   console.log('\nItems in extension IndexedDB:');
   for (const i of items) console.log(`  • [${i.type}/${i.classification}] ${i.title}`);

@@ -37,8 +37,6 @@ declare const styles: {
   readonly suggestChip: string;
   readonly note: string;
   readonly footer: string;
-  readonly cta: string;
-  readonly ctaSaved: string;
   readonly footerError: string;
   readonly dupBadge: string;
   readonly dupBadgeMeta: string;

@@ -132,6 +132,8 @@ export const GRADIENTS = {
   brand: ['#8b5cf6', '#6366f1'] as const,
   /** Celebration / accent moments. */
   accent: ['#ec4899', '#8b5cf6'] as const,
+  /** Confirmation fill for a completed action (the popup's "Saved ✓" CTA). */
+  success: ['#16a34a', '#15803d'] as const,
   /** Soft page background used by the light screens. */
   page: ['#EEF2FF', '#F5F3FF', '#FAF5FF'] as const,
 };
@@ -281,6 +283,8 @@ ${spaceVars()}
 
   --gradient-brand: linear-gradient(135deg, ${GRADIENTS.brand[0]}, ${GRADIENTS.brand[1]});
   --gradient-accent: linear-gradient(135deg, ${GRADIENTS.accent[0]}, ${GRADIENTS.accent[1]});
+  --gradient-success: linear-gradient(135deg, ${GRADIENTS.success[0]}, ${GRADIENTS.success[1]});
+  --shadow-success: 0 10px 24px -12px rgba(22, 163, 74, 0.45);
   --gradient-page: linear-gradient(160deg, ${GRADIENTS.page[0]}, ${GRADIENTS.page[1]} 50%, ${GRADIENTS.page[2]});
 
   --shadow-card: 0 4px 14px rgba(15, 23, 42, 0.05);

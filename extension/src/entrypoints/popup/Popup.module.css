@@ -8,54 +8,67 @@
  * `--ink-*` steps are fixed in both schemes.
  */
 
-* {
-  box-sizing: border-box;
-}
+/*
+ * The global element resets live in the `base` layer on purpose.
+ *
+ * Tailwind's utilities are emitted into the `utilities` layer (see
+ * assets/tailwind.css). An UNLAYERED rule beats every layered one regardless of
+ * specificity, so while these resets sat outside a layer, a bare
+ * `button { background: transparent }` silently defeated `bg-primary` on every
+ * shadcn Button — the component rendered, with no background. Putting the
+ * resets in `base` restores the normal order: resets first, utilities on top.
+ * This is the slot Tailwind's own preflight would occupy if it were imported.
+ */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-  /* Literal, with the token as an override: this paints in the very first
-     frame, before the token <style> is installed. */
-  background: #ffffff;
-  background: var(--surface-card, #ffffff);
-}
-
-body {
-  font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    system-ui,
-    sans-serif;
-  color: var(--text-primary);
-  font-size: 14px;
-  line-height: 1.4;
-  -webkit-font-smoothing: antialiased;
-}
-
-@media (prefers-color-scheme: dark) {
   html,
   body {
-    background: #171b29;
-    background: var(--surface-card, #171b29);
+    margin: 0;
+    padding: 0;
+    /* Literal, with the token as an override: this paints in the very first
+       frame, before the token <style> is installed. */
+    background: #ffffff;
+    background: var(--surface-card, #ffffff);
   }
-}
 
-button {
-  font-family: inherit;
-  cursor: pointer;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-}
+  body {
+    font-family:
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      system-ui,
+      sans-serif;
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+  }
 
-input,
-textarea {
-  font-family: inherit;
-  color: inherit;
+  @media (prefers-color-scheme: dark) {
+    html,
+    body {
+      background: #171b29;
+      background: var(--surface-card, #171b29);
+    }
+  }
+
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+  }
+
+  input,
+  textarea {
+    font-family: inherit;
+    color: inherit;
+  }
 }
 
 .root {
@@ -393,37 +406,6 @@ textarea {
   gap: 10px;
   background: var(--surface-card);
 }
-.cta {
-  width: 100%;
-  padding: 12px 16px;
-  border-radius: var(--radius-pill);
-  background: var(--gradient-brand);
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  box-shadow: var(--shadow-brand);
-  transition: transform 100ms ease, box-shadow 120ms ease, opacity 120ms ease;
-}
-.cta:hover:not(:disabled) {
-  box-shadow: var(--shadow-brand-strong);
-}
-.cta:active:not(:disabled) {
-  transform: scale(0.97);
-}
-.cta:focus-visible {
-  outline: 2px solid var(--text-brand);
-  outline-offset: 2px;
-}
-.cta:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-.ctaSaved {
-  background: linear-gradient(135deg, #16a34a, #15803d);
-  box-shadow: 0 10px 24px -12px rgba(22, 163, 74, 0.45);
-}
 
 .footerError {
   margin: 0;
@@ -460,13 +442,11 @@ textarea {
   }
   .closeBtn,
   .pill,
-  .cta,
   .note,
   .suggestChip,
   .dupBadge {
     transition-duration: 1ms;
   }
-  .cta:active:not(:disabled),
   .pill:active {
     transform: none;
   }

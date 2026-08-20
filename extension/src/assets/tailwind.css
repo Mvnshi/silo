@@ -1,0 +1,102 @@
+/*
+ * Tailwind + shadcn/ui, bound to Silo's existing tokens.
+ *
+ * ## No second palette
+ *
+ * shadcn's components are written against a fixed set of semantic CSS
+ * variables (`--color-background`, `--color-primary`, …). The stock setup
+ * defines those with its own hex/oklch values, which would give this extension
+ * two palettes that drift apart the first time a brand colour changes.
+ *
+ * Instead every one of them is an ALIAS of a variable `lib/theme.ts` already
+ * emits. `theme.ts` stays the single source of style truth — exactly as it is
+ * for the phone app — and shadcn just reads it. Two things fall out for free:
+ *
+ *  - **Dark mode.** Silo's tokens already flip under `prefers-color-scheme`,
+ *    and `@theme inline` keeps the `var()` reference in the generated utility
+ *    rather than copying the value, so `bg-card` re-resolves on its own. There
+ *    is no `.dark` class to maintain and no second set of dark values.
+ *  - **Sync fidelity.** The hexes stay byte-identical to the phone's.
+ *
+ * ## Preflight is deliberately not imported
+ *
+ * The popup, library and spotlight are already styled by CSS Modules on top of
+ * these tokens. Preflight is a global reset — pulling it in would restyle every
+ * existing surface to land a button. Importing only `theme` + `utilities` (the
+ * documented v4 way to opt out) means Tailwind is purely additive here: nothing
+ * that does not carry a utility class changes.
+ */
+@layer theme, base, components, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@theme inline {
+  /* --- shadcn's semantic contract → Silo's emitted tokens ----------------- */
+  --color-background: var(--surface-card);
+  --color-foreground: var(--text-primary);
+
+  --color-card: var(--surface-card);
+  --color-card-foreground: var(--text-primary);
+
+  --color-popover: var(--surface-raised);
+  --color-popover-foreground: var(--text-primary);
+
+  /* 600 is Silo's primary action colour, on both platforms. */
+  --color-primary: var(--brand-600);
+  --color-primary-foreground: var(--text-inverse);
+
+  --color-secondary: var(--surface-sunken);
+  --color-secondary-foreground: var(--text-primary);
+
+  --color-muted: var(--surface-sunken);
+  --color-muted-foreground: var(--text-secondary);
+
+  --color-accent: var(--surface-brand-soft);
+  --color-accent-foreground: var(--text-brand);
+
+  --color-destructive: var(--status-danger);
+  --color-destructive-foreground: var(--text-inverse);
+
+  --color-success: var(--status-success);
+  --color-warning: var(--status-warning);
+
+  --color-border: var(--hairline);
+  --color-input: var(--hairline);
+  --color-ring: var(--brand-500);
+
+  /* Raw scales, so a utility can still reach a specific step when a semantic
+     role genuinely doesn't fit (`text-brand-700`, `bg-ink-100`). */
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+  --color-ink-100: var(--ink-100);
+  --color-ink-200: var(--ink-200);
+  --color-ink-300: var(--ink-300);
+  --color-ink-400: var(--ink-400);
+  --color-ink-500: var(--ink-500);
+  --color-ink-600: var(--ink-600);
+  --color-ink-700: var(--ink-700);
+  --color-ink-800: var(--ink-800);
+  --color-ink-900: var(--ink-900);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+}
+
+/*
+ * `--radius-*` and `--space-*` are NOT re-declared above, and that is on
+ * purpose: `theme.ts` emits variables under those exact names, and an alias
+ * would be self-referential (`--radius-md: var(--radius-md)`). Tailwind's own
+ * defaults are simply overridden at runtime — `injectTokens()` appends Silo's
+ * `:root` block to <head> after the stylesheet, so `rounded-lg` resolves to
+ * Silo's 20px, not Tailwind's. `scripts/verify-tokens.mjs` asserts this rather
+ * than trusting it, because it is a cascade-order dependency.
+ */

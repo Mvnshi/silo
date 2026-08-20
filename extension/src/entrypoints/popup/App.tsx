@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Classification, Item, ItemType } from '@/lib/types';
 import type { ExtractedLink } from '@/lib/api';
 import { extractLink } from '@/lib/api';
+import { Button } from '@/components/ui/button';
 import { createItem } from '@/lib/items';
 import { addItem, updateItem } from '@/lib/store';
 import { checkDuplicate } from '@/lib/dupes';
@@ -442,14 +443,15 @@ export function App() {
           </button>
         ) : null}
 
-        <button
+        <Button
           type="button"
-          className={`${styles.cta} ${saveState === 'saved' ? styles.ctaSaved : ''}`}
+          variant={saveState === 'saved' ? 'brandSuccess' : 'brand'}
+          size="cta"
           disabled={!canSave}
           onClick={() => void onSave()}
         >
           {saveState === 'saved' ? 'Saved ✓' : saveState === 'saving' ? 'Saving…' : 'Save to Silo'}
-        </button>
+        </Button>
         {errorMsg ? (
           <p className={styles.footerError} role="alert">
             {errorMsg}

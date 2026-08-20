@@ -10,10 +10,15 @@
  * - host_permissions: empty. We will NEVER request <all_urls> at install time.
  */
 import { defineConfig } from 'wxt';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-react'],
+  // Tailwind v4 is a Vite plugin. It is imported without preflight (see
+  // src/assets/tailwind.css), so it only adds utilities — the CSS Modules that
+  // style the existing surfaces are untouched.
+  vite: () => ({ plugins: [tailwindcss()] }),
   manifest: {
     name: 'Silo',
     description: 'Save anything from the web. Silo files it.',

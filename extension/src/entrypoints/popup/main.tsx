@@ -7,6 +7,9 @@
  * module executes and there is no unstyled flash.
  */
 import { StrictMode } from 'react';
+// Tailwind utilities for the shadcn components. Imported before `injectTokens`
+// runs so Silo's runtime <style> lands last and wins the cascade.
+import '@/assets/tailwind.css';
 import { createRoot } from 'react-dom/client';
 import { injectTokens } from '@/lib/theme';
 import { App } from './App';
