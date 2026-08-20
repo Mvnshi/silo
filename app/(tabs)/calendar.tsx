@@ -83,6 +83,7 @@ import {
 import { useThemeColors } from '@/lib/useTheme';
 import { Item, ScheduledEvent } from '@/lib/types';
 import { getItems, getItemById, updateItem, addItem, getEvents, touchSeen } from '@/lib/storage';
+import { useDataVersion } from '@/lib/dataVersion';
 import { buildReview, ReviewOutcome } from '@/lib/resurface';
 import { buildReadinessPatch, evaluateItem, freeMinutesFrom } from '@/lib/triggers';
 import { createItem } from '@/lib/items';
@@ -162,6 +163,7 @@ export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const c = useThemeColors();
+  const dataVersion = useDataVersion();
   const reduced = usePrefersReducedMotion();
   // Rebuilt only when the appearance flips — this screen paints four panes of
   // small coloured chrome and re-deriving it every render would churn.
@@ -365,10 +367,13 @@ export default function CalendarScreen() {
 
   // Load items when screen comes into focus. (No haptic here — the tab bar owns
   // the tab-change feedback; firing a second one reads as a stutter.)
+  // `dataVersion` so the assistant's actions land here too — it is an overlay,
+  // not a route, so this tab never blurs. See lib/dataVersion.ts.
   useFocusEffect(
     useCallback(() => {
       loadItems();
-    }, [loadItems])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loadItems, dataVersion])
   );
 
   /**

@@ -14,6 +14,19 @@ export interface Env {
   // Google Gemini API key — the only upstream service this Worker talks to.
   GEMINI_API_KEY: string;
 
+  /**
+   * Override the Gemini origin. Unset in every real deployment, where the
+   * Google endpoint is used. It exists so `verify-assistant-worker.mjs` can
+   * point the Worker at a stub and assert the part that matters for safety —
+   * that a model's `[n]` references are mapped to ids the CLIENT supplied and
+   * an out-of-range one is dropped rather than clamped. That is not observable
+   * against the live model, which cannot be made to hallucinate on cue.
+   *
+   * Same trust level as GEMINI_API_KEY: whoever can set this can already read
+   * the key, so it widens nothing.
+   */
+  GEMINI_BASE_URL?: string;
+
   // --- Security (Phase 3) ---
   // Shared client token. When set, /api/* requests must send a matching
   // `X-Silo-Client` header (set EXPO_PUBLIC_CLIENT_TOKEN to the same value in

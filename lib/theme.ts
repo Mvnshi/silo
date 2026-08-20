@@ -224,6 +224,15 @@ export const DURATION = {
   slow: 340,
   /** Toast/snackbar dwell time before auto-dismiss. */
   toast: 4000,
+  /**
+   * Dwell time for an Undo the user needs longer to consider.
+   *
+   * `toast` is tuned for an action you just took on one object you were already
+   * looking at. It is too short for an assistant action: the rows were chosen by
+   * the model rather than picked by hand, several of them may have changed at
+   * once, and the toast appears below a sheet the user is still reading.
+   */
+  toastLong: 8000,
 } as const;
 
 /** Per-item delay for staggered list entrances, capped so long lists don't crawl. */

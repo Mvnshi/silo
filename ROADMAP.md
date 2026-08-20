@@ -29,6 +29,25 @@ taken per week from saved items*. Anything that doesn't move that number waits.
   conditions get one; an item gated on where you are would need background
   geofencing and an "Always" location grant, which Silo deliberately does not
   ask for, so those stay foreground evaluations.
+- **An assistant that can act.** It was read-only Q&A buried in the Add tab with
+  a close button wired to `() => {}`. It now has a home (mounted once at the
+  root, reachable from every tab), a real dismiss, and a vocabulary: schedule,
+  complete, archive, add, set a trigger condition. Gemini returns
+  **schema-enforced tool calls**, not prose the client regexes.
+
+  The interesting half is what it is not allowed to do. The model never sees an
+  item id — it is shown `[1]…[N]` and answers in those numbers — so the Worker
+  maps them back to the ids it was sent and `lib/assistant.parseActions` checks
+  them again against the set the *device* put on the wire. A hallucinated
+  reference resolves to nothing and the action is dropped, never clamped to a
+  neighbouring row. Everything else fails closed too: a date that doesn't exist,
+  a range that runs backwards, a location fence with no coordinates.
+
+  Every action lands as a card that names each row before touching it, with
+  per-row ticks and a headline that retitles as you untick. Then it applies and
+  offers Undo in the Toast, like the rest of the app. 79 pure checks
+  (`verify-assistant.mjs`) plus 28 against a real Worker with a stubbed model
+  (`verify-assistant-worker.mjs`).
 - **Sync** — two-way phone ⇄ extension through the Worker's `/api/sync`
   (see [`docs/sync.md`](docs/sync.md)).
 - **Accounts (optional)** — Sign in with Apple, Google, or a six-digit email
@@ -121,6 +140,37 @@ taken per week from saved items*. Anything that doesn't move that number waits.
 
 ## Assessed and declined
 
+### Magic UI — and an assistant in the extension
+
+**Not adopted. Two effects rebuilt natively instead; the extension side
+declined.** Magic UI is React DOM (Tailwind + Framer Motion, sitting on
+shadcn/ui), so it cannot run in the app at all — the same shape of mismatch as
+react-native-reusables below. The only place it *would* drop in is `extension/`,
+which is already React web with shadcn bound to Silo's tokens.
+
+That is exactly where it shouldn't go yet. The assistant's value is the action
+layer, and the action layer is calendar, notifications, triggers and location —
+`expo-calendar` is native, and the extension has none of it. An assistant there
+could only do `archive` / `add` / `complete`: the weakest third of the
+vocabulary, at the cost of duplicating the riskiest part of the feature (deciding
+what a model may touch) in a second codebase. Revisit if the extension ever grows
+its own scheduling surface.
+
+For the app, two effects earned their place and were rebuilt on the primitives
+already in use (`components/ui/Shimmer.tsx`, Reanimated + `lib/motion.ts` +
+`lib/theme.ts`, both still under Reduce Motion):
+
+- **Shimmering phase label** on the thinking state. Retrieval is on-device and
+  the model call is not; naming which one is running is the difference between
+  "working" and "stuck".
+- **Sweep** across an action card while it applies, where a multi-row write has
+  real latency.
+
+Declined: a **typewriter reveal** on the answer. The answer arrives complete —
+there is no stream to mirror — so animating it in character by character would
+only withhold text the user already has. Animated beams and the rest are
+decoration on a surface whose job is to be trusted.
+
 ### react-native-reusables (the RN port of shadcn/ui)
 
 **Not adopted as components. Worth reaching for as primitives, later.** shadcn
@@ -158,6 +208,11 @@ dress it in Glass and `theme.ts`. Adopt the primitives; never the skins.
 
 - **Agentic execution** (booking, emailing, buying). The wedge is *deciding*, not
   *doing*; recommendation quality compounds, half-working agents erode trust.
+  The assistant's action layer is not a softening of this: every verb it has
+  writes to the user's own library or their own calendar, which is the "act"
+  arrow the product loop already had a button for. Nothing reaches an outside
+  service on the user's behalf, and the vocabulary is a closed list precisely so
+  that stays true.
 - **Server-side user data.** An account is an identity — an email and a user id —
   and nothing more. No remote database of what you saved, no embeddings
   warehouse: synced rows live in your own Cloudflare D1, keyed by a space id. If

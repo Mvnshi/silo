@@ -37,6 +37,9 @@ lib/                    pure logic, no UI
   ├─ storage.ts         AsyncStorage: per-key write mutex + clobber guards
   ├─ items.ts           Item factory, normalization, status derivation
   ├─ api.ts             thin client → POST /api/gemini
+  ├─ assistant.ts       the assistant's tool vocabulary + what it may refuse
+  ├─ assistantExec.ts   running one proposed action, undoably
+  ├─ dataVersion.ts     "something changed off-screen, reload"
   ├─ embed.ts           token-free inline players
   ├─ shareImport.ts     iOS share-queue drain
   ├─ scheduler.ts       idempotent calendar scheduling
@@ -48,7 +51,8 @@ lib/                    pure logic, no UI
   └─ motion.ts          shared entrance/exit presets + reduced-motion
 
 components/             StreamCard · ItemCardPro · CompactCard · TodayView · ReviewCard
-                        ItemActionSheet · CleanupSheet · ChatBot · ThemeProvider · ui/*
+                        ItemActionSheet · CleanupSheet · ThemeProvider · ui/*
+                        AssistantProvider · ChatBot · assistant/ActionCard
 extension/              browser extension (see docs/extension.md)
 workers/                Cloudflare Worker: index → middleware (auth + rate limit) → gemini
 targets/share/          native iOS Share Extension (Swift) → App Group → app drains it
@@ -101,6 +105,51 @@ three Gemini-backed extras, so the upgrade prompt arrives after the feature has
 visibly worked instead of the first time it is tapped. `lib/retention.ts`
 classifies where a subscriber stands (`cancelled` · `lapsed` · `billingIssue` ·
 …) and owns the copy for each.
+
+### The assistant
+
+Ask it about your library, or tell it what to do with it. Both halves are
+grounded on your own saves, and the second half is where the care went.
+
+Retrieval runs on-device: the question is matched against the library and only
+the matching items go to the Worker. A question that isn't about a topic but
+about the library as a whole — *"archive everything I haven't touched since
+June"* — can't be answered by keywords, so a thin keyword result falls back to
+Silo's own structural lanes (the cleanup pile, what's coming up) instead of an
+arbitrary newest-30.
+
+**It can act.** The vocabulary is Silo's existing verbs and nothing else:
+`schedule` (a real calendar event, idempotent per item), `complete` (through
+`buildReview`, so it reaches the north-star metric), `archive`, `add`, and
+`set_trigger` (a `BucketCondition` the trigger engine then evaluates). Adding a
+verb means adding a real capability, so the list is the security boundary as
+much as the feature set.
+
+**The model cannot invent an item.** Grounding is structural, not a prompt, in
+three layers: the model is shown `[1]…[N]` and never an id, so the only thing it
+can emit is a small integer; the Worker maps those back to the ids it was sent
+and drops anything out of range; and `lib/assistant.parseActions` re-checks every
+id against the set the *device* put on the wire. An id can only ever be one the
+phone itself supplied. `verify-assistant-worker.mjs` asserts the prompt contains
+no id at all.
+
+**Nothing happens until you tap.** Silo's convention is optimistic-plus-Undo
+rather than a blocking confirm — right when *you* picked the target. Here the
+model picked it, so there's one more step, the same for every action:
+
+```
+propose (a card, listing every row it will touch) → you tap → apply → Undo in the Toast
+```
+
+Multi-item actions list what they'll change and let you un-tick any of it first;
+the headline retitles as you do. `schedule` says out loud that it writes to your
+real calendar, because it's the only verb whose effect leaves the app. Undo
+restores exactly the fields the action wrote, so a change you made in between
+survives.
+
+The assistant is an overlay, not a route — reachable from every tab, primary
+nowhere (VISION.md is explicit that Silo isn't chat-first). It's mounted once at
+the root by `AssistantProvider`.
 
 ### The resurfacing loop
 
@@ -181,6 +230,8 @@ Full walkthrough — local dev, deploying, and self-hosting — in
 | `cd extension && npx wxt build` | Build the extension |
 | `cd extension && node scripts/verify-e2e.mjs` | Extension e2e against a real browser |
 | `node scripts/verify-triggers.mjs` | Trigger-engine rules (pure; no device needed) |
+| `node scripts/verify-assistant.mjs` | What the assistant's action layer refuses (pure) |
+| `node workers/scripts/verify-assistant-worker.mjs` | Item references never become ids the client didn't send (starts its own Worker + a model stub) |
 | `node scripts/verify-degradation.mjs` | Accounts + subscriptions degrade to "everything open" when unconfigured |
 | `node scripts/verify-funnel.mjs` | Retention states, paywall copy, price maths, the free AI allowance |
 | `node workers/scripts/verify-extract.mjs` | Extractor against fixed HTML (starts its own Worker) |
@@ -206,5 +257,10 @@ Full walkthrough — local dev, deploying, and self-hosting — in
   north-star metric.
 - **Destructive actions** — apply optimistically and offer Undo via the Toast,
   rather than a blocking confirm. `deleteItem` already writes a tombstone with
-  everything needed to restore.
+  everything needed to restore. The one exception is an action the *assistant*
+  proposed: the model chose those rows, not the user, so it shows a card first —
+  then applies and offers Undo exactly as above.
+- **The assistant's reach** — `lib/assistant.ASSISTANT_TOOLS` is a closed list,
+  and adding to it adds a real capability. Anything it acts on must survive
+  `parseActions` against the ids the device itself sent; never widen that.
 - **No demo data in production** — seeding is `__DEV__`-only.

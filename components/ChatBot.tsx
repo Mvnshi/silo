@@ -1,11 +1,22 @@
 /**
  * Floating assistant sheet.
  *
- * Grounded Q&A over the user's own saves. Retrieval runs on-device: the
- * question is matched against the library with `aiSearch` and only the matching
- * items are sent to the Gemini proxy to be phrased, so answers are about what
- * the user actually saved rather than "the 30 newest things". Every answer
- * renders its sources as chips that deep-link to the item.
+ * Grounded Q&A over the user's own saves, and grounded ACTIONS on them.
+ * Retrieval runs on-device: the question is matched against the library with
+ * `aiSearch` and only the matching items are sent to the Gemini proxy to be
+ * phrased, so answers are about what the user actually saved rather than "the 30
+ * newest things". Every answer renders its sources as chips that deep-link to
+ * the item.
+ *
+ * When the user asks for something to be DONE, the model proposes it as a
+ * structured action and the sheet renders it as a card — see
+ * `components/assistant/ActionCard.tsx` for why a card rather than the app's
+ * usual apply-then-Undo. Nothing here mutates anything until that card is
+ * tapped; `lib/assistant.parseActions` is what guarantees the card can only ever
+ * name rows this component itself put on the wire.
+ *
+ * Mounted once, at the root, by `components/AssistantProvider.tsx`. Open/close
+ * state and the FAB live there — this component is told whether it is `visible`.
  *
  * LAYOUT NOTE: the sheet anchors to the bottom of its parent and lifts itself
  * with `useAnimatedKeyboard()`. It must NOT be wrapped in a
@@ -32,12 +43,22 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { aiSearch, isPremiumRequired, ragQuery } from '@/lib/api';
+import { aiSearch, isPremiumRequired, ragQuery, type AssistantContextItem } from '@/lib/api';
 import { getItems } from '@/lib/storage';
+import { getCleanupCandidates } from '@/lib/stats';
+import { parseActions, type AssistantAction } from '@/lib/assistant';
+import { confirmationMessage, runAction } from '@/lib/assistantExec';
+import { bumpDataVersion } from '@/lib/dataVersion';
+import { parseLocalDate, toLocalDateString } from '@/lib/datetime';
+import * as Haptics from 'expo-haptics';
+import { celebrationHaptic } from '@/lib/haptics';
 import type { Item } from '@/lib/types';
+import ActionCard, { withItems, type CardState } from '@/components/assistant/ActionCard';
 import Glass from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import EmptyState from '@/components/ui/EmptyState';
+import { ShimmerText } from '@/components/ui/Shimmer';
+import { useToast } from '@/components/ui/Toast';
 import { usePrefersReducedMotion } from '@/lib/motion';
 import {
   BRAND,
@@ -58,30 +79,50 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 /** Resting sheet height; shrinks to fit when the keyboard is up. */
 const SHEET_HEIGHT = Math.round(SCREEN_HEIGHT * 0.55);
 
-/** FAB diameter. Also its corner radius — glass rounds to a number, not `pill`. */
-const FAB_SIZE = 60;
-
-/**
- * The FAB is glass, but it is still the brand control: violet dense enough to
- * hold a white glyph, thin enough that the material behind it keeps lensing.
- * Pinned to BRAND[600] in both appearances — the palette's `brand` lightens two
- * steps on dark, and white on that pale violet drops under 3:1.
- */
-const FAB_TINT = `${BRAND[600]}bf`;
-
 /** How many retrieved items we hand the model. Enough context, bounded cost. */
 const RETRIEVAL_LIMIT = 30;
 
-const GREETING =
-  "Hi — I'm Silo. Ask me anything about what you've saved and I'll answer from your own library.\n\nTry:\n• \"What fitness content do I have?\"\n• \"Find that pasta recipe\"\n• \"What did I save about design?\"";
+/**
+ * Below this many keyword hits, the question is treated as being about the
+ * library as a whole rather than a topic — see `groundingFor`.
+ */
+const MIN_KEYWORD_HITS = 3;
 
-/** Monotonic message ids — `Date.now()` collides when two land in the same ms. */
+/** Stale items offered as context to a corpus-wide question. */
+const CLEANUP_LANE = 12;
+/** Upcoming scheduled items offered to the same. */
+const UPCOMING_LANE = 8;
+/** How far ahead "upcoming" reaches. Matches the trigger engine's lookahead. */
+const UPCOMING_DAYS = 14;
+
+const GREETING =
+  "Hi — I'm Silo. Ask me about anything you've saved, or tell me what to do with it.\n\nTry:\n• \"What did I save about LangChain?\"\n• \"Schedule the ramen recipe for Saturday morning\"\n• \"Remind me about the trailhead hike when I'm near it\"\n• \"Archive everything I haven't touched since June\"";
+
+/**
+ * Monotonic ids for messages and proposed actions.
+ *
+ * `Date.now()` collides when two land in the same millisecond, so this counts
+ * instead — but a bare counter is not enough on its own: Fast Refresh
+ * re-evaluates this module and resets it to zero while the component's
+ * `messages` state survives, so the next message reuses a key already on screen
+ * and React duplicates or drops a bubble. The per-evaluation prefix keeps ids
+ * unique across a reload as well as within one.
+ */
 let messageSeq = 0;
-const nextId = () => `m${++messageSeq}`;
+const ID_EPOCH = Math.random().toString(36).slice(2, 7);
+const nextId = () => `m${ID_EPOCH}${++messageSeq}`;
 
 interface ChatSource {
   id: string;
   title: string;
+}
+
+/** One proposed action plus where its card is in its life. */
+interface ProposedAction {
+  id: string;
+  action: AssistantAction;
+  state: CardState;
+  error?: string;
 }
 
 interface ChatMessage {
@@ -90,6 +131,8 @@ interface ChatMessage {
   isUser: boolean;
   /** Saved items the answer was grounded on — rendered as deep-link chips. */
   sources?: ChatSource[];
+  /** Things the assistant is offering to do. Nothing runs until a card is tapped. */
+  actions?: ProposedAction[];
   /** This bubble is a failure, not an answer: distinct styling + retryable. */
   isError?: boolean;
   /**
@@ -104,7 +147,11 @@ interface ChatMessage {
 }
 
 interface ChatBotProps {
+  /** Open state is owned by AssistantProvider, not by this component. */
+  visible: boolean;
   onClose: () => void;
+  /** Pre-fills the composer, e.g. when opened from a specific item. */
+  prefill?: string;
 }
 
 /**
@@ -156,6 +203,80 @@ async function retrieve(query: string, items: Item[]): Promise<Item[]> {
 }
 
 /**
+ * Everything the assistant is allowed to see or touch.
+ *
+ * `storage.getItems()` returns archived rows too — every screen filters them
+ * itself. The assistant must as well: archived is the user saying "not this",
+ * and an assistant that answers from put-away content, or offers to archive it
+ * again, is overruling them.
+ */
+async function activeItems(): Promise<Item[]> {
+  const items = await getItems();
+  return items.filter((item) => !item.archived && item.status !== 'archived');
+}
+
+/** Items scheduled between now and `UPCOMING_DAYS` out, soonest first. */
+function upcoming(items: Item[], now: Date): Item[] {
+  const horizon = now.getTime() + UPCOMING_DAYS * 24 * 60 * 60 * 1000;
+  return items
+    .filter((item) => {
+      if (!item.scheduled_date || item.archived || item.status === 'archived') return false;
+      const at = parseLocalDate(item.scheduled_date, item.scheduled_time || '09:00').getTime();
+      return at >= now.getTime() && at <= horizon;
+    })
+    .sort(
+      (a, b) =>
+        parseLocalDate(a.scheduled_date!, a.scheduled_time || '09:00').getTime() -
+        parseLocalDate(b.scheduled_date!, b.scheduled_time || '09:00').getTime()
+    );
+}
+
+/**
+ * Decide what the model gets to see — and therefore what it is able to act on.
+ *
+ * Keyword retrieval answers a question ABOUT something. It cannot answer a
+ * question about the library as a WHOLE: "archive everything I haven't touched
+ * since June" selects on staleness, which is a structural property, not a word.
+ * The old fallback for a keyword miss was "the newest 30", which meant such a
+ * request could only ever act on an arbitrary slice.
+ *
+ * So a thin keyword result falls back to Silo's own structural lanes instead —
+ * the cleanup pile and what's coming up — which is what those questions are
+ * actually about. A rich keyword result is left alone, so a topic question pays
+ * for nothing extra.
+ */
+function groundingFor(all: Item[], matched: Item[], now: Date): Item[] {
+  if (matched.length >= MIN_KEYWORD_HITS) return matched.slice(0, RETRIEVAL_LIMIT);
+
+  const out: Item[] = [];
+  const seen = new Set<string>();
+  const take = (items: Item[], limit: number) => {
+    let taken = 0;
+    for (const item of items) {
+      if (out.length >= RETRIEVAL_LIMIT || taken >= limit) break;
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      out.push(item);
+      taken += 1;
+    }
+  };
+
+  take(matched, matched.length);
+  take(getCleanupCandidates(all, now), CLEANUP_LANE);
+  take(upcoming(all, now), UPCOMING_LANE);
+  take(all, RETRIEVAL_LIMIT); // newest, to fill whatever is left
+  return out;
+}
+
+/** What the sheet is waiting on. Retrieval is local and quick; the model is not. */
+type Thinking = null | 'retrieving' | 'asking';
+
+const THINKING_LABEL: Record<Exclude<Thinking, null>, string> = {
+  retrieving: 'Reading your library',
+  asking: 'Thinking',
+};
+
+/**
  * The appearance-dependent half of `styles` — a plain object so it can be
  * memoised per palette rather than re-registered as a sheet on every render.
  */
@@ -195,38 +316,49 @@ function makeDynamicStyles(c: ThemeColors) {
   };
 }
 
-export default function ChatBot({ onClose }: ChatBotProps) {
+export default function ChatBot({ visible, onClose, prefill }: ChatBotProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const reduced = usePrefersReducedMotion();
   const keyboard = useAnimatedKeyboard();
   const c = useThemeColors();
+  const toast = useToast();
   const dyn = useMemo(() => makeDynamicStyles(c), [c]);
 
-  const [isExpanded, setIsExpanded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: nextId(), text: GREETING, isUser: false },
   ]);
   const [inputText, setInputText] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [thinking, setThinking] = useState<Thinking>(null);
   /** null until the library has been counted, so we don't flash the empty state. */
   const [libraryEmpty, setLibraryEmpty] = useState<boolean | null>(null);
+  /**
+   * Titles for whatever the action cards name. Every id in here was in a
+   * grounding set this component sent, so a card can never name something the
+   * user does not have.
+   */
+  const [library, setLibrary] = useState<ReadonlyMap<string, Item>>(new Map());
 
   const scrollRef = useRef<ScrollView>(null);
   /** 0 = parked below the screen, 1 = open. Drives a translate, never opacity. */
   const progress = useSharedValue(0);
 
   useEffect(() => {
-    const target = isExpanded ? 1 : 0;
+    const target = visible ? 1 : 0;
     progress.value = reduced ? target : withSpring(target, SPRING.settle);
-  }, [isExpanded, progress, reduced]);
+  }, [visible, progress, reduced]);
+
+  // Opened with a question already in mind (e.g. from an item screen).
+  useEffect(() => {
+    if (visible && prefill) setInputText(prefill);
+  }, [visible, prefill]);
 
   // An empty library has nothing to ground an answer on — check on open so we
   // can short-circuit the model entirely instead of paying for "you have none".
   useEffect(() => {
-    if (!isExpanded) return;
+    if (!visible) return;
     let alive = true;
-    getItems()
+    activeItems()
       .then((items) => {
         if (alive) setLibraryEmpty(items.length === 0);
       })
@@ -234,7 +366,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
     return () => {
       alive = false;
     };
-  }, [isExpanded]);
+  }, [visible]);
 
   /** Bottom anchor: clears the home indicator without hugging the edge. */
   const bottomGap = Math.max(insets.bottom, SPACE.md) + SPACE.sm;
@@ -261,44 +393,54 @@ export default function ChatBot({ onClose }: ChatBotProps) {
     };
   });
 
-  const closeChat = useCallback(() => {
-    setIsExpanded(false);
-    onClose();
-  }, [onClose]);
-
   const openSource = useCallback(
     (id: string) => {
-      closeChat();
+      onClose();
       router.push(`/item/${id}`);
     },
-    [closeChat, router]
+    [onClose, router]
   );
 
-  /** Retrieve → ask → append. Errors land as a retryable error bubble. */
+  /** Retrieve → ask → append. Errors land as a retryable (or payable) bubble. */
   const runQuery = useCallback(async (question: string) => {
-    setLoading(true);
+    setThinking('retrieving');
     try {
-      const allItems = await getItems();
+      const allItems = await activeItems();
       // Nothing to ground on — never spend a model call to say "you have none".
       if (allItems.length === 0) {
         setLibraryEmpty(true);
         return;
       }
 
+      const now = new Date();
       const matched = await retrieve(question, allItems);
-      // A keyword miss must not tell the model "nothing is saved" — fall back to
-      // the newest items so it can still answer from something real.
-      const grounding = (matched.length > 0 ? matched : allItems).slice(0, RETRIEVAL_LIMIT);
+      const grounding = groundingFor(allItems, matched, now);
 
+      // Remember the titles so an action card can name what it will touch.
+      setLibrary((prev) => {
+        const next = new Map(prev);
+        for (const item of grounding) next.set(item.id, item);
+        return next;
+      });
+
+      setThinking('asking');
       const response = await ragQuery({
         query: question,
-        items: grounding.map((item) => ({
-          id: item.id,
-          title: item.title,
-          description: item.description,
-          tags: item.tags,
-          classification: item.classification,
-        })),
+        items: grounding.map(
+          (item): AssistantContextItem => ({
+            id: item.id,
+            title: item.title,
+            description: item.description,
+            tags: item.tags,
+            classification: item.classification,
+            scheduled_date: item.scheduled_date,
+            status: item.status,
+          })
+        ),
+        // The device's clock, not the Worker's: "Saturday morning" is only
+        // meaningful in the user's own timezone.
+        today: toLocalDateString(now),
+        now: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
       });
 
       // Only keep sources we actually sent, so every chip resolves to a real item.
@@ -312,9 +454,17 @@ export default function ChatBot({ onClose }: ChatBotProps) {
         sources.push({ id: item.id, title: item.title });
       }
 
+      // The third grounding layer: whatever the Worker returned, only ids THIS
+      // component put on the wire survive. See lib/assistant.ts.
+      const actions = parseActions(response.actions, new Set(byId.keys())).map((action) => ({
+        id: nextId(),
+        action,
+        state: 'idle' as CardState,
+      }));
+
       setMessages((prev) => [
         ...prev,
-        { id: nextId(), text: response.answer, isUser: false, sources },
+        { id: nextId(), text: response.answer, isUser: false, sources, actions },
       ]);
     } catch (error) {
       // The gate is an offer, not a failure. Retrying it can never succeed, so
@@ -345,9 +495,97 @@ export default function ChatBot({ onClose }: ChatBotProps) {
         },
       ]);
     } finally {
-      setLoading(false);
+      setThinking(null);
     }
   }, []);
+
+  /** Update one card's state in place, leaving the rest of the thread alone. */
+  const patchAction = useCallback(
+    (messageId: string, actionId: string, patch: Partial<ProposedAction>) => {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id !== messageId
+            ? message
+            : {
+                ...message,
+                actions: message.actions?.map((entry) =>
+                  entry.id === actionId ? { ...entry, ...patch } : entry
+                ),
+              }
+        )
+      );
+    },
+    []
+  );
+
+  /**
+   * Run one proposed action against the rows still ticked on its card.
+   *
+   * The narrowed action — not the original — is what executes, so what the card
+   * says and what happens are the same value. Success is confirmed in the Toast
+   * WITH Undo, which is where every other destructive action in the app puts it.
+   */
+  const applyAction = useCallback(
+    async (messageId: string, entry: ProposedAction, itemIds: string[]) => {
+      const action = withItems(entry.action, itemIds);
+      patchAction(messageId, entry.id, { state: 'running', error: undefined });
+
+      const result = await runAction(action);
+
+      if (result.changed === 0) {
+        patchAction(messageId, entry.id, {
+          state: 'failed',
+          error: result.error ?? 'Nothing changed.',
+        });
+        return;
+      }
+
+      patchAction(messageId, entry.id, { state: 'done' });
+      // Screens behind the sheet never lost focus, so nothing would reload.
+      bumpDataVersion();
+      // The escalating celebration belongs to things that went WELL — putting it
+      // on a six-item archive would congratulate someone for tidying up.
+      if (action.tool === 'archive' || action.tool === 'set_trigger') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      } else {
+        void celebrationHaptic();
+      }
+
+      const partial = result.failed > 0 ? ` (${result.failed} couldn’t be updated)` : '';
+      toast.show({
+        message: confirmationMessage(action, result.changed) + partial,
+        tone: result.failed > 0 ? 'neutral' : 'success',
+        // The model picked these rows, not the user — see DURATION.toastLong.
+        duration: DURATION.toastLong,
+        action: {
+          label: 'Undo',
+          onPress: async () => {
+            await result.undo();
+            bumpDataVersion();
+            // Back to idle rather than gone: undoing a suggestion is a change of
+            // mind, and the offer should still be there to take up again.
+            patchAction(messageId, entry.id, { state: 'idle', error: undefined });
+          },
+        },
+      });
+    },
+    [patchAction, toast]
+  );
+
+  const dismissAction = useCallback(
+    (messageId: string, actionId: string) => {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id !== messageId
+            ? message
+            : { ...message, actions: message.actions?.filter((entry) => entry.id !== actionId) }
+        )
+      );
+    },
+    []
+  );
+
+  const loading = thinking !== null;
 
   function handleSend() {
     const question = inputText.trim();
@@ -367,27 +605,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
-      {!isExpanded && (
-        <PressableScale
-          haptic="medium"
-          accessibilityLabel="Open assistant"
-          // Sits above the floating tab bar on every device.
-          containerStyle={[styles.fabContainer, { bottom: insets.bottom + 66 }]}
-          // Glass clips to its own bounds, so the brand lift that separates the
-          // FAB from the page has to live outside it.
-          style={styles.fabLift}
-          onPress={() => setIsExpanded(true)}
-        >
-          {/* A control, so the material takes the press (Apple's specular
-              response) — and a brand tint so it still reads as THE button
-              rather than a blurred hole. The glyph stays white on it. */}
-          <Glass interactive radius={FAB_SIZE / 2} tintColor={FAB_TINT} style={styles.fab}>
-            <Ionicons name="chatbubbles" size={26} color={TEXT.inverse} />
-          </Glass>
-        </PressableScale>
-      )}
-
-      {isExpanded && (
+      {visible && (
         <Animated.View
           style={StyleSheet.absoluteFill}
           entering={FadeIn.duration(DURATION.base)}
@@ -400,16 +618,16 @@ export default function ChatBot({ onClose }: ChatBotProps) {
             accessibilityLabel="Close assistant"
             containerStyle={StyleSheet.absoluteFill}
             style={[styles.backdropTint, dyn.backdropTint]}
-            onPress={closeChat}
+            onPress={onClose}
           />
         </Animated.View>
       )}
 
       <Animated.View
         style={[styles.sheet, { bottom: bottomGap }, sheetStyle]}
-        pointerEvents={isExpanded ? 'auto' : 'none'}
-        accessibilityElementsHidden={!isExpanded}
-        importantForAccessibility={isExpanded ? 'auto' : 'no-hide-descendants'}
+        pointerEvents={visible ? 'auto' : 'none'}
+        accessibilityElementsHidden={!visible}
+        importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
       >
         {/* The material IS the sheet: no fill, just a whisper of the card
             colour so a wall of chat text stays legible over whatever page the
@@ -428,7 +646,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
               <View>
                 <Text style={[styles.headerTitle, dyn.headerTitle]}>Assistant</Text>
                 <Text style={[styles.headerSubtitle, dyn.headerSubtitle]}>
-                  Answers from your saves
+                  Ask about your saves, or tell me what to do
                 </Text>
               </View>
             </View>
@@ -436,7 +654,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
               haptic="light"
               accessibilityLabel="Close assistant"
               style={styles.closeButton}
-              onPress={closeChat}
+              onPress={onClose}
             >
               <Ionicons name="close" size={22} color={c.textSecondary} />
             </PressableScale>
@@ -448,8 +666,8 @@ export default function ChatBot({ onClose }: ChatBotProps) {
               <EmptyState
                 icon="sparkles"
                 title="Nothing to ask about yet"
-                subtitle="Save a few links or notes and I'll answer questions about them."
-                cta={{ label: 'Start capturing', onPress: closeChat }}
+                subtitle="Save a few links or notes and I'll answer questions about them — and do things with them."
+                cta={{ label: 'Start capturing', onPress: onClose }}
               />
             </ScrollView>
           ) : (
@@ -545,6 +763,18 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                       )}
                     </View>
 
+                    {message.actions?.map((entry) => (
+                      <ActionCard
+                        key={entry.id}
+                        action={entry.action}
+                        items={library}
+                        state={entry.state}
+                        error={entry.error}
+                        onRun={(itemIds) => void applyAction(message.id, entry, itemIds)}
+                        onDismiss={() => dismissAction(message.id, entry.id)}
+                      />
+                    ))}
+
                     {!!message.sources?.length && (
                       <View style={styles.sourceRow}>
                         {message.sources.map((source) => (
@@ -569,15 +799,20 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                   </Animated.View>
                 ))}
 
-                {loading && (
+                {thinking && (
                   <Animated.View
                     entering={FadeIn.duration(DURATION.fast)}
                     style={[styles.bubble, styles.botBubble, dyn.botBubble, styles.typingBubble]}
-                    accessibilityLabel="Thinking"
                   >
                     {[0, 1, 2].map((i) => (
                       <TypingDot key={i} index={i} reduced={reduced} />
                     ))}
+                    {/* Retrieval is on-device and the model call is not, so
+                        naming the phase is the difference between "working" and
+                        "stuck". */}
+                    <ShimmerText style={styles.thinkingLabel}>
+                      {THINKING_LABEL[thinking]}
+                    </ShimmerText>
                   </Animated.View>
                 )}
               </ScrollView>
@@ -585,7 +820,7 @@ export default function ChatBot({ onClose }: ChatBotProps) {
               <View style={[styles.composer, dyn.composer]}>
                 <TextInput
                   style={[styles.input, dyn.input]}
-                  placeholder="Ask about your saved content..."
+                  placeholder="Ask, or tell me what to do…"
                   placeholderTextColor={c.textPlaceholder}
                   value={inputText}
                   onChangeText={setInputText}
@@ -647,28 +882,25 @@ function TypingDot({ index, reduced }: { index: number; reduced: boolean }) {
 }
 
 const styles = StyleSheet.create({
+  /**
+   * NO zIndex. It used to carry `zIndex: 1000`, which was harmless while the
+   * sheet was mounted inside the Add tab and merely had to sit above that
+   * screen's content. Mounted at the root it is actively wrong: the Toast is a
+   * later sibling and should paint above the sheet, but Fabric flattens away
+   * the plain wrapper `View` that AssistantProvider puts around this component,
+   * which makes the sheet a DIRECT sibling of the Toast — and 1000 beats the
+   * Toast's 0. The result was an Undo that mounted, logged, and rendered
+   * underneath the sheet where nobody could ever tap it.
+   *
+   * Document order is all this needs now: the sheet is mounted after the
+   * navigator and before the Toast, so it covers the app and the Toast covers
+   * it. Adding a zIndex here again would re-break Undo.
+   */
   wrapper: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 1000,
   },
   backdropTint: {
     flex: 1,
-  },
-  fabContainer: {
-    position: 'absolute',
-    right: SPACE.lg,
-  },
-  // The brand lift, on the wrapper — the glass itself clips to its own bounds,
-  // so a shadow set on it would never escape them.
-  fabLift: {
-    borderRadius: FAB_SIZE / 2,
-    ...SHADOW.brandFloating,
-  },
-  fab: {
-    width: FAB_SIZE,
-    height: FAB_SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   sheet: {
     position: 'absolute',
@@ -695,6 +927,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE.md,
+    flexShrink: 1,
   },
   avatar: {
     width: 40,
@@ -812,6 +1045,9 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: RADIUS.pill,
+  },
+  thinkingLabel: {
+    marginLeft: SPACE.xs,
   },
   composer: {
     flexDirection: 'row',

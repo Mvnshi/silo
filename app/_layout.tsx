@@ -21,6 +21,7 @@ import { AppState, LogBox } from 'react-native';
 import { Stack, Redirect, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { syncNow } from '@/lib/sync';
+import AssistantProvider from '@/components/AssistantProvider';
 
 // Known, tracked noise only — never blanket-ignore:
 // - expo-av deprecation: migration to expo-audio/expo-video is in TODO.md.
@@ -200,31 +201,38 @@ function AppShell({ needsOnboarding }: { needsOnboarding: boolean }) {
           see reel.tsx, which needs light glyphs over its full-bleed media. */}
       <StatusBar style={colors.statusBar} />
       <ToastProvider>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.page },
-          }}
-        >
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
-          {/* A plain push, NOT presentation:'modal'. react-native-screens
-              presents a modal as its own view controller, which renders ABOVE
-              the root view where ToastProvider lives — so every toast raised
-              from Settings (export result, sync failure) would have been
-              invisible. Settings is reached from "Your Silo" via its gear, so a
-              push is also the more consistent transition. */}
-          <Stack.Screen name="settings" />
-          {/* Modal: the paywall is a decision, not a destination — it must be
-              dismissable without losing where you were. */}
-          <Stack.Screen name="paywall" options={{ presentation: 'modal' }} />
-          {/* Presented, not pushed: signing in is a detour from wherever you
-              were, and the sheet makes "you can leave" obvious. */}
-          <Stack.Screen
-            name="sign-in"
-            options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
-          />
-        </Stack>
+        {/* Inside ToastProvider so the Undo that follows every assistant action
+            has somewhere to appear, and BEFORE TextPromptHost so a text prompt
+            still lands above the sheet. The assistant is an overlay rather than
+            a route: it has to be reachable from every tab without navigating
+            away from what you are looking at. */}
+        <AssistantProvider>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: colors.page },
+            }}
+          >
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
+            {/* A plain push, NOT presentation:'modal'. react-native-screens
+                presents a modal as its own view controller, which renders ABOVE
+                the root view where ToastProvider lives — so every toast raised
+                from Settings (export result, sync failure) would have been
+                invisible. Settings is reached from "Your Silo" via its gear, so a
+                push is also the more consistent transition. */}
+            <Stack.Screen name="settings" />
+            {/* Modal: the paywall is a decision, not a destination — it must be
+                dismissable without losing where you were. */}
+            <Stack.Screen name="paywall" options={{ presentation: 'modal' }} />
+            {/* Presented, not pushed: signing in is a detour from wherever you
+                were, and the sheet makes "you can leave" obvious. */}
+            <Stack.Screen
+              name="sign-in"
+              options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+            />
+          </Stack>
+        </AssistantProvider>
         {/* Backs promptForText() — replaces the iOS-only Alert.prompt. */}
         <TextPromptHost />
       </ToastProvider>
