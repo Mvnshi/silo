@@ -162,6 +162,27 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 The anon key is a public client key — it is safe in the app bundle, and every
 table is protected by row-level security regardless (we create no tables).
 
+### 6a-bis. Check the Worker half before you have a project
+
+The Worker verifies a session by *asking* the identity provider over HTTP, so it
+can be exercised against a stand-in — no Supabase account required:
+
+```sh
+node workers/scripts/mock-idp.mjs &                     # port 8124
+cd workers && npx wrangler dev --config ../wrangler.toml --port 8799 &
+npx wrangler dev --config ../wrangler.toml --port 8798 \
+  --var SUPABASE_URL:http://localhost:8124 \
+  --var SUPABASE_ANON_KEY:anon-test --var SUPABASE_SERVICE_ROLE_KEY:service-test &
+npx wrangler dev --config ../wrangler.toml --port 8797 ... --var REQUIRE_AUTH:true &
+npx wrangler dev --config ../wrangler.toml --port 8796 ...   # no service-role key
+node workers/scripts/verify-auth.mjs
+```
+
+This covers the part with real security consequences — that a caller can only
+touch their **own** space — plus `REQUIRE_AUTH` and `DELETE /api/account`. It
+does not cover anything that depends on tokens Supabase actually mints (the
+Apple nonce, Google PKCE, email OTP); those need the steps below.
+
 ### 6b. Tell the Worker how to verify a session
 
 The Worker refuses a bearer token it cannot check, so give it the same project:

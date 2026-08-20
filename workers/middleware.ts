@@ -94,10 +94,13 @@ async function checkRateLimit(
 export async function applySecurity(
   request: Request,
   env: Env,
-  _path: string
+  _path: string,
+  allowedMethods: readonly string[] = ['POST']
 ): Promise<Response | null> {
-  // Only POST is allowed on the processing endpoints.
-  if (request.method !== 'POST') {
+  // The processing endpoints are POST-only, but not every route is: account
+  // deletion is a DELETE, and hardcoding POST here made `DELETE /api/account`
+  // answer 405 before its handler ever ran. Each route states its own verb.
+  if (!allowedMethods.includes(request.method)) {
     return jsonError(405, 'Method not allowed');
   }
 

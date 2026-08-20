@@ -46,7 +46,7 @@ export default {
     // Account deletion (see workers/account.ts). Same gate as everything else;
     // the per-user check happens inside against the bearer token.
     if (path === '/api/account' && request.method === 'DELETE') {
-      const blocked = await applySecurity(request, env, path);
+      const blocked = await applySecurity(request, env, path, ['DELETE']);
       if (blocked) return blocked;
       return handleDeleteAccount(request, env, corsHeaders);
     }
