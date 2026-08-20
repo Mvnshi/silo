@@ -4,6 +4,8 @@
   <dict>
     <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
@@ -46,27 +48,15 @@
       <true/>
     </dict>
     <key>NSCalendarsFullAccessUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your calendars</string>
+    <string>Silo adds an event only when you tap Schedule on something you saved, and reads your day so it can suggest times you're actually free.</string>
     <key>NSCalendarsUsageDescription</key>
-    <string>Silo needs calendar access to schedule content review sessions.</string>
+    <string>Silo adds an event only when you tap Schedule on something you saved, and reads your day so it can suggest times you're actually free.</string>
     <key>NSCameraUsageDescription</key>
-    <string>Silo needs camera access to capture content.</string>
-    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your location</string>
-    <key>NSLocationAlwaysUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your location</string>
+    <string>Silo uses the camera when you take a photo to save into your library.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your location</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your microphone</string>
-    <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to save photos</string>
+    <string>Silo uses your location to surface saved places that are near you right now, and to fire the location triggers you set. Your location stays on this device.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Silo needs photo library access to detect and analyze screenshots.</string>
-    <key>NSRemindersFullAccessUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your reminders</string>
-    <key>NSRemindersUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your reminders</string>
+    <string>Silo reads the screenshots you pick so it can title, tag and file them for you. Your photos are processed on this device and are never uploaded.</string>
     <key>NSUserActivityTypes</key>
     <array>
       <string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>

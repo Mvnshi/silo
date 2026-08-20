@@ -21,9 +21,12 @@
         ]
       },
       "infoPlist": {
-        "NSCalendarsUsageDescription": "Silo needs calendar access to schedule content review sessions.",
-        "NSPhotoLibraryUsageDescription": "Silo needs photo library access to detect and analyze screenshots.",
-        "NSCameraUsageDescription": "Silo needs camera access to capture content."
+        "NSCalendarsUsageDescription": "Silo adds an event only when you tap Schedule on something you saved, and reads your day so it can suggest times you're actually free.",
+        "NSCalendarsFullAccessUsageDescription": "Silo adds an event only when you tap Schedule on something you saved, and reads your day so it can suggest times you're actually free.",
+        "NSPhotoLibraryUsageDescription": "Silo reads the screenshots you pick so it can title, tag and file them for you. Your photos are processed on this device and are never uploaded.",
+        "NSCameraUsageDescription": "Silo uses the camera when you take a photo to save into your library.",
+        "NSLocationWhenInUseUsageDescription": "Silo uses your location to surface saved places that are near you right now, and to fire the location triggers you set. Your location stays on this device.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -42,6 +45,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-apple-authentication",
       [
         "expo-splash-screen",
         {
@@ -57,12 +61,45 @@
           }
         }
       ],
-      "expo-av",
-      "expo-calendar",
+      [
+        "expo-av",
+        {
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Silo adds an event only when you tap Schedule on something you saved, and reads your day so it can suggest times you're actually free.",
+          "remindersPermission": false
+        }
+      ],
       "expo-file-system",
-      "expo-image-picker",
-      "expo-media-library",
-      "expo-location",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Silo reads the screenshots you pick so it can title, tag and file them for you. Your photos are processed on this device and are never uploaded.",
+          "cameraPermission": "Silo uses the camera when you take a photo to save into your library.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Silo reads the screenshots you pick so it can title, tag and file them for you. Your photos are processed on this device and are never uploaded.",
+          "savePhotosPermission": false,
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Silo uses your location to surface saved places that are near you right now, and to fire the location triggers you set. Your location stays on this device.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "isIosBackgroundLocationEnabled": false
+        }
+      ],
       "@bacons/apple-targets",
       "expo-web-browser"
     ],
