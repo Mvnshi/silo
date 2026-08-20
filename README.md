@@ -133,6 +133,17 @@ id against the set the *device* put on the wire. An id can only ever be one the
 phone itself supplied. `verify-assistant-worker.mjs` asserts the prompt contains
 no id at all.
 
+**The shape was chosen by measurement.** Actions are Gemini *function calls* —
+one declaration per verb, each with its own required fields — at temperature 0.
+The first design was a single permissive response schema, which the endpoint
+accepted and the model then used badly: schedules with a time and no date,
+triggers with no condition, both correctly discarded by the client, leaving the
+assistant promising things no card ever delivered. Against a live model that
+scored **4/7 usable actions**; a newer model scored the same, which is what ruled
+the model out. Per-verb declarations plus temperature 0 score **7/7, four runs
+running**. `verify-assistant-live.mjs` keeps that honest — opt-in, because it
+spends real tokens.
+
 **Nothing happens until you tap.** Silo's convention is optimistic-plus-Undo
 rather than a blocking confirm — right when *you* picked the target. Here the
 model picked it, so there's one more step, the same for every action:
@@ -232,6 +243,7 @@ Full walkthrough — local dev, deploying, and self-hosting — in
 | `node scripts/verify-triggers.mjs` | Trigger-engine rules (pure; no device needed) |
 | `node scripts/verify-assistant.mjs` | What the assistant's action layer refuses (pure) |
 | `node workers/scripts/verify-assistant-worker.mjs` | Item references never become ids the client didn't send (starts its own Worker + a model stub) |
+| `node workers/scripts/verify-assistant-live.mjs` | The real model actually calls the tools correctly. Opt-in: needs a key, spends tokens |
 | `node scripts/verify-degradation.mjs` | Accounts + subscriptions degrade to "everything open" when unconfigured |
 | `node scripts/verify-funnel.mjs` | Retention states, paywall copy, price maths, the free AI allowance |
 | `node workers/scripts/verify-extract.mjs` | Extractor against fixed HTML (starts its own Worker) |

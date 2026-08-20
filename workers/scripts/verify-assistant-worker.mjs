@@ -18,6 +18,14 @@
  * assertion that makes "the model cannot invent an item id" a fact rather than
  * a hope.
  *
+ * The stub answers in Gemini's FUNCTION CALLING shape (`parts` carrying `text`
+ * and `functionCall`), because that is what the assistant task asks for now. The
+ * earlier response-schema version of this file measured 4/7 usable actions
+ * against the live model — see the note on ASSISTANT_FUNCTIONS for why.
+ *
+ * For the complementary check that a real model actually calls these tools
+ * correctly, see `verify-assistant-live.mjs` (needs a real key).
+ *
  * Run:  node workers/scripts/verify-assistant-worker.mjs
  *
  * The Worker and the stub are started and stopped by this script.
@@ -28,8 +36,8 @@ import { startWorker, stopAll } from './servers.mjs';
 const STUB_PORT = Number(process.env.SILO_STUB_PORT ?? 8125);
 const WORKER = process.env.SILO_WORKER_URL ?? 'http://localhost:8798';
 
-/** Set per-test: what the stubbed model "returns". */
-let nextModelOutput = { answer: 'ok' };
+/** Set per-test: the `parts` array the stubbed model "returns". */
+let nextParts = [{ text: 'ok' }];
 /** The prompt the Worker actually sent, so we can assert what it contains. */
 let lastPrompt = '';
 
@@ -44,12 +52,7 @@ const stub = http.createServer((req, res) => {
       lastPrompt = '';
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    // Gemini's envelope, so the Worker's own extraction path is exercised.
-    res.end(
-      JSON.stringify({
-        candidates: [{ content: { parts: [{ text: JSON.stringify(nextModelOutput) }] } }],
-      })
-    );
+    res.end(JSON.stringify({ candidates: [{ content: { parts: nextParts } }] }));
   });
 });
 
@@ -68,8 +71,14 @@ const ITEMS = [
   { id: 'itm_lang', title: 'LangChain agents', classification: 'article' },
 ];
 
-async function ask(modelOutput, body = {}) {
-  nextModelOutput = modelOutput;
+/** Shorthand for a model turn: some prose plus zero or more tool calls. */
+const turn = (text, ...calls) => [
+  ...(text === null ? [] : [{ text }]),
+  ...calls.map(([name, args]) => ({ functionCall: { name, args } })),
+];
+
+async function ask(parts, body = {}) {
+  nextParts = parts;
   const response = await fetch(`${WORKER}/api/gemini`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -94,7 +103,7 @@ await startWorker(8798, {
 try {
   /* ---- the model is never shown an id -------------------------------- */
 
-  await ask({ answer: 'hello' }, { query: 'what did I save about ramen' });
+  await ask(turn('hello'), { query: 'what did I save about ramen' });
   // The obvious one, and the one a stub will never notice on your behalf: a
   // prompt full of rules and items with no question in it produces confident
   // nonsense rather than an error.
@@ -110,103 +119,101 @@ try {
   /* ---- references resolve to ids the client supplied ------------------ */
 
   {
-    const r = await ask({
-      answer: 'Archiving those.',
-      sourceRefs: [1, 3],
-      actions: [{ tool: 'archive', refs: [1, 3] }],
-    });
-    check('sourceRefs map to real ids', r.sources.map((s) => s.itemId), ['itm_ramen', 'itm_lang']);
+    const r = await ask(turn('Archiving those.',
+      ['cite', { refs: [1, 3] }],
+      ['archive', { refs: [1, 3] }]));
+    check('cite refs map to real ids', r.sources.map((s) => s.itemId), ['itm_ramen', 'itm_lang']);
     check('sources carry the title, so a chip can render it',
       r.sources.map((s) => s.title), ['Tonkotsu ramen', 'LangChain agents']);
-    check('action refs become itemIds', r.actions[0].itemIds, ['itm_ramen', 'itm_lang']);
+    check('a call becomes an action with the tool name', r.actions[0].tool, 'archive');
+    check('call refs become itemIds', r.actions[0].itemIds, ['itm_ramen', 'itm_lang']);
     check('the raw refs field does not survive', 'refs' in r.actions[0], false);
-    check('the tool is preserved', r.actions[0].tool, 'archive');
+    check('cite is not itself an action', r.actions.length, 1);
+    check('the prose comes back as the answer', r.answer, 'Archiving those.');
   }
 
   /* ---- a reference the model made up resolves to NOTHING -------------- */
 
+  const archiveRefs = async (refs) =>
+    (await ask(turn('x', ['archive', { refs }]))).actions[0].itemIds;
+
+  check('a reference past the end is dropped, not clamped', await archiveRefs([9]), []);
+  check('reference 0 is dropped — the list is 1-based', await archiveRefs([0]), []);
+  check('a negative reference is dropped', await archiveRefs([-1]), []);
+  check('a bad reference does not poison its valid siblings',
+    await archiveRefs([1, 99, 2]), ['itm_ramen', 'itm_hike']);
+  check('a fractional reference is dropped rather than rounded', await archiveRefs([1.5]), []);
+  check('an id the model INVENTED in the refs slot is dropped',
+    await archiveRefs(['itm_ramen']), []);
+  check('a repeated reference collapses', await archiveRefs([2, 2]), ['itm_hike']);
+
   {
-    const r = await ask({ answer: 'x', actions: [{ tool: 'archive', refs: [9] }] });
-    check('a reference past the end is dropped, not clamped', r.actions[0].itemIds, []);
-  }
-  {
-    const r = await ask({ answer: 'x', actions: [{ tool: 'archive', refs: [0] }] });
-    check('reference 0 is dropped — the list is 1-based', r.actions[0].itemIds, []);
-  }
-  {
-    const r = await ask({ answer: 'x', actions: [{ tool: 'archive', refs: [-1] }] });
-    check('a negative reference is dropped', r.actions[0].itemIds, []);
-  }
-  {
-    const r = await ask({ answer: 'x', actions: [{ tool: 'archive', refs: [1, 99, 2] }] });
-    check('a bad reference does not poison its valid siblings',
-      r.actions[0].itemIds, ['itm_ramen', 'itm_hike']);
-  }
-  {
-    const r = await ask({ answer: 'x', actions: [{ tool: 'archive', refs: [1.5] }] });
-    check('a fractional reference is dropped rather than rounded', r.actions[0].itemIds, []);
-  }
-  {
-    const r = await ask({ answer: 'x', actions: [{ tool: 'archive', refs: ['itm_ramen'] }] });
-    check('an id the model INVENTED in the refs slot is dropped', r.actions[0].itemIds, []);
-  }
-  {
-    const r = await ask({ answer: 'x', sourceRefs: [42] });
-    check('an invented source reference yields no chip', r.sources, []);
-  }
-  {
-    const r = await ask({ answer: 'x', actions: [{ tool: 'archive', refs: [2, 2] }] });
-    check('a repeated reference collapses', r.actions[0].itemIds, ['itm_hike']);
+    const r = await ask(turn('x', ['cite', { refs: [42] }]));
+    check('an invented cite reference yields no chip', r.sources, []);
   }
 
   /* ---- shape ---------------------------------------------------------- */
 
   {
-    const r = await ask({ answer: 'just answering' });
-    check('no actions means an empty array, never undefined', r.actions, []);
+    const r = await ask(turn('just answering'));
+    check('no calls means an empty action array, never undefined', r.actions, []);
     check('the answer is passed through', r.answer, 'just answering');
   }
   {
-    const r = await ask({ answer: 'x', actions: [{ refs: [1] }, null, 'archive everything'] });
-    check('entries with no tool are dropped before they reach the client', r.actions, []);
+    // Gemini splits prose across parts more often than you would expect.
+    const r = await ask([{ text: 'Half a sentence' }, { text: ', and the rest.' }]);
+    check('prose split across parts is joined', r.answer, 'Half a sentence, and the rest.');
   }
   {
-    const r = await ask({
-      answer: 'x',
-      actions: [{ tool: 'schedule', refs: [1], date: '2026-08-22', time: '09:00', duration: 45 }],
-    });
+    const r = await ask(turn(null, ['archive', { refs: [1] }]));
+    check('a call with no prose still gets a sentence', r.answer.length > 0, true);
+  }
+  {
+    const r = await ask(turn('x',
+      ['schedule', { refs: [1], date: '2026-08-22', time: '09:00', duration: 45 }]));
     check('schedule fields survive the mapping',
       [r.actions[0].date, r.actions[0].time, r.actions[0].duration],
       ['2026-08-22', '09:00', 45]);
   }
   {
-    const r = await ask({
-      answer: 'x',
-      actions: [{ tool: 'set_trigger', refs: [2], condition: { type: 'day_of_week', daysOfWeek: [0, 6] } }],
-    });
+    const r = await ask(turn('x',
+      ['set_trigger', { refs: [2], condition: { type: 'day_of_week', daysOfWeek: [0, 6] } }]));
     check('a nested condition survives intact',
       r.actions[0].condition, { type: 'day_of_week', daysOfWeek: [0, 6] });
   }
   {
     // `add` invents a row rather than touching one, so it needs no references.
-    const r = await ask({ answer: 'x', actions: [{ tool: 'add', title: 'Book the permit' }] });
-    check('add survives with no refs at all', [r.actions[0].tool, r.actions[0].itemIds], ['add', []]);
+    const r = await ask(turn('x', ['add', { title: 'Book the permit' }]));
+    check('add survives with no refs at all',
+      [r.actions[0].tool, r.actions[0].itemIds], ['add', []]);
+  }
+  {
+    // The live model really does emit the same call twice for one request.
+    const r = await ask(turn('x',
+      ['set_trigger', { refs: [2], condition: { type: 'manual' } }],
+      ['set_trigger', { refs: [2], condition: { type: 'manual' } }]));
+    check('an identical repeated call is deduped', r.actions.length, 1);
+  }
+  {
+    const r = await ask(turn('x',
+      ['archive', { refs: [1] }],
+      ['archive', { refs: [2] }]));
+    check('calls that differ are both kept', r.actions.length, 2);
   }
 
   /* ---- an item the client sent without an id can't be referenced ------- */
 
   {
-    const r = await ask(
-      { answer: 'x', actions: [{ tool: 'archive', refs: [1, 2] }] },
-      { items: [{ title: 'no id here' }, ITEMS[0]] }
-    );
-    check('a reference to an id-less item resolves to nothing', r.actions[0].itemIds, ['itm_ramen']);
+    const r = await ask(turn('x', ['archive', { refs: [1, 2] }]),
+      { items: [{ title: 'no id here' }, ITEMS[0]] });
+    check('a reference to an id-less item resolves to nothing',
+      r.actions[0].itemIds, ['itm_ramen']);
   }
 
   /* ---- an empty library still answers --------------------------------- */
 
   {
-    const r = await ask({ answer: 'You have nothing saved.' }, { items: [] });
+    const r = await ask(turn('You have nothing saved.'), { items: [] });
     check('an empty library is stated in the prompt', lastPrompt.includes('No saved items.'), true);
     check('an empty library still returns cleanly', [r.sources, r.actions], [[], []]);
   }

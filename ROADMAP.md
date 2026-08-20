@@ -45,9 +45,19 @@ taken per week from saved items*. Anything that doesn't move that number waits.
 
   Every action lands as a card that names each row before touching it, with
   per-row ticks and a headline that retitles as you untick. Then it applies and
-  offers Undo in the Toast, like the rest of the app. 79 pure checks
-  (`verify-assistant.mjs`) plus 28 against a real Worker with a stubbed model
-  (`verify-assistant-worker.mjs`).
+  offers Undo in the Toast, like the rest of the app.
+
+  The tool-call shape was settled by measurement against a live model, not by
+  preference. A single permissive response schema — the design most likely to be
+  *accepted* by the structured-output endpoint — was accepted and then used
+  badly: schedules with a time and no date, triggers with no condition, both
+  correctly discarded on the client, which left the assistant promising things no
+  card ever delivered. That scored 4/7 usable actions, and a newer flash scored
+  the same, ruling the model out as the cause. One function declaration per verb,
+  each with its own required fields, at temperature 0, scores 7/7 over four
+  consecutive runs. 79 pure checks (`verify-assistant.mjs`), 33 against a stubbed
+  Worker (`verify-assistant-worker.mjs`), and an opt-in live gate
+  (`verify-assistant-live.mjs`) that spends real tokens to keep it honest.
 - **Sync** — two-way phone ⇄ extension through the Worker's `/api/sync`
   (see [`docs/sync.md`](docs/sync.md)).
 - **Accounts (optional)** — Sign in with Apple, Google, or a six-digit email

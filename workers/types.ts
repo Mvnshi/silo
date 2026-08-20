@@ -15,6 +15,14 @@ export interface Env {
   GEMINI_API_KEY: string;
 
   /**
+   * Override the model id. Unset in normal deployments, which use the pinned
+   * default. Exists so a model can be bumped without a redeploy, and so the
+   * live-assistant check can compare models against one fixed prompt — the
+   * structured-output quality of the assistant task varies a lot between them.
+   */
+  GEMINI_MODEL?: string;
+
+  /**
    * Override the Gemini origin. Unset in every real deployment, where the
    * Google endpoint is used. It exists so `verify-assistant-worker.mjs` can
    * point the Worker at a stub and assert the part that matters for safety —

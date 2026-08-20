@@ -26,6 +26,9 @@
  *     `[1]…[N]` and it answers in those numbers, so it has no item id to invent;
  *     the numbers are mapped back here and re-validated on the client. See
  *     `handleAssistant` and `lib/assistant.ts`.
+ *   - Actions come back as Gemini FUNCTION CALLS, one declaration per verb with
+ *     its own required fields, at temperature 0. Both of those were arrived at by
+ *     measurement, not preference — see ASSISTANT_FUNCTIONS.
  *
  * Environment Variables Required:
  * - GEMINI_API_KEY: Google Gemini API key (server-side only)
@@ -112,11 +115,12 @@ class GeminiError extends Error {
  * `generationConfig` is passed straight through — it is how the assistant asks
  * for schema-enforced JSON rather than hoping prose parses.
  */
-async function callGemini(env: Env, parts: any[], generationConfig?: any): Promise<string> {
+async function callGeminiParts(env: Env, parts: any[], extra?: Record<string, unknown>): Promise<any[]> {
   // Google unless a deployment overrides it; see Env.GEMINI_BASE_URL.
   const base = env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com';
+  const model = env.GEMINI_MODEL || GEMINI_MODEL;
   const response = await fetch(
-    `${base}/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    `${base}/v1beta/models/${model}:generateContent`,
     {
       method: 'POST',
       // Send the key as a header, not a URL query param, so it can't land in
@@ -125,10 +129,7 @@ async function callGemini(env: Env, parts: any[], generationConfig?: any): Promi
         'Content-Type': 'application/json',
         'x-goog-api-key': env.GEMINI_API_KEY,
       },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        ...(generationConfig ? { generationConfig } : {}),
-      }),
+      body: JSON.stringify({ contents: [{ parts }], ...(extra ?? {}) }),
     }
   );
 
@@ -140,10 +141,23 @@ async function callGemini(env: Env, parts: any[], generationConfig?: any): Promi
   }
 
   const data = (await response.json()) as any;
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text || typeof text !== 'string') {
-    throw new Error('gemini_no_text');
-  }
+  const out = data?.candidates?.[0]?.content?.parts;
+  return Array.isArray(out) ? out : [];
+}
+
+/**
+ * The text of a plain (non-tool) completion — what every task except the
+ * assistant wants. Throws when the model returned no text at all so callers can
+ * map it to the single generic 502.
+ */
+async function callGemini(env: Env, parts: any[], generationConfig?: any): Promise<string> {
+  const out = await callGeminiParts(
+    env,
+    parts,
+    generationConfig ? { generationConfig } : undefined
+  );
+  const text = out.find((p) => typeof p?.text === 'string' && p.text)?.text;
+  if (!text) throw new Error('gemini_no_text');
   return text;
 }
 
@@ -312,68 +326,203 @@ const CONDITION_TYPES = [
  *    `[1]…[N]` and answers in those numbers, so the only thing it can emit for
  *    an item is a small integer. It has no id to invent. See `resolveRefs`.
  */
-const ASSISTANT_SCHEMA = {
-  type: 'OBJECT',
-  properties: {
-    answer: {
-      type: 'STRING',
-      description: "The reply, grounded only in the user's saved items.",
-    },
-    sourceRefs: {
-      type: 'ARRAY',
-      description: 'Numbers of the saved items the answer actually relied on.',
-      items: { type: 'INTEGER' },
-    },
-    actions: {
-      type: 'ARRAY',
-      description: 'Actions to PROPOSE to the user. Empty unless they asked for something to be done.',
-      items: {
-        type: 'OBJECT',
-        properties: {
-          tool: { type: 'STRING', enum: [...ASSISTANT_TOOLS] },
-          refs: {
-            type: 'ARRAY',
-            description: 'Numbers of the saved items this acts on. Omit only for "add".',
-            items: { type: 'INTEGER' },
-          },
-          date: { type: 'STRING', description: 'YYYY-MM-DD, local.' },
-          time: { type: 'STRING', description: 'HH:MM, 24-hour, local.' },
-          duration: { type: 'INTEGER', description: 'Minutes.' },
-          outcome: { type: 'STRING', enum: ['loved', 'good', 'skipped'] },
-          title: { type: 'STRING' },
-          classification: { type: 'STRING', enum: [...CLASSIFICATIONS] },
-          note: { type: 'STRING' },
-          tags: { type: 'ARRAY', items: { type: 'STRING' } },
-          condition: {
-            type: 'OBJECT',
-            properties: {
-              type: { type: 'STRING', enum: [...CONDITION_TYPES] },
-              latitude: { type: 'NUMBER' },
-              longitude: { type: 'NUMBER' },
-              radiusMeters: { type: 'INTEGER' },
-              placeLabel: { type: 'STRING' },
-              startHour: { type: 'INTEGER', description: '0-23, local.' },
-              endHour: { type: 'INTEGER', description: '0-23, local, exclusive.' },
-              date: { type: 'STRING', description: 'YYYY-MM-DD.' },
-              startDate: { type: 'STRING', description: 'YYYY-MM-DD.' },
-              endDate: { type: 'STRING', description: 'YYYY-MM-DD.' },
-              daysOfWeek: {
-                type: 'ARRAY',
-                description: '0=Sunday … 6=Saturday.',
-                items: { type: 'INTEGER' },
-              },
-              minFreeMinutes: { type: 'INTEGER' },
-              remindAt: { type: 'STRING', description: 'ISO datetime.' },
-            },
-            required: ['type'],
-          },
+/**
+ * The assistant's verbs, as real function declarations.
+ *
+ * This started as a single permissive `responseSchema` object serving all five
+ * verbs, with only `tool` required — the shape most likely to be accepted by the
+ * structured-output endpoint. It was accepted, and it did not work: measured
+ * against a live model, only 4 of 7 requests produced an action the client could
+ * actually use. `schedule` came back with a time and no date. `set_trigger` came
+ * back with no condition at all. Both were then correctly discarded by
+ * `lib/assistant.parseActions`, which is the worst possible outcome — the
+ * assistant says "I'll put that on Saturday" and no card ever appears.
+ *
+ * The cause was structural, not the model: one object shared by five verbs
+ * cannot mark `date` required for `schedule` without demanding it of `archive`
+ * too, so nothing ever forced the field to exist. Bumping to a newer flash
+ * scored identically (4/7), which is what ruled the model out as the culprit.
+ *
+ * Function calling is the API built for this. Each verb is its own declaration
+ * with its own `required` list, so "a schedule needs a date" stops being a
+ * sentence in a description the model may skim and becomes a constraint the
+ * endpoint enforces.
+ *
+ * KEEP IN SYNC WITH: lib/assistant.ts (ASSISTANT_TOOLS) — the client re-validates
+ * everything here and remains the authority.
+ */
+const ASSISTANT_FUNCTIONS = [
+  {
+    name: 'schedule',
+    description:
+      "Put ONE saved item on the user's real calendar at a specific date and time. To schedule several things, call this several times.",
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        refs: {
+          type: 'ARRAY',
+          description: 'Exactly one reference number from the list.',
+          items: { type: 'INTEGER' },
         },
-        required: ['tool'],
+        date: {
+          type: 'STRING',
+          description:
+            'The calendar date as YYYY-MM-DD. Resolve words like "Saturday" against today\'s date, given above.',
+        },
+        time: { type: 'STRING', description: '24-hour local time as HH:MM, e.g. "09:30".' },
+        duration: { type: 'INTEGER', description: 'Minutes the item will take.' },
       },
+      required: ['refs', 'date', 'time'],
     },
   },
-  required: ['answer'],
-};
+  {
+    name: 'complete',
+    description:
+      'Mark saved items the user has already done. Use when they report having done something.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        refs: { type: 'ARRAY', items: { type: 'INTEGER' } },
+        outcome: {
+          type: 'STRING',
+          enum: ['loved', 'good', 'skipped'],
+          description:
+            '"loved" if they would do it again, "skipped" if it did not happen, otherwise "good".',
+        },
+      },
+      required: ['refs', 'outcome'],
+    },
+  },
+  {
+    name: 'archive',
+    description:
+      'Take saved items off the user\'s lists without deleting them. Use for tidying requests. Pass EVERY item in one call.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        refs: {
+          type: 'ARRAY',
+          description: 'Every reference number to archive, in one call.',
+          items: { type: 'INTEGER' },
+        },
+      },
+      required: ['refs'],
+    },
+  },
+  {
+    name: 'add',
+    description: 'Save something NEW that is not already in the list.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        title: { type: 'STRING', description: 'A short title. A few words, not a sentence.' },
+        classification: { type: 'STRING', enum: [...CLASSIFICATIONS] },
+        note: { type: 'STRING', description: 'Optional detail.' },
+        tags: { type: 'ARRAY', items: { type: 'STRING' } },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'set_trigger',
+    description:
+      'Attach a condition so Silo resurfaces the item when the condition becomes true. This is how "remind me when/whenever…" is handled.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        refs: { type: 'ARRAY', items: { type: 'INTEGER' } },
+        condition: {
+          type: 'OBJECT',
+          description: 'The condition that makes the item resurface.',
+          properties: {
+            type: {
+              type: 'STRING',
+              enum: [...CONDITION_TYPES],
+              description:
+                'time_of_day for "in the evenings"; day_of_week for "on weekends"; location_proximity for "when I am near X" (only with real coordinates); date_range for a trip or season; date_after for "after some date"; calendar_free for "when I have time"; manual for a plain reminder time.',
+            },
+            startHour: { type: 'INTEGER', description: 'time_of_day: 0-23, local.' },
+            endHour: { type: 'INTEGER', description: 'time_of_day: 0-23, local, exclusive.' },
+            daysOfWeek: {
+              type: 'ARRAY',
+              description: 'day_of_week: 0=Sunday … 6=Saturday.',
+              items: { type: 'INTEGER' },
+            },
+            latitude: { type: 'NUMBER', description: 'location_proximity.' },
+            longitude: { type: 'NUMBER', description: 'location_proximity.' },
+            radiusMeters: { type: 'INTEGER', description: 'location_proximity.' },
+            placeLabel: { type: 'STRING', description: 'location_proximity: what to call the place.' },
+            date: { type: 'STRING', description: 'date_after: YYYY-MM-DD.' },
+            startDate: { type: 'STRING', description: 'date_range: YYYY-MM-DD.' },
+            endDate: { type: 'STRING', description: 'date_range: YYYY-MM-DD.' },
+            minFreeMinutes: { type: 'INTEGER', description: 'calendar_free.' },
+            remindAt: { type: 'STRING', description: 'manual: ISO datetime.' },
+          },
+          required: ['type'],
+        },
+      },
+      required: ['refs', 'condition'],
+    },
+  },
+  {
+    name: 'cite',
+    description:
+      'Call once with the reference numbers your written answer actually relied on, so the user can tap through to them. Call this for any answer that draws on a saved item.',
+    parameters: {
+      type: 'OBJECT',
+      properties: { refs: { type: 'ARRAY', items: { type: 'INTEGER' } } },
+      required: ['refs'],
+    },
+  },
+];
+
+/**
+ * Undo the model nesting its whole reply inside its own `answer` field.
+ *
+ * Real Gemini does this, and it is not rare: asked for `{answer, actions}` it
+ * sometimes returns `{"answer": "{\"answer\": \"…\", \"actions\": […]}"}`. That
+ * satisfies the schema — `answer` really is a string — while being completely
+ * wrong, and it fails in the worst possible way: the user is shown raw JSON as
+ * the reply, and every action is silently dropped, because the real ones are
+ * inside a string nobody looks in. A stubbed model never does it, so this cost
+ * nothing to miss until the first live call.
+ *
+ * The prompt now tells it not to, but a prompt is a request. This is the
+ * guarantee: if `answer` parses to something that is itself a reply, use that.
+ * Bounded depth, and it only unwraps when the inner object really looks like an
+ * envelope, so prose that merely happens to contain braces is left alone.
+ */
+function unwrapEnvelope(parsed: Record<string, any> | null): Record<string, any> | null {
+  let out = parsed;
+  for (let depth = 0; depth < 3; depth++) {
+    if (!out || typeof out.answer !== 'string') break;
+    const inner = extractJson(out.answer);
+    if (!inner || typeof inner.answer !== 'string') break;
+    out = {
+      ...inner,
+      // Keep whatever the outer envelope carried if the inner one omitted it.
+      sourceRefs: inner.sourceRefs ?? out.sourceRefs,
+      actions: inner.actions ?? out.actions,
+    };
+  }
+  return out;
+}
+
+/**
+ * Drop the `[3]` citation markers the model sprinkles through its prose.
+ *
+ * Reference numbers are an internal device for grounding — the user never sees
+ * the numbered list, so a citation to it is noise at best and looks like a bug
+ * at worst. Only numbers that actually index the list are stripped, so a genuine
+ * "[2] cups of flour" quoted out of the user's own note survives.
+ */
+function stripRefMarkers(text: string, itemCount: number): string {
+  if (itemCount === 0) return text;
+  return text
+    .replace(/\s*\[(\d+)\]/g, (match, n) => (Number(n) >= 1 && Number(n) <= itemCount ? '' : match))
+    .replace(/\s+([.,;:!?])/g, '$1')
+    .trim();
+}
 
 /** Weekday name for a YYYY-MM-DD, computed in UTC so no server timezone leaks in. */
 function weekdayOf(date: string): string {
@@ -455,7 +604,7 @@ async function handleAssistant(
 
   const prompt = `You are Silo, a personal assistant that answers questions using ONLY the user's saved items listed below. Never invent saved content, and do not claim the user saved something that is not in the list. If the items do not contain the answer, say so plainly.
 
-Silo can also DO things to those saved items on the user's behalf. When — and only when — the user asks for something to be done, propose it in "actions". Otherwise leave "actions" empty and just answer.
+Silo can also DO things to those saved items on the user's behalf, through the tools you have been given. When — and only when — the user asks for something to be done, call the matching tool. Otherwise just answer.
 
 User's saved items, each with a reference number:
 ${context || 'No saved items.'}
@@ -464,50 +613,77 @@ Today is ${weekdayOf(localDate)} ${localDate}. The local time is ${localTime}.
 
 Rules for referring to items:
 - Refer to a saved item ONLY by its reference number from the list above.
-- Never invent a reference number. If nothing above fits, propose no action and say so in the answer.
-- "sourceRefs" is the numbers your answer actually relied on.
+- Never invent a reference number. If nothing above fits, call no tool and say so.
 
 Rules for actions:
-- schedule — put ONE item on the user's real calendar. Needs "refs" (exactly one), "date" (YYYY-MM-DD) and "time" (HH:MM, 24-hour), both in the future relative to the local date and time above. Use "duration" in minutes if the user implies a length. To schedule several things, emit several schedule actions.
-- complete — mark items as already done. "outcome" is "loved" if they say they'd do it again, "skipped" if it didn't happen, otherwise "good".
-- archive — take items off the user's lists without deleting them. Use this for tidying requests such as "clear out the stale ones".
-- add — save something NEW that is not in the list. Needs "title"; no "refs".
-- set_trigger — attach a condition so Silo resurfaces the item when the condition is true. Needs "refs" and a "condition". Use location_proximity for "when I'm near X" (only when you can see real coordinates), time_of_day for "in the evenings", day_of_week for "on weekends", date_range for a trip or season, calendar_free for "when I have time", manual for a plain reminder time.
-- Propose at most 5 actions. If the request is ambiguous, ask in the answer instead of guessing.
-- The answer must say plainly what you are proposing, because the user has to confirm each action before anything happens.
+- Call a tool ONLY when the user asks for something to be done. A question gets an answer and no tool call.
+- Refer to items only by their reference number. Never invent one; if nothing above fits, call no tool and say so.
+- Archive several items with ONE archive call listing every reference, not one call each.
+- Never make the same call twice.
+- At most 5 calls. If the request is ambiguous, ask in your reply instead of guessing.
+- Call the 'cite' tool with the reference numbers your reply relied on.
+
+Rules for your written reply:
+- Always write a reply in plain prose, alongside any tool calls.
+- Say plainly what you are proposing — the user confirms every action before anything happens, so describe it as something you can do, not something you have done.
+- Never put JSON in the reply.
+- The user cannot see the reference numbers, so never write "[2]" or "item 3". Name the item instead.
 
 User's question: ${query}`;
 
   /**
-   * Ask for schema-enforced JSON; fall back once to the plain prose contract if
-   * this deployment's model rejects the schema. A 4xx there means "I don't
-   * accept that request shape", and losing the assistant entirely over a
-   * structured-output quirk is a worse outcome than losing the actions — so the
-   * fallback still answers, just without proposing anything.
+   * Function calling, with a text fallback.
+   *
+   * A 4xx here means this deployment's model will not accept tool declarations
+   * at all. Losing the assistant entirely over that is worse than losing the
+   * actions, so the fallback still answers — it just cannot propose anything.
    */
-  let text: string;
-  let structured = true;
+  let parts: any[];
+  let toolsAvailable = true;
   try {
-    text = await callGemini(env, [{ text: prompt }], {
-      responseMimeType: 'application/json',
-      responseSchema: ASSISTANT_SCHEMA,
+    parts = await callGeminiParts(env, [{ text: prompt }], {
+      tools: [{ functionDeclarations: ASSISTANT_FUNCTIONS }],
+      // AUTO, not ANY: a question deserves an answer and no call at all, and
+      // ANY would force one — including on "schedule my dentist appointment",
+      // where the right behaviour is to decline because nothing saved matches.
+      toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+      // Deciding whether to call a tool is a classification, not a creative
+      // act. At the default temperature the same request would sometimes get a
+      // card and sometimes only prose promising one, which is the difference
+      // between an assistant you trust and one you check up on.
+      generationConfig: { temperature: 0 },
     });
   } catch (error) {
     if (!(error instanceof GeminiError) || error.status >= 500) throw error;
-    console.warn('[silo] assistant schema rejected; retrying without it');
-    structured = false;
-    text = await callGemini(env, [{ text: prompt }]);
+    console.warn('[silo] assistant tools rejected; answering without them');
+    toolsAvailable = false;
+    parts = await callGeminiParts(env, [{ text: prompt }]);
   }
 
-  const parsed = extractJson(text);
-  const answer =
-    parsed && typeof parsed.answer === 'string' && parsed.answer ? parsed.answer : text.trim();
+  // A tool-calling response interleaves prose and calls across parts, and the
+  // model may split its prose over several. Join rather than take the first.
+  const rawAnswer = parts
+    .map((p) => (typeof p?.text === 'string' ? p.text : ''))
+    .join('')
+    .trim();
+  const calls = toolsAvailable
+    ? parts
+        .map((p) => p?.functionCall)
+        .filter((c: any) => c && typeof c.name === 'string')
+    : [];
 
-  // Sources the answer leaned on, mapped back to real ids and titles so the
-  // client can render a chip that deep-links. Relevance descends with the order
-  // the model gave, which is the only ranking signal it offers.
-  const sourceIds = resolveRefs(parsed?.sourceRefs, safeItems);
   const byId = new Map(safeItems.filter((i) => i.id).map((i) => [i.id as string, i]));
+
+  // `cite` is a declared function rather than a response field because there is
+  // no response schema any more; it is the model telling us which items its
+  // prose leaned on. Actions imply their own sources, so those count too.
+  const citedRefs = calls
+    .filter((c: any) => c.name === 'cite')
+    .flatMap((c: any) => (Array.isArray(c.args?.refs) ? c.args.refs : []));
+  const actionRefs = calls
+    .filter((c: any) => c.name !== 'cite')
+    .flatMap((c: any) => (Array.isArray(c.args?.refs) ? c.args.refs : []));
+  const sourceIds = resolveRefs([...citedRefs, ...actionRefs], safeItems);
   const sources = sourceIds.map((itemId, index) => ({
     itemId,
     title: byId.get(itemId)?.title || 'Untitled',
@@ -515,12 +691,30 @@ User's question: ${query}`;
     relevance: Math.max(0, 1 - index * 0.1),
   }));
 
-  // Actions arrive with reference numbers; they leave with ids the client
-  // supplied. The client validates them again — see lib/assistant.parseActions.
-  const rawActions = structured && Array.isArray(parsed?.actions) ? parsed!.actions : [];
-  const actions = rawActions
-    .filter((a: any) => a && typeof a === 'object' && typeof a.tool === 'string')
-    .map(({ refs, ...rest }: any) => ({ ...rest, itemIds: resolveRefs(refs, safeItems) }));
+  const answer =
+    stripRefMarkers(rawAnswer, safeItems.length) ||
+    // A model that calls a tool and says nothing still needs a sentence: the
+    // card alone, with no reply above it, reads as the assistant ignoring you.
+    (calls.length ? 'Here’s what I can do — confirm below.' : 'I don’t have an answer for that.');
+
+  // Calls arrive with reference numbers; they leave as ids the client supplied.
+  // The client validates them again — see lib/assistant.parseActions.
+  // Deduped by shape: the live model will happily emit the same set_trigger
+  // twice for one request, and two identical cards means the user either sees a
+  // stutter or taps the same write through twice.
+  const seenActions = new Set<string>();
+  const actions = calls
+    .filter((c: any) => c.name !== 'cite')
+    .map((c: any) => {
+      const { refs, ...rest } = (c.args ?? {}) as Record<string, unknown>;
+      return { ...rest, tool: c.name, itemIds: resolveRefs(refs, safeItems) };
+    })
+    .filter((a: any) => {
+      const signature = JSON.stringify([a.tool, a.itemIds, a.date, a.time, a.outcome, a.title, a.condition]);
+      if (seenActions.has(signature)) return false;
+      seenActions.add(signature);
+      return true;
+    });
 
   return json(200, { answer, sources, actions }, corsHeaders);
 }
