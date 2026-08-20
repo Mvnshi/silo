@@ -227,6 +227,11 @@ export interface ExtractedLinkResponse {
   /** From the classify chain; falls back to `caption`. */
   description?: string;
   thumbnailUrl?: string;
+  /**
+   * Every image on the post, in order — a carousel/gallery keeps all its frames.
+   * Present only when there is more than one; `thumbnailUrl` is always `[0]`.
+   */
+  thumbnailUrls?: string[];
   /** Clean iframe src (YouTube/TikTok) when available. */
   embedUrl?: string;
   /** oEmbed html (TikTok/X) when provided. */

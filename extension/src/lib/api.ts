@@ -28,6 +28,11 @@ export interface ExtractedLink {
   description?: string;
   caption?: string;
   thumbnailUrl?: string;
+  /**
+   * Every image on the post, in order — a carousel/gallery keeps all its frames.
+   * Present only when there is more than one; `thumbnailUrl` is always `[0]`.
+   */
+  thumbnailUrls?: string[];
   classification: string;
   tags?: string[];
   sourceUrl?: string;
