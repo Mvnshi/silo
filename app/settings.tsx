@@ -56,7 +56,9 @@ import {
 } from '@/lib/storage';
 import { syncNow, newSpaceKey } from '@/lib/sync';
 import { useAuth } from '@/components/AuthProvider';
-import { deleteAccount, displayName, isAuthConfigured } from '@/lib/auth';
+import { deleteAccount, displayName } from '@/lib/auth';
+import { usePremium } from '@/components/PremiumProvider';
+import { restorePurchases } from '@/lib/billing';
 import {
   cancelSiloNotifications,
   requestNotificationPermission,
@@ -76,7 +78,14 @@ import {
 } from '@/lib/theme';
 import { useTheme, useThemeColors, type AppearancePreference } from '@/lib/useTheme';
 import { UserSettings } from '@/lib/types';
-import { APP_VERSION, SUPPORT_EMAIL } from '@/lib/config';
+import {
+  APP_VERSION,
+  PRICE_MONTHLY,
+  PRICE_YEARLY,
+  PRIVACY_URL,
+  SUPPORT_EMAIL,
+  TERMS_URL,
+} from '@/lib/config';
 
 /** Same env default lib/api.ts + lib/sync.ts read; shown as the URL prefill. */
 const ENV_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || '';
@@ -88,10 +97,23 @@ const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
 const SPACE_KEY_RE = /^[A-Za-z0-9_-]{6,128}$/;
 
 /**
+ * "Renews 4 Sep" vs "Ends 4 Sep" — a cancelled subscription that still says
+ * "renews" is the kind of copy that generates support mail and refund requests.
+ */
+function subscriptionStatus(e: { willRenew: boolean; expiresAt: string | null; inTrial: boolean }): string {
+  if (!e.expiresAt) return e.willRenew ? 'Renews automatically' : 'Active';
+  const when = new Date(e.expiresAt);
+  if (Number.isNaN(when.getTime())) return 'Active';
+  const date = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (e.inTrial) return e.willRenew ? `Trial — first charge ${date}` : `Trial ends ${date}`;
+  return e.willRenew ? `Renews ${date}` : `Ends ${date}`;
+}
+
+/**
  * Entrance order — every block on this screen animates in with the same
  * stagger, so the indices have to be declared in one place to stay in sync.
  */
-const ORDER = { profile: 0, stats: 1, account: 2, preferences: 3, devices: 4, data: 5, about: 6 } as const;
+const ORDER = { profile: 0, stats: 1, account: 2, subscription: 3, preferences: 4, devices: 5, data: 6, about: 7 } as const;
 
 /** The three things the Appearance picker can be set to, in segment order. */
 const APPEARANCE_OPTIONS: { value: AppearancePreference; label: string }[] = [
@@ -334,7 +356,15 @@ export default function Settings() {
   // show Skeletons instead of "0 Items".
   const [ready, setReady] = useState(false);
   const { user, configured: authConfigured, signOut } = useAuth();
+  const {
+    configured: billingConfigured,
+    unavailable: billingUnavailable,
+    isPremium,
+    entitlement,
+    refresh: refreshPremium,
+  } = usePremium();
   const [accountBusy, setAccountBusy] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   // --- Sync section state (S1) ---
   const [sync, setSync] = useState<SyncState>({
@@ -614,8 +644,22 @@ export default function Settings() {
     );
   };
 
-  const comingSoon = (what: string) =>
-    Alert.alert(what, `${what} will be published before the App Store launch (required for subscriptions).`);
+  /**
+   * Open a legal document. App Review requires both to be reachable from inside
+   * the app, and a subscription app must link them at the point of purchase too
+   * (`app/paywall.tsx` does). The URLs are in `lib/config.ts`; the documents
+   * they point at live in `docs/legal/` and have to be published before
+   * submission — until they are, this fails honestly rather than silently.
+   */
+  const openLegal = async (what: string, url: string) => {
+    try {
+      const opened = await Linking.canOpenURL(url);
+      if (!opened) throw new Error('unsupported');
+      await Linking.openURL(url);
+    } catch {
+      toast.show({ message: `Couldn’t open the ${what}.`, tone: 'danger' });
+    }
+  };
 
   // The server URL is a self-hoster's escape hatch: only surface it in dev, or
   // once this device has actually been pointed at a custom server.
@@ -725,6 +769,68 @@ export default function Settings() {
                 divider={false}
                 onPress={() => router.push('/sign-in')}
               />
+            )}
+          </Section>
+        )}
+
+        {/* Subscription — like Account, hidden entirely when this build can't
+            sell anything, so an unconfigured clone shows no dead billing UI. */}
+        {billingConfigured && !billingUnavailable && (
+          <Section title="Subscription" index={ORDER.subscription}>
+            {isPremium ? (
+              <>
+                <Row
+                  icon="sparkles"
+                  tint={tint.brand}
+                  label={entitlement.inTrial ? 'Premium — free trial' : 'Silo Premium'}
+                  sub={subscriptionStatus(entitlement)}
+                />
+                <Row
+                  icon="open-outline"
+                  tint={tint.ink}
+                  label="Manage subscription"
+                  sub="Change plan or cancel in the App Store"
+                  divider={false}
+                  onPress={() =>
+                    Linking.openURL(
+                      entitlement.managementUrl ?? 'https://apps.apple.com/account/subscriptions'
+                    )
+                  }
+                />
+              </>
+            ) : (
+              <>
+                <Row
+                  icon="sparkles"
+                  tint={tint.brand}
+                  label="Upgrade to Premium"
+                  sub={`AI titles, the assistant and smart scheduling · from ${PRICE_YEARLY}/yr or ${PRICE_MONTHLY}/mo`}
+                  onPress={() => router.push('/paywall')}
+                />
+                <Row
+                  icon="refresh-outline"
+                  tint={tint.ink}
+                  label="Restore purchases"
+                  sub="Already subscribed? Bring it back on this device"
+                  divider={false}
+                  right={restoring ? <ActivityIndicator color={c.brand} /> : undefined}
+                  onPress={async () => {
+                    setRestoring(true);
+                    try {
+                      const result = await restorePurchases();
+                      await refreshPremium();
+                      toast.show({
+                        message: result.ok
+                          ? 'Subscription restored'
+                          : result.message || 'Nothing to restore',
+                        tone: result.ok ? 'success' : 'neutral',
+                      });
+                    } finally {
+                      setRestoring(false);
+                    }
+                  }}
+                />
+              </>
             )}
           </Section>
         )}
@@ -991,13 +1097,13 @@ export default function Settings() {
             icon="shield-checkmark-outline"
             tint={c.brand}
             label="Privacy Policy"
-            onPress={() => comingSoon('Privacy Policy')}
+            onPress={() => openLegal('Privacy Policy', PRIVACY_URL)}
           />
           <Row
             icon="document-text-outline"
             tint={c.textTertiary}
             label="Terms of Service"
-            onPress={() => comingSoon('Terms of Service')}
+            onPress={() => openLegal('Terms of Service', TERMS_URL)}
           />
           <Row
             icon="mail-outline"

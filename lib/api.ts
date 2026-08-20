@@ -16,6 +16,7 @@ import {
   ApiErrorResponse,
   ExtractedLinkResponse,
 } from './types';
+import { isPremium } from './billing';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || '';
 const CLIENT_TOKEN = process.env.EXPO_PUBLIC_CLIENT_TOKEN || '';
@@ -29,6 +30,32 @@ function apiHeaders(): Record<string, string> {
 
 /** Network budget for one Gemini round-trip. RN's `fetch` has no default timeout. */
 const REQUEST_TIMEOUT_MS = 20000;
+
+/**
+ * Tasks that stay free forever.
+ *
+ * `extract` is the one that must never be gated: it is what turns a pasted link
+ * into a titled, thumbnailed, playable save, and a free tier where saving is
+ * degraded is a free tier nobody forms a habit in. The north-star metric is
+ * actions taken per week, so everything that builds the habit is free and the
+ * paywall sits where marginal cost actually is — the rest of the Gemini tasks.
+ *
+ * Moving the line is a one-line change here. `aiSearch` is absent on purpose:
+ * it runs entirely on-device and never reaches this function.
+ */
+const FREE_TASKS = new Set(['extract']);
+
+/**
+ * Thrown when a premium-only task is called without an entitlement. Callers
+ * already handle a throw from `postGemini` by falling back to the on-device
+ * path, so gating here degrades rather than breaks; UI that wants to offer the
+ * paywall instead can detect it with `isPremiumRequired`.
+ */
+export const PREMIUM_REQUIRED = 'Silo Premium is needed for this.';
+
+export function isPremiumRequired(error: unknown): boolean {
+  return error instanceof Error && error.message === PREMIUM_REQUIRED;
+}
 
 /**
  * A signal that aborts after `ms`.
@@ -59,6 +86,11 @@ export function isApiConfigured(): boolean {
 async function postGemini<T>(body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   if (!isApiConfigured()) {
     throw new Error('AI isn’t set up yet — add your Worker URL to turn it on.');
+  }
+  // `isPremium()` is synchronous and returns true whenever billing is
+  // unconfigured, so an unpaid build behaves exactly as it always has.
+  if (!FREE_TASKS.has(String(body.task ?? '')) && !isPremium()) {
+    throw new Error(PREMIUM_REQUIRED);
   }
   const response = await fetch(`${API_BASE_URL}/api/gemini`, {
     method: 'POST',

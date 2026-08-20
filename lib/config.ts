@@ -22,6 +22,17 @@ export const PRICE_MONTHLY = '$6.99';
 export const PRICE_YEARLY = '$39.99';
 export const PREMIUM_ENTITLEMENT = 'premium';
 
+/**
+ * Public legal URLs. App Review requires BOTH to be reachable from inside the
+ * app and from the App Store listing, and a subscription app must link them on
+ * the purchase screen itself (Guideline 3.1.2).
+ *
+ * The documents live in `docs/legal/` — publish that directory (GitHub Pages
+ * works) and point these at it. They must be live before submission.
+ */
+export const PRIVACY_URL = 'https://mvnshi.github.io/silo/privacy';
+export const TERMS_URL = 'https://mvnshi.github.io/silo/terms';
+
 /** Shown in Settings → About. Keep in sync with app.json `expo.version`. */
 export const APP_VERSION = '1.0.0';
 /** Where "Send feedback" routes (placeholder — set the real address before launch). */
