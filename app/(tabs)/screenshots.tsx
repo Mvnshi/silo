@@ -56,7 +56,7 @@ import {
   MediaPermissionStatus,
 } from '@/lib/screenshots';
 import { analyzeImage, suggestScheduleTime } from '@/lib/api';
-import { addItem, getItems, deleteItem } from '@/lib/storage';
+import { addItem, getItems, deleteItem, updateItem } from '@/lib/storage';
 import { createItem } from '@/lib/items';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
@@ -311,12 +311,24 @@ export default function ScreenshotsScreen() {
     const action = lastAction;
     if (!action?.item || !action.suggestion) return;
     try {
-      await scheduleItemReview(
+      const scheduledEvent = await scheduleItemReview(
         action.item,
         action.suggestion.date,
         action.suggestion.time,
         action.item.duration || 15
       );
+      // A null return is a real failure (permission denied, no writable
+      // calendar) — reporting 'ok' would claim a slot that was never booked.
+      if (!scheduledEvent) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        showSnackbar({ ...action, scheduleResult: 'error' });
+        return;
+      }
+      // Persist the slot too, or the item reads as unscheduled next to a live event.
+      await updateItem(action.item.id, {
+        scheduled_date: action.suggestion.date,
+        scheduled_time: action.suggestion.time,
+      });
       celebrationHaptic();
       showSnackbar({ ...action, scheduleResult: 'ok' });
     } catch (error) {

@@ -58,7 +58,7 @@ import {
   touchSeen,
   updateItem,
 } from '@/lib/storage';
-import { scheduleItemReview } from '@/lib/scheduler';
+import { scheduleItemReview, unscheduleItem } from '@/lib/scheduler';
 import { parseLocalDate } from '@/lib/datetime';
 import { classConfig } from '@/lib/classification';
 import { usePrefersReducedMotion } from '@/lib/motion';
@@ -458,10 +458,9 @@ export default function ItemDetailScreen() {
    */
   async function handleRemoveSchedule() {
     try {
-      await updateItem(id, {
-        scheduled_date: undefined,
-        scheduled_time: undefined,
-      });
+      // Clears the fields *and* deletes the native calendar entry — dropping
+      // only the fields leaves the event (and its alarm) live on the device.
+      await updateItem(id, await unscheduleItem(id));
       await loadItem();
       // The "Scheduled" card disappearing is the confirmation.
       setShowScheduleModal(false);

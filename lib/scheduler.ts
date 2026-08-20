@@ -6,6 +6,10 @@
  * the stored row — so the calendar never accumulates duplicates. Stored events
  * live in AsyncStorage (lib/storage) and mirror the native events created here.
  *
+ * `unscheduleItem` is the other half: anything that takes an item off the
+ * calendar (unscheduling it, or completing it) must go through it, or the
+ * native event outlives the item's schedule and keeps firing its alarm.
+ *
  * Dependencies: expo-calendar (native calendar), lib/storage (persisted events).
  */
 
@@ -65,16 +69,7 @@ export async function scheduleItemReview(
     if (!calendarId) throw new Error('No calendar available');
 
     // Idempotency: drop any prior review for this item (native + stored).
-    const stale = await removeEventsForItem(item.id);
-    for (const ev of stale) {
-      if (ev.calendar_event_id) {
-        try {
-          await Calendar.deleteEventAsync(ev.calendar_event_id);
-        } catch {
-          // Already gone from the native calendar — ignore.
-        }
-      }
-    }
+    await unscheduleItem(item.id);
 
     // Build local start/end from the parts (avoids `new Date(string)` UTC drift).
     const [year, month, day] = date.split('-').map(Number);
@@ -105,4 +100,27 @@ export async function scheduleItemReview(
     console.error('Failed to schedule item review:', error);
     return null;
   }
+}
+
+/**
+ * Take an item off the calendar: delete its stored events and the native
+ * entries they mirror. Returns the patch that clears the item's schedule
+ * fields, so callers can hand it straight to storage.updateItem.
+ *
+ * Safe to call for an item that was never scheduled (no events, no-op). A
+ * native entry that's already gone is ignored — the goal is "no event left",
+ * not "an event was deleted".
+ */
+export async function unscheduleItem(itemId: string): Promise<Partial<Item>> {
+  const stale = await removeEventsForItem(itemId);
+  for (const ev of stale) {
+    if (ev.calendar_event_id) {
+      try {
+        await Calendar.deleteEventAsync(ev.calendar_event_id);
+      } catch {
+        // Already gone from the native calendar — ignore.
+      }
+    }
+  }
+  return { scheduled_date: undefined, scheduled_time: undefined };
 }

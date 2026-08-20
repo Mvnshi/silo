@@ -41,6 +41,7 @@ import {
 import { useThemeColors } from '@/lib/useTheme';
 import { Stack, Item } from '@/lib/types';
 import { getStackById, getItems, updateStack, deleteStack, updateItem } from '@/lib/storage';
+import { buildReview } from '@/lib/resurface';
 import { celebrationHaptic } from '@/lib/haptics';
 
 export default function StackDetailScreen() {
@@ -108,7 +109,9 @@ export default function StackDetailScreen() {
       const item = items.find(i => i.id === itemId);
       if (!item || item.viewed) return; // Already done
 
-      await updateItem(itemId, { viewed: true });
+      // Through buildReview rather than a bare `viewed: true`: a completion has
+      // to bump times_done / last_done_at or the resurfacing metric never sees it.
+      await updateItem(itemId, buildReview(item, 'good'));
       await loadData();
       // Celebration haptic for completion
       celebrationHaptic();

@@ -21,6 +21,7 @@ import PressableScale from '@/components/ui/PressableScale';
 import { celebrationHaptic } from '@/lib/haptics';
 import { classConfig } from '@/lib/classification';
 import { updateItem } from '@/lib/storage';
+import { unscheduleItem } from '@/lib/scheduler';
 import { buildReview } from '@/lib/resurface';
 import { Item } from '@/lib/types';
 import { DURATION, RADIUS, SHADOW, SPACE, TYPE, type ThemeColors } from '@/lib/theme';
@@ -57,6 +58,12 @@ export default function ItemActionSheet({ item, onClose, onChanged, onDelete }: 
     onClose();
     try {
       await updateItem(item.id, patch);
+      // A patch that clears the slot (buildReview on a completion) has to take
+      // the native calendar event with it, or the event outlives its schedule
+      // and keeps firing. Best-effort: it must not eat the mutation.
+      if ('scheduled_date' in patch && patch.scheduled_date === undefined) {
+        await unscheduleItem(item.id).catch((err) => console.error('calendar cleanup failed', err));
+      }
       if (celebrate) await celebrationHaptic();
       await onChanged();
     } catch (error) {

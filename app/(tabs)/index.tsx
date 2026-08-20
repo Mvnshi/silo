@@ -74,10 +74,12 @@ import {
   addItem,
   updateStack,
   deleteStack,
+  clearTombstones,
 } from '@/lib/storage';
 import { aiSearch } from '@/lib/api';
 import { promptForText } from '@/lib/prompt';
 import { buildReview } from '@/lib/resurface';
+import { unscheduleItem } from '@/lib/scheduler';
 
 type ViewMode = 'list' | 'grid';
 
@@ -257,6 +259,9 @@ export default function StacksScreen() {
       action: {
         label: 'Undo',
         onPress: async () => {
+          // Drop the tombstones first: a surviving one is newer than the
+          // restored item, so the next sync would push the delete right back.
+          await clearTombstones(removed.map((i) => i.id));
           await Promise.all(removed.map((i) => addItem(i).catch(() => {})));
           await loadData();
         },
@@ -270,12 +275,17 @@ export default function StacksScreen() {
     setBulkBusy(true);
     try {
       await Promise.all(
-        ids.map((id) => {
+        ids.map(async (id) => {
           const item = itemsRef.current.find((i) => i.id === id);
-          if (!item) return Promise.resolve();
-          return updateItem(id, buildReview(item, 'good')).catch((e) =>
-            console.warn('mark done failed', e)
-          );
+          if (!item) return;
+          try {
+            await updateItem(id, buildReview(item, 'good'));
+          } catch (e) {
+            console.warn('mark done failed', e);
+            return;
+          }
+          // buildReview clears the slot; the native event has to go with it.
+          await unscheduleItem(id).catch((e) => console.error('calendar cleanup failed', e));
         })
       );
     } finally {
@@ -311,6 +321,9 @@ export default function StacksScreen() {
       if (!item || item.viewed) return;
       try {
         await updateItem(itemId, buildReview(item, 'good'));
+        // buildReview clears the slot; without this the native event outlives it.
+        // Best-effort — a calendar that won't cooperate must not eat the completion.
+        await unscheduleItem(itemId).catch((err) => console.error('calendar cleanup failed', err));
         await loadData();
         toast.show({
           message: 'Marked done',
@@ -363,6 +376,7 @@ export default function StacksScreen() {
         action: {
           label: 'Undo',
           onPress: async () => {
+            await clearTombstones([item.id]);
             await addItem(item).catch(() => {});
             await loadData();
           },
