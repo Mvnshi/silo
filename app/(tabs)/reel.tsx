@@ -46,8 +46,9 @@ import { useToast } from '@/components/ui/Toast';
 import { BRAND, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
 import { Item, Classification } from '@/lib/types';
 import { getItems, updateItem } from '@/lib/storage';
-import { scheduleItemReview } from '@/lib/scheduler';
+import { scheduleItemReview, unscheduleItem } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
+import { buildReview } from '@/lib/resurface';
 import { parseLocalDate, defaultReviewSlot } from '@/lib/datetime';
 
 export default function ReelScreen() {
@@ -266,10 +267,9 @@ export default function ReelScreen() {
     
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      await updateItem(scheduleItem.id, {
-        scheduled_date: undefined,
-        scheduled_time: undefined,
-      });
+      // Clears the fields *and* deletes the native calendar entry — dropping
+      // only the fields leaves the event (and its alarm) live on the device.
+      await updateItem(scheduleItem.id, await unscheduleItem(scheduleItem.id));
       await loadItems();
       setShowScheduleModal(false);
       setScheduleItem(null);
@@ -283,8 +283,12 @@ export default function ReelScreen() {
    * Mark item as completed/viewed - removes from stream
    */
   async function handleComplete(itemId: string) {
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
     try {
-      await updateItem(itemId, { viewed: true });
+      // Through buildReview rather than a bare `viewed: true`: a completion has
+      // to bump times_done / last_done_at or the resurfacing metric never sees it.
+      await updateItem(itemId, buildReview(item, 'good'));
       // Remove from current feed (filteredItems is derived, so it follows).
       setItems(prevItems => prevItems.filter(item => item.id !== itemId));
       // Celebration haptic for completion

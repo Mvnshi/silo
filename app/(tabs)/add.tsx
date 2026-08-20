@@ -743,7 +743,27 @@ export default function AddScreen() {
         description: item.description,
         duration: item.duration,
       });
-      await scheduleItemReview(item, suggestion.date, suggestion.time, item.duration || 15);
+      const scheduledEvent = await scheduleItemReview(
+        item,
+        suggestion.date,
+        suggestion.time,
+        item.duration || 15
+      );
+      // A null return is a real failure (permission denied, no writable
+      // calendar) — celebrating it would promise a slot that doesn't exist.
+      if (!scheduledEvent) {
+        toast.show({
+          message: 'Couldn’t add that to your calendar.',
+          tone: 'danger',
+          action: { label: 'Retry', onPress: () => scheduleSavedItem(item) },
+        });
+        return;
+      }
+      // Persist the slot too, or the item reads as unscheduled next to a live event.
+      await updateItem(item.id, {
+        scheduled_date: suggestion.date,
+        scheduled_time: suggestion.time,
+      });
       void celebrationHaptic();
       toast.show({
         message: `On your calendar — ${suggestion.date}, ${suggestion.time}`,

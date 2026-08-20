@@ -86,7 +86,12 @@ import { getItems, getItemById, updateItem, addItem, getEvents, touchSeen } from
 import { buildReview, ReviewOutcome } from '@/lib/resurface';
 import { buildReadinessPatch, evaluateItem, freeMinutesFrom } from '@/lib/triggers';
 import { createItem } from '@/lib/items';
-import { requestCalendarPermissions, scheduleItemReview, REVIEW_PREFIX } from '@/lib/scheduler';
+import {
+  requestCalendarPermissions,
+  scheduleItemReview,
+  unscheduleItem,
+  REVIEW_PREFIX,
+} from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
 import { parseLocalDate, toLocalDateString } from '@/lib/datetime';
 import { enterFromBottom, exitToBottom, usePrefersReducedMotion } from '@/lib/motion';
@@ -796,6 +801,9 @@ export default function CalendarScreen() {
       const item = await getItemById(itemId);
       if (!item) return;
       await updateItem(itemId, buildReview(item, 'good'));
+      // buildReview clears the slot; without this the native event outlives it.
+      // Best-effort — a calendar that won't cooperate must not eat the completion.
+      await unscheduleItem(itemId).catch((err) => console.error('calendar cleanup failed', err));
       celebrationHaptic();
       await loadItems();
     } catch (err) {
@@ -839,7 +847,22 @@ export default function CalendarScreen() {
   /** After-event report verdict from the Today check-in zone (lib/resurface). */
   const reviewItem = useCallback(async (item: Item, outcome: ReviewOutcome) => {
     try {
-      await updateItem(item.id, buildReview(item, outcome));
+      // 'retire' archives for good, but buildReview only clears the slot for a
+      // completion — leave it set and un-archiving resurrects a schedule whose
+      // event is long gone.
+      const patch = buildReview(item, outcome);
+      await updateItem(
+        item.id,
+        outcome === 'retire'
+          ? { ...patch, scheduled_date: undefined, scheduled_time: undefined }
+          : patch
+      );
+      // 'skipped' deliberately keeps its schedule so it can be rescheduled, so
+      // it keeps its event too. Every other verdict takes the item off the
+      // calendar, and the native event — and its alarm — goes with it.
+      if (outcome !== 'skipped') {
+        await unscheduleItem(item.id).catch((err) => console.error('calendar cleanup failed', err));
+      }
       if (outcome === 'loved' || outcome === 'good') celebrationHaptic();
       else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       await loadItems();

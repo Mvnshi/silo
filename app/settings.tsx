@@ -49,6 +49,7 @@ import {
   saveSettings,
   getUserId,
   clearAll,
+  deleteItem,
   getSyncState,
   setSyncState,
   SyncState,
@@ -623,6 +624,26 @@ export default function Settings() {
     }
   };
 
+  /**
+   * Tell the server about the wipe before it happens. `clearAll` drops the sync
+   * bookkeeping along with the items, so a device that only cleared locally
+   * would rejoin at cursor 0 and pull the entire library straight back. A
+   * tombstone per item (the same one `deleteItem` writes) makes the delete
+   * propagate instead. Best effort: offline or unconfigured, the wipe still
+   * happens — it must never depend on the network.
+   */
+  const pushDeletesBeforeClear = async () => {
+    const state = await getSyncState();
+    if (!state.spaceKey || !(state.serverUrl || ENV_BASE_URL)) return;
+    try {
+      const items = await getItems();
+      for (const item of items) await deleteItem(item.id);
+      await syncNow();
+    } catch (error) {
+      console.error('Failed to push deletes before clearing:', error);
+    }
+  };
+
   const confirmClear = () => {
     // Deliberately still a blocking confirm rather than an undo toast: this is
     // irreversible and wipes everything, so a second tap is the right cost.
@@ -635,6 +656,7 @@ export default function Settings() {
           text: 'Delete everything',
           style: 'destructive',
           onPress: async () => {
+            await pushDeletesBeforeClear();
             await clearAll();
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             router.back();
