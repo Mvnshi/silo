@@ -41,6 +41,7 @@ import {
 import { useThemeColors } from '@/lib/useTheme';
 import { Stack, Item } from '@/lib/types';
 import { getStackById, getItems, updateStack, deleteStack, updateItem } from '@/lib/storage';
+import { useDataVersion } from '@/lib/dataVersion';
 import { celebrationHaptic } from '@/lib/haptics';
 
 export default function StackDetailScreen() {
@@ -49,6 +50,7 @@ export default function StackDetailScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const c = useThemeColors();
+  const dataVersion = useDataVersion();
   const [stack, setStack] = useState<Stack | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,10 +88,13 @@ export default function StackDetailScreen() {
   }
 
   // Load data when screen comes into focus
+  // `dataVersion` so the assistant's actions land here too — it is an overlay,
+  // not a route, so this screen never blurs. See lib/dataVersion.ts.
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, [id])
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id, dataVersion])
   );
 
   /**

@@ -36,6 +36,7 @@ import Skeleton from '@/components/ui/Skeleton';
 import EmptyState from '@/components/ui/EmptyState';
 import CleanupSheet from '@/components/CleanupSheet';
 import { getItems } from '@/lib/storage';
+import { useDataVersion } from '@/lib/dataVersion';
 import { Item } from '@/lib/types';
 import {
   computeStats,
@@ -106,6 +107,7 @@ export default function StatsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const c = useThemeColors();
+  const dataVersion = useDataVersion();
   const [items, setItems] = useState<Item[] | null>(null);
   const [cleanupOpen, setCleanupOpen] = useState(false);
 
@@ -118,10 +120,13 @@ export default function StatsScreen() {
     }
   }, []);
 
+  // `dataVersion` so the assistant's actions land here too — it is an overlay,
+  // not a route, so this screen never blurs. See lib/dataVersion.ts.
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [load, dataVersion])
   );
 
   const stats: SiloStats | null = useMemo(() => (items ? computeStats(items) : null), [items]);

@@ -75,6 +75,7 @@ import {
   updateStack,
   deleteStack,
 } from '@/lib/storage';
+import { useDataVersion } from '@/lib/dataVersion';
 import { aiSearch } from '@/lib/api';
 import { promptForText } from '@/lib/prompt';
 import { buildReview } from '@/lib/resurface';
@@ -90,6 +91,7 @@ export default function StacksScreen() {
   const toast = useToast();
   const reduced = usePrefersReducedMotion();
   const c = useThemeColors();
+  const dataVersion = useDataVersion();
   // Built once per appearance — this screen paints a lot of small coloured
   // chrome (chips, field, skeletons) and rebuilding it per render would churn.
   const dyn = useMemo(() => makeDynamicStyles(c), [c]);
@@ -137,10 +139,14 @@ export default function StacksScreen() {
 
   // Load data when screen comes into focus. No haptic here — the tab bar owns
   // the tab-change buzz, and this also fires on every return from /item/[id].
+  // `dataVersion` is here so the assistant's actions land: it is an overlay, not
+  // a route, so archiving from it never blurs this tab and the focus effect
+  // would otherwise not re-run. See lib/dataVersion.ts.
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, [loadData])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loadData, dataVersion])
   );
 
   const handleRefresh = useCallback(async () => {

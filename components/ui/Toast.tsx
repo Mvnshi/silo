@@ -118,9 +118,17 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             style={[
               // The slate wash is how the blur FALLBACK reads as a floating
               // surface rather than a smudge. Liquid Glass's dark material
-              // already does that on its own, and a 55%-opaque fill laid over it
-              // would smother the effect — so the wash stays fallback-only.
-              !LIQUID_GLASS && styles.cardWash,
+              // mostly does that on its own, and a 55%-opaque fill laid over it
+              // would smother the effect — so the full wash stays fallback-only.
+              //
+              // But "mostly" was measured against a PAGE. The toast now also
+              // floats over the assistant sheet, which is itself a bright glass
+              // surface, and there the dark material lightens far enough that
+              // the white message text stops being readable — the one thing this
+              // component exists to do. A light wash under Liquid Glass costs
+              // almost none of the material and puts a floor under the contrast
+              // whatever is behind it.
+              LIQUID_GLASS ? styles.glassWash : styles.cardWash,
               isDark && styles.cardOnDark,
             ]}
           >
@@ -161,6 +169,10 @@ const styles = StyleSheet.create({
   },
   cardWash: {
     backgroundColor: 'rgba(15, 23, 42, 0.55)',
+  },
+  // The same slate, light enough that Liquid Glass still reads as a material.
+  glassWash: {
+    backgroundColor: 'rgba(15, 23, 42, 0.38)',
   },
   // On a light page the dark card plus SHADOW.floating separate on their own.
   // On the dark page neither does: the shadow vanishes and Glass's default

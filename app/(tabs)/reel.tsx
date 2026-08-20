@@ -46,6 +46,7 @@ import { useToast } from '@/components/ui/Toast';
 import { BRAND, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
 import { Item, Classification } from '@/lib/types';
 import { getItems, updateItem } from '@/lib/storage';
+import { useDataVersion } from '@/lib/dataVersion';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
 import { parseLocalDate, defaultReviewSlot } from '@/lib/datetime';
@@ -53,6 +54,7 @@ import { parseLocalDate, defaultReviewSlot } from '@/lib/datetime';
 export default function ReelScreen() {
   const toast = useToast();
   const insets = useSafeAreaInsets();
+  const dataVersion = useDataVersion();
   const { height: WINDOW_HEIGHT } = useWindowDimensions();
   /**
    * One page = the height the list actually got, not the window.
@@ -130,12 +132,15 @@ export default function ReelScreen() {
   }
 
   // Load items when screen comes into focus; pause playback when it leaves.
+  // `dataVersion` so the assistant's actions land here too — it is an overlay,
+  // not a route, so this tab never blurs. See lib/dataVersion.ts.
   useFocusEffect(
     useCallback(() => {
       setTabFocused(true);
       loadItems();
       return () => setTabFocused(false);
-    }, [])
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dataVersion])
   );
 
   /**

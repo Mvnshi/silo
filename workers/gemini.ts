@@ -12,7 +12,7 @@
  *   - "classify_image"    { imageBase64, mimeType }
  *   - "classify_link"     { url, pageText? }   (URL is NOT fetched server-side)
  *   - "suggest_schedule"  { title, classification, description?, duration? }
- *   - "assistant"         { query, items: Array<{ title, description?, classification, tags? }> }
+ *   - "assistant"         { query, items: Array<{ id, title, … }>, today?, now? }
  *
  * SECURITY NOTES:
  *   - The URL passed to "classify_link" is never fetched by the Worker. We only
@@ -20,6 +20,12 @@
  *     This removes the previous server-side fetch (SSRF risk).
  *   - On any upstream/parse failure we return a generic 502 and never echo the
  *     provider's error text back to the client (avoids leaking upstream details).
+ *   - "assistant" can propose ACTIONS that mutate the user's library and
+ *     calendar. It never executes one — the data lives on the device, so all the
+ *     Worker can do is describe an intent. Items are shown to the model as
+ *     `[1]…[N]` and it answers in those numbers, so it has no item id to invent;
+ *     the numbers are mapped back here and re-validated on the client. See
+ *     `handleAssistant` and `lib/assistant.ts`.
  *
  * Environment Variables Required:
  * - GEMINI_API_KEY: Google Gemini API key (server-side only)
@@ -86,13 +92,31 @@ function extractJson(text: string): Record<string, any> | null {
 }
 
 /**
+ * Upstream failure carrying the HTTP status, so a caller can tell "the model is
+ * down" (retrying is pointless) from "the model rejected my request shape"
+ * (retrying without the exotic part is worth one attempt — see
+ * `handleAssistant`). The status never reaches the client: the router still maps
+ * every one of these to a single generic 502.
+ */
+class GeminiError extends Error {
+  constructor(readonly status: number) {
+    super('gemini_upstream_error');
+  }
+}
+
+/**
  * Call Gemini's generateContent with the given parts and return the generated
  * text. Throws on any non-OK response or missing text so callers can map it to a
  * single generic 502 (no upstream error text is propagated).
+ *
+ * `generationConfig` is passed straight through — it is how the assistant asks
+ * for schema-enforced JSON rather than hoping prose parses.
  */
-async function callGemini(env: Env, parts: any[]): Promise<string> {
+async function callGemini(env: Env, parts: any[], generationConfig?: any): Promise<string> {
+  // Google unless a deployment overrides it; see Env.GEMINI_BASE_URL.
+  const base = env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com';
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    `${base}/v1beta/models/${GEMINI_MODEL}:generateContent`,
     {
       method: 'POST',
       // Send the key as a header, not a URL query param, so it can't land in
@@ -101,7 +125,10 @@ async function callGemini(env: Env, parts: any[]): Promise<string> {
         'Content-Type': 'application/json',
         'x-goog-api-key': env.GEMINI_API_KEY,
       },
-      body: JSON.stringify({ contents: [{ parts }] }),
+      body: JSON.stringify({
+        contents: [{ parts }],
+        ...(generationConfig ? { generationConfig } : {}),
+      }),
     }
   );
 
@@ -109,7 +136,7 @@ async function callGemini(env: Env, parts: any[]): Promise<string> {
     // Read and log upstream detail server-side only; never return it to client.
     const detail = await response.text().catch(() => '');
     console.error(`[silo] Gemini ${response.status}:`, detail);
-    throw new Error('gemini_upstream_error');
+    throw new GeminiError(response.status);
   }
 
   const data = (await response.json()) as any;
@@ -246,19 +273,161 @@ Return ONLY a JSON object (no markdown, no prose):
   return json(200, suggestion, corsHeaders);
 }
 
+/* ---------------------------------------------------------------------------
+ * Assistant — grounded answers, and grounded ACTIONS
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The verbs the assistant may propose. Mirrors `ASSISTANT_TOOLS` in
+ * `lib/assistant.ts` — a separate bundle that can't import this module, same
+ * arrangement as CLASSIFICATIONS above.
+ * KEEP IN SYNC WITH: lib/assistant.ts
+ */
+const ASSISTANT_TOOLS = ['schedule', 'complete', 'archive', 'add', 'set_trigger'] as const;
+
+/** Condition types the trigger engine can evaluate. KEEP IN SYNC WITH: lib/types.ts */
+const CONDITION_TYPES = [
+  'location_proximity',
+  'time_of_day',
+  'date_after',
+  'date_range',
+  'day_of_week',
+  'calendar_free',
+  'manual',
+] as const;
+
+/**
+ * Schema-enforced output. This is the difference between a tool call and a
+ * regex over prose: the shape is validated by the API before a token reaches us,
+ * so a malformed action is a retry upstream rather than a surprise downstream.
+ *
+ * Two deliberate choices:
+ *
+ *  - **Actions are one flat, permissive object.** A discriminated union of five
+ *    differently-shaped actions is the part of the OpenAPI subset most likely to
+ *    be rejected outright, and a rejection takes the whole assistant with it. So
+ *    the schema pins the shape and `lib/assistant.parseActions` pins the meaning
+ *    — in TypeScript, where it is unit-tested (`scripts/verify-assistant.mjs`).
+ *  - **Items are referenced by number, never by id.** The model is shown
+ *    `[1]…[N]` and answers in those numbers, so the only thing it can emit for
+ *    an item is a small integer. It has no id to invent. See `resolveRefs`.
+ */
+const ASSISTANT_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    answer: {
+      type: 'STRING',
+      description: "The reply, grounded only in the user's saved items.",
+    },
+    sourceRefs: {
+      type: 'ARRAY',
+      description: 'Numbers of the saved items the answer actually relied on.',
+      items: { type: 'INTEGER' },
+    },
+    actions: {
+      type: 'ARRAY',
+      description: 'Actions to PROPOSE to the user. Empty unless they asked for something to be done.',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          tool: { type: 'STRING', enum: [...ASSISTANT_TOOLS] },
+          refs: {
+            type: 'ARRAY',
+            description: 'Numbers of the saved items this acts on. Omit only for "add".',
+            items: { type: 'INTEGER' },
+          },
+          date: { type: 'STRING', description: 'YYYY-MM-DD, local.' },
+          time: { type: 'STRING', description: 'HH:MM, 24-hour, local.' },
+          duration: { type: 'INTEGER', description: 'Minutes.' },
+          outcome: { type: 'STRING', enum: ['loved', 'good', 'skipped'] },
+          title: { type: 'STRING' },
+          classification: { type: 'STRING', enum: [...CLASSIFICATIONS] },
+          note: { type: 'STRING' },
+          tags: { type: 'ARRAY', items: { type: 'STRING' } },
+          condition: {
+            type: 'OBJECT',
+            properties: {
+              type: { type: 'STRING', enum: [...CONDITION_TYPES] },
+              latitude: { type: 'NUMBER' },
+              longitude: { type: 'NUMBER' },
+              radiusMeters: { type: 'INTEGER' },
+              placeLabel: { type: 'STRING' },
+              startHour: { type: 'INTEGER', description: '0-23, local.' },
+              endHour: { type: 'INTEGER', description: '0-23, local, exclusive.' },
+              date: { type: 'STRING', description: 'YYYY-MM-DD.' },
+              startDate: { type: 'STRING', description: 'YYYY-MM-DD.' },
+              endDate: { type: 'STRING', description: 'YYYY-MM-DD.' },
+              daysOfWeek: {
+                type: 'ARRAY',
+                description: '0=Sunday … 6=Saturday.',
+                items: { type: 'INTEGER' },
+              },
+              minFreeMinutes: { type: 'INTEGER' },
+              remindAt: { type: 'STRING', description: 'ISO datetime.' },
+            },
+            required: ['type'],
+          },
+        },
+        required: ['tool'],
+      },
+    },
+  },
+  required: ['answer'],
+};
+
+/** Weekday name for a YYYY-MM-DD, computed in UTC so no server timezone leaks in. */
+function weekdayOf(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return names[new Date(Date.UTC(y, m - 1, d)).getUTCDay()] ?? '';
+}
+
+/** A YYYY-MM-DD the client actually sent, or null. */
+function safeDate(value: unknown): string | null {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+}
+
+/**
+ * Map `[n]` references back to real item ids.
+ *
+ * This is the second of the three grounding layers (the first is that the model
+ * only ever sees numbers; the third is `lib/assistant.parseActions` re-checking
+ * against what the client sent). A reference outside 1…N, or to an item the
+ * client sent without an id, resolves to nothing and is dropped — never
+ * clamped to a neighbour, which would archive the wrong row.
+ */
+function resolveRefs(refs: unknown, items: { id?: string }[]): string[] {
+  if (!Array.isArray(refs)) return [];
+  const out: string[] = [];
+  for (const ref of refs) {
+    if (typeof ref !== 'number' || !Number.isInteger(ref)) continue;
+    const item = items[ref - 1];
+    if (!item?.id || out.includes(item.id)) continue;
+    out.push(item.id);
+  }
+  return out;
+}
+
 async function handleAssistant(
   body: any,
   env: Env,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
-  const { query, items } = body as {
+  const { query, items, today, now } = body as {
     query?: string;
     items?: {
+      id?: string;
       title?: string;
       description?: string;
       classification?: string;
       tags?: string[];
+      scheduled_date?: string;
+      status?: string;
     }[];
+    /** The DEVICE's local date. See the note on `when` below. */
+    today?: string;
+    /** The device's local HH:MM. */
+    now?: string;
   };
   if (!query || typeof query !== 'string') {
     return json(400, { error: 'Missing required field: query' } as ErrorResponse, corsHeaders);
@@ -270,30 +439,90 @@ async function handleAssistant(
       const cls = item.classification ? ` [${item.classification}]` : '';
       const tags = item.tags && item.tags.length ? ` (Tags: ${item.tags.join(', ')})` : '';
       const desc = item.description ? `: ${item.description}` : '';
-      return `${idx + 1}. ${item.title || 'Untitled'}${cls}${desc}${tags}`;
+      const when = item.scheduled_date ? ` (scheduled ${item.scheduled_date})` : '';
+      return `[${idx + 1}] ${item.title || 'Untitled'}${cls}${when}${desc}${tags}`;
     })
     .join('\n');
 
+  /**
+   * "Saturday morning" is only resolvable against the USER's clock. The Worker
+   * runs in UTC on some Cloudflare edge, so a device-supplied date is the only
+   * correct answer here — falling back to the Worker's own clock would put a
+   * user in Auckland a day behind and quietly schedule the wrong Saturday.
+   */
+  const localDate = safeDate(today) ?? new Date().toISOString().split('T')[0];
+  const localTime = typeof now === 'string' && /^\d{2}:\d{2}$/.test(now) ? now : '09:00';
+
   const prompt = `You are Silo, a personal assistant that answers questions using ONLY the user's saved items listed below. Never invent saved content, and do not claim the user saved something that is not in the list. If the items do not contain the answer, say so plainly.
 
-User's saved items:
+Silo can also DO things to those saved items on the user's behalf. When — and only when — the user asks for something to be done, propose it in "actions". Otherwise leave "actions" empty and just answer.
+
+User's saved items, each with a reference number:
 ${context || 'No saved items.'}
 
-User's question: ${query}
+Today is ${weekdayOf(localDate)} ${localDate}. The local time is ${localTime}.
 
-Return ONLY a JSON object (no markdown, no prose):
-{
-  "answer": "your answer, grounded only in the saved items above",
-  "sources": []
-}`;
+Rules for referring to items:
+- Refer to a saved item ONLY by its reference number from the list above.
+- Never invent a reference number. If nothing above fits, propose no action and say so in the answer.
+- "sourceRefs" is the numbers your answer actually relied on.
 
-  const text = await callGemini(env, [{ text: prompt }]);
+Rules for actions:
+- schedule — put ONE item on the user's real calendar. Needs "refs" (exactly one), "date" (YYYY-MM-DD) and "time" (HH:MM, 24-hour), both in the future relative to the local date and time above. Use "duration" in minutes if the user implies a length. To schedule several things, emit several schedule actions.
+- complete — mark items as already done. "outcome" is "loved" if they say they'd do it again, "skipped" if it didn't happen, otherwise "good".
+- archive — take items off the user's lists without deleting them. Use this for tidying requests such as "clear out the stale ones".
+- add — save something NEW that is not in the list. Needs "title"; no "refs".
+- set_trigger — attach a condition so Silo resurfaces the item when the condition is true. Needs "refs" and a "condition". Use location_proximity for "when I'm near X" (only when you can see real coordinates), time_of_day for "in the evenings", day_of_week for "on weekends", date_range for a trip or season, calendar_free for "when I have time", manual for a plain reminder time.
+- Propose at most 5 actions. If the request is ambiguous, ask in the answer instead of guessing.
+- The answer must say plainly what you are proposing, because the user has to confirm each action before anything happens.
+
+User's question: ${query}`;
+
+  /**
+   * Ask for schema-enforced JSON; fall back once to the plain prose contract if
+   * this deployment's model rejects the schema. A 4xx there means "I don't
+   * accept that request shape", and losing the assistant entirely over a
+   * structured-output quirk is a worse outcome than losing the actions — so the
+   * fallback still answers, just without proposing anything.
+   */
+  let text: string;
+  let structured = true;
+  try {
+    text = await callGemini(env, [{ text: prompt }], {
+      responseMimeType: 'application/json',
+      responseSchema: ASSISTANT_SCHEMA,
+    });
+  } catch (error) {
+    if (!(error instanceof GeminiError) || error.status >= 500) throw error;
+    console.warn('[silo] assistant schema rejected; retrying without it');
+    structured = false;
+    text = await callGemini(env, [{ text: prompt }]);
+  }
+
   const parsed = extractJson(text);
-
   const answer =
     parsed && typeof parsed.answer === 'string' && parsed.answer ? parsed.answer : text.trim();
 
-  return json(200, { answer, sources: [] }, corsHeaders);
+  // Sources the answer leaned on, mapped back to real ids and titles so the
+  // client can render a chip that deep-links. Relevance descends with the order
+  // the model gave, which is the only ranking signal it offers.
+  const sourceIds = resolveRefs(parsed?.sourceRefs, safeItems);
+  const byId = new Map(safeItems.filter((i) => i.id).map((i) => [i.id as string, i]));
+  const sources = sourceIds.map((itemId, index) => ({
+    itemId,
+    title: byId.get(itemId)?.title || 'Untitled',
+    description: byId.get(itemId)?.description,
+    relevance: Math.max(0, 1 - index * 0.1),
+  }));
+
+  // Actions arrive with reference numbers; they leave with ids the client
+  // supplied. The client validates them again — see lib/assistant.parseActions.
+  const rawActions = structured && Array.isArray(parsed?.actions) ? parsed!.actions : [];
+  const actions = rawActions
+    .filter((a: any) => a && typeof a === 'object' && typeof a.tool === 'string')
+    .map(({ refs, ...rest }: any) => ({ ...rest, itemIds: resolveRefs(refs, safeItems) }));
+
+  return json(200, { answer, sources, actions }, corsHeaders);
 }
 
 /** Heuristic classification used when no Gemini key is set (extraction is keyless). */

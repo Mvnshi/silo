@@ -58,6 +58,7 @@ import {
   touchSeen,
   updateItem,
 } from '@/lib/storage';
+import { useDataVersion } from '@/lib/dataVersion';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { parseLocalDate } from '@/lib/datetime';
 import { classConfig } from '@/lib/classification';
@@ -111,6 +112,7 @@ export default function ItemDetailScreen() {
   const toast = useToast();
   const reduced = usePrefersReducedMotion();
   const c = useThemeColors();
+  const dataVersion = useDataVersion();
   // Built once per appearance — this screen paints a lot of small coloured
   // chrome (cards, chips, picker rows) and rebuilding it per render would churn.
   const dyn = useMemo(() => makeDynamicStyles(c), [c]);
@@ -169,6 +171,16 @@ export default function ItemDetailScreen() {
    * the narration kept playing over whatever screen came next.
    */
   const soundRef = useRef<Audio.Sound | null>(null);
+
+  // Re-read when the assistant changes this item from its overlay. Kept
+  // separate from the mount effect below so it can't disturb the audio
+  // lifecycle, and skipped on the first render because that effect already
+  // loaded. See lib/dataVersion.ts.
+  useEffect(() => {
+    if (dataVersion === 0) return;
+    loadItem();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion]);
 
   useEffect(() => {
     loadItem();

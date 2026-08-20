@@ -91,7 +91,6 @@ async function readClipboardString(): Promise<string> {
   }
 }
 import TagPicker from '@/components/TagPicker';
-import ChatBot from '@/components/ChatBot';
 import { analyzeImage, extractLink, suggestScheduleTime } from '@/lib/api';
 import OptionCard from '@/components/ui/OptionCard';
 import PressableScale from '@/components/ui/PressableScale';
@@ -841,7 +840,6 @@ export default function AddScreen() {
       {/* Gradient Background — the page wash is the one gradient that follows
           the appearance; brand gradients below stay brand in both. */}
       <LinearGradient colors={[...c.pageGradient]} style={StyleSheet.absoluteFill} />
-      <ChatBot onClose={() => {}} />
       <ScrollView
         contentContainerStyle={[
           styles.content,

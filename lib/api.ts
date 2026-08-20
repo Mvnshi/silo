@@ -183,31 +183,75 @@ export async function aiSearch(
     .map(({ index }) => index.toString());
 }
 
+/** One saved item as the assistant sees it. Ids never reach the model — the
+ *  Worker numbers the list and maps the numbers back (see workers/gemini.ts). */
+export interface AssistantContextItem {
+  id: string;
+  title: string;
+  description?: string;
+  tags?: string[];
+  classification?: string;
+  /** Lets the model answer "what's on for Saturday" without a second round-trip. */
+  scheduled_date?: string;
+  status?: string;
+}
+
+export interface AssistantSource {
+  itemId: string;
+  title: string;
+  description?: string;
+  relevance: number;
+}
+
+export interface AssistantResponse {
+  answer: string;
+  sources: AssistantSource[];
+  /**
+   * Proposed actions, still RAW. Validate with `lib/assistant.parseActions`
+   * against the ids you sent before showing or running any of them — that check
+   * is what stops a hallucinated reference from reaching real data.
+   */
+  actions: unknown[];
+}
+
 /**
- * Assistant over the user's saved items. Retrieval is on-device — the caller
- * passes the already-relevant items; the Worker only runs Gemini to phrase a
- * grounded answer. The model is instructed never to invent saved content.
- * Signature kept backward-compatible; `userId`/`suggestEvent` are ignored.
+ * Assistant over the user's saved items — grounded answers, and grounded
+ * proposals.
+ *
+ * Retrieval is on-device: the caller passes the already-relevant items and the
+ * Worker only runs Gemini to phrase an answer and, when the user asked for
+ * something to be done, to describe it as a structured action. The model is
+ * instructed never to invent saved content, and cannot invent an item id
+ * because it is never shown one.
+ *
+ * Nothing here executes anything. Actions come back as proposals for the UI to
+ * confirm; `lib/assistantExec.runAction` is what actually writes.
+ *
+ * `today`/`now` are the DEVICE's local date and time. They are required for
+ * "Saturday morning" to mean the user's Saturday rather than the edge Worker's.
  */
 export async function ragQuery(data: {
-  userId?: string;
   query: string;
-  suggestEvent?: boolean;
-  items?: {
-    id: string;
-    title: string;
-    description?: string;
-    tags?: string[];
-    classification?: string;
-  }[];
-}): Promise<{
-  answer: string;
-  sources: { itemId: string; title: string; description?: string; relevance: number }[];
-  suggestedEvent?: { title: string; date: string; time: string; description: string };
-}> {
+  items?: AssistantContextItem[];
+  /** Local YYYY-MM-DD. */
+  today?: string;
+  /** Local HH:MM. */
+  now?: string;
+}): Promise<AssistantResponse> {
   const result = await postGemini<{
     answer: string;
-    sources?: { itemId: string; title: string; description?: string; relevance: number }[];
-  }>({ task: 'assistant', query: data.query, items: data.items || [] });
-  return { answer: result.answer, sources: result.sources || [] };
+    sources?: AssistantSource[];
+    actions?: unknown[];
+  }>({
+    task: 'assistant',
+    query: data.query,
+    items: data.items || [],
+    today: data.today,
+    now: data.now,
+  });
+  return {
+    answer: result.answer,
+    sources: result.sources || [],
+    actions: Array.isArray(result.actions) ? result.actions : [],
+  };
 }

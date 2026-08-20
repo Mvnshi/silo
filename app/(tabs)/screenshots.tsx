@@ -57,6 +57,7 @@ import {
 } from '@/lib/screenshots';
 import { analyzeImage, suggestScheduleTime } from '@/lib/api';
 import { addItem, getItems, deleteItem } from '@/lib/storage';
+import { useDataVersion } from '@/lib/dataVersion';
 import { createItem } from '@/lib/items';
 import { scheduleItemReview } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
@@ -143,6 +144,7 @@ export default function ScreenshotsScreen() {
   const insets = useSafeAreaInsets();
   const reduced = usePrefersReducedMotion();
   const c = useThemeColors();
+  const dataVersion = useDataVersion();
   const dyn = useMemo(() => makeDynamicStyles(c), [c]);
   // Skeleton's default block is near-white, which flares on the dark page.
   // Undefined props fall back to the component's own (light) defaults.
@@ -233,7 +235,10 @@ export default function ScreenshotsScreen() {
       loadScreenshots();
       refreshImportedFromStorage();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }, [loadScreenshots, refreshImportedFromStorage])
+    // `dataVersion` so the assistant's actions land here too — it is an overlay,
+    // not a route, so this tab never blurs. See lib/dataVersion.ts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loadScreenshots, refreshImportedFromStorage, dataVersion])
   );
 
   // Reset the visible-deck index whenever the filter changes — the new list is
