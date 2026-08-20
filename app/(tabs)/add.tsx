@@ -863,7 +863,9 @@ export default function AddScreen() {
         {/* Input Type Selection — anticipatory capture */}
         {!inputType && (
           <View style={styles.typeSelection}>
-            <Text style={[styles.pageTitle, dyn.pageTitle]}>Capture</Text>
+            <Text style={[styles.pageTitle, dyn.pageTitle]} accessibilityRole="header">
+              Capture
+            </Text>
             <Text style={[styles.pageSubtitle, dyn.pageSubtitle]}>
               Paste, jot, or snap — Silo files it.
             </Text>

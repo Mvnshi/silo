@@ -55,6 +55,7 @@ import {
   BRAND,
   GRADIENTS,
   HIT_SLOP,
+  MAX_DISPLAY_SCALE,
   RADIUS,
   SHADOW,
   SPACE,
@@ -615,7 +616,12 @@ export default function StacksScreen() {
 
           {/* Title + select + settings */}
           <View style={styles.titleRow}>
-            <Text style={[styles.screenTitle, dyn.screenTitle]} accessibilityRole="header">
+            <Text
+              style={[styles.screenTitle, dyn.screenTitle]}
+              accessibilityRole="header"
+              numberOfLines={1}
+              maxFontSizeMultiplier={MAX_DISPLAY_SCALE}
+            >
               Stacks
             </Text>
             <View style={styles.titleActions}>
@@ -944,11 +950,17 @@ const styles = StyleSheet.create({
   // Colour for every rule below that names one lives in `makeDynamicStyles`.
   screenTitle: {
     ...TYPE.title1,
+    // At the accessibility text sizes this row's title would otherwise grow
+    // until it pushed Select and the profile button off the right edge — the
+    // controls didn't wrap, they became unreachable. The title yields; the
+    // controls never do.
+    flexShrink: 1,
   },
   titleActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
+    flexShrink: 0,
   },
   selectAction: {
     ...TYPE.callout,

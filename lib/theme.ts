@@ -249,6 +249,23 @@ export const GRADIENTS = {
 export const HIT_SLOP = { top: 10, bottom: 10, left: 10, right: 10 } as const;
 export const MIN_TAP = 44;
 
+/**
+ * Cap for Dynamic Type on LARGE DISPLAY TEXT ONLY — a screen title, a hero
+ * greeting, a number in a stat tile.
+ *
+ * Body copy must scale without limit; that is the whole point of Dynamic Type
+ * and capping it would be an accessibility regression. But a 28pt title at the
+ * accessibility sizes becomes ~70pt, which on a header row shoves the controls
+ * beside it off the screen entirely — the text gets bigger and the buttons
+ * become unreachable, which helps nobody. Apple caps its own large titles for
+ * the same reason.
+ *
+ * Pass as `maxFontSizeMultiplier={MAX_DISPLAY_SCALE}`, and only on text that is
+ * a heading. Never on a label, a description, or anything a user has to read to
+ * operate the app.
+ */
+export const MAX_DISPLAY_SCALE = 1.6;
+
 /* ---------------------------------------------------------------------------
  * Appearance
  *

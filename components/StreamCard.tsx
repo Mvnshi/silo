@@ -79,13 +79,33 @@ interface StreamCardProps {
   item: Item;
   /** True when this card is the visible page — only then does a WebView mount. */
   active?: boolean;
+  /**
+   * Height of one page, measured from the list itself.
+   *
+   * NOT the window height: `NativeTabs` insets the screen by the tab bar, so
+   * the feed's viewport is ~90pt shorter than the window. Sizing a card to the
+   * window made every card taller than the page it lived on, and the paging
+   * offset drifted by that difference on each swipe until a card's title sat
+   * underneath the floating category chips. The list measures itself and both
+   * the card and the snap interval read from that one number.
+   */
+  pageHeight?: number;
   onArchive: (itemId: string) => void;
   onSchedule: (itemId: string) => void;
   onComplete: (itemId: string) => void;
 }
 
-function StreamCard({ item, active = false, onArchive, onSchedule, onComplete }: StreamCardProps) {
-  const { width, height } = useWindowDimensions();
+function StreamCard({
+  item,
+  active = false,
+  pageHeight,
+  onArchive,
+  onSchedule,
+  onComplete,
+}: StreamCardProps) {
+  const { width, height: windowHeight } = useWindowDimensions();
+  // Fall back to the window until the list has laid out once.
+  const height = pageHeight && pageHeight > 0 ? pageHeight : windowHeight;
   const insets = useSafeAreaInsets();
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);

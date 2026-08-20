@@ -21,7 +21,6 @@ import {
   View,
   FlatList,
   StyleSheet,
-  Alert,
   RefreshControl,
   useWindowDimensions,
   TouchableOpacity,
@@ -43,6 +42,7 @@ import StreamCard from '@/components/StreamCard';
 import EmptyState from '@/components/ui/EmptyState';
 import Glass from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
+import { useToast } from '@/components/ui/Toast';
 import { BRAND, INK, HAIRLINE, RADIUS, GRADIENTS } from '@/lib/theme';
 import { Item, Classification } from '@/lib/types';
 import { getItems, updateItem } from '@/lib/storage';
@@ -51,8 +51,22 @@ import { celebrationHaptic } from '@/lib/haptics';
 import { parseLocalDate, defaultReviewSlot } from '@/lib/datetime';
 
 export default function ReelScreen() {
+  const toast = useToast();
   const insets = useSafeAreaInsets();
-  const { height: SCREEN_HEIGHT } = useWindowDimensions();
+  const { height: WINDOW_HEIGHT } = useWindowDimensions();
+  /**
+   * One page = the height the list actually got, not the window.
+   *
+   * `NativeTabs` is a real UITabBar, so this screen is inset by it and the
+   * feed's viewport is ~90pt shorter than the window. Sizing pages to the
+   * window made each card taller than its page: `pagingEnabled` scrolls by the
+   * VIEWPORT, so every swipe left the next card ~90pt further up, and after a
+   * swipe or two a card's title was sitting behind the floating category
+   * chips. Measuring once and using that number for the card, the snap
+   * interval and `getItemLayout` keeps all three in agreement.
+   */
+  const [pageHeight, setPageHeight] = useState(0);
+  const SCREEN_HEIGHT = pageHeight > 0 ? pageHeight : WINDOW_HEIGHT;
   const [items, setItems] = useState<Item[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Classification | 'all'>('all');
@@ -95,7 +109,7 @@ export default function ReelScreen() {
       setItems(feedItems);
     } catch (error) {
       console.error('Failed to load items:', error);
-      Alert.alert('Error', 'Failed to load content');
+      toast.show({ message: 'Couldn’t load your saves. Pull to try again.', tone: 'danger' });
     }
   }
 
@@ -160,7 +174,7 @@ export default function ReelScreen() {
     } catch (error) {
       console.error('Failed to archive item:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', 'Failed to archive item');
+      toast.show({ message: 'Couldn’t archive that. Try again.', tone: 'danger' });
     }
   }
 
@@ -233,12 +247,12 @@ export default function ReelScreen() {
         setScheduleItem(null);
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Alert.alert('Error', 'Failed to schedule item. Please check calendar permissions.');
+        toast.show({ message: 'Couldn’t add it to your calendar — check calendar access in Settings.', tone: 'danger' });
       }
     } catch (error) {
       console.error('Failed to schedule item:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', 'Failed to schedule item');
+      toast.show({ message: 'Couldn’t schedule that. Try again.', tone: 'danger' });
     } finally {
       savingScheduleRef.current = false;
     }
@@ -261,7 +275,7 @@ export default function ReelScreen() {
       setScheduleItem(null);
     } catch (error) {
       console.error('Failed to remove schedule:', error);
-      Alert.alert('Error', 'Failed to remove schedule');
+      toast.show({ message: 'Couldn’t unschedule that. Try again.', tone: 'danger' });
     }
   }
 
@@ -278,7 +292,7 @@ export default function ReelScreen() {
     } catch (error) {
       console.error('Failed to mark item as completed:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', 'Failed to mark item as completed');
+      toast.show({ message: 'Couldn’t mark that done. Try again.', tone: 'danger' });
     }
   }
 
@@ -303,16 +317,31 @@ export default function ReelScreen() {
           <StreamCard
             item={item}
             active={tabFocused && item.id === activeId}
+            pageHeight={SCREEN_HEIGHT}
             onArchive={handleArchive}
             onSchedule={handleSchedule}
             onComplete={handleComplete}
           />
         )}
         keyExtractor={item => item.id}
-        pagingEnabled
+        onLayout={(e) => {
+          const next = Math.round(e.nativeEvent.layout.height);
+          setPageHeight((h) => (Math.abs(h - next) > 1 ? next : h));
+        }}
         showsVerticalScrollIndicator={false}
+        // A full-bleed feed insets itself: StreamCard already pads for the
+        // status bar and the chip strip. UIKit's automatic adjustment would add
+        // the safe area on top of that, pushing page 1 down by ~60pt (a white
+        // band above the first card) and shifting every snap point with it.
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustContentInsets={false}
+        // `pagingEnabled` scrolls by the viewport and would fight the explicit
+        // interval below; now that the interval IS the measured viewport, the
+        // interval is the one to keep. `disableIntervalMomentum` stops a hard
+        // flick from skipping several cards at once.
         snapToInterval={SCREEN_HEIGHT}
         snapToAlignment="start"
+        disableIntervalMomentum
         decelerationRate="fast"
         getItemLayout={(data, index) => ({
           length: SCREEN_HEIGHT,
