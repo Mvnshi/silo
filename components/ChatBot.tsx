@@ -345,7 +345,12 @@ export default function ChatBot({ visible, onClose, prefill }: ChatBotProps) {
 
   useEffect(() => {
     const target = visible ? 1 : 0;
-    progress.value = reduced ? target : withSpring(target, SPRING.settle);
+    // `gentle`, not `settle`: settle is damped for the 0.03 of travel a press
+    // scale covers, where its ~15% overshoot is 0.004 and invisible. This sheet
+    // travels ~530pt, so the same spring threw it 77pt past its resting point
+    // and bounced it back. `gentle` is critically damped — see SPRING in
+    // lib/theme, which already names it the token for long travel.
+    progress.value = reduced ? target : withSpring(target, SPRING.gentle);
   }, [visible, progress, reduced]);
 
   // Opened with a question already in mind (e.g. from an item screen).
