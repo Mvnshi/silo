@@ -65,6 +65,14 @@ pennies).
 X / Vimeo) or Open Graph via `HTMLRewriter` (Instagram / Reddit / Threads /
 Facebook / any URL), normalizes it, and chains into Gemini classify.
 
+For everything else it keeps digging rather than settling for a title guess:
+repeated `og:image` tags are all kept (`thumbnailUrls` — a carousel used to lose
+every frame after the first), JSON-LD supplies title, author, kind and the
+duration OG almost never carries, and a site's own
+`<link rel="alternate" type="application/json+oembed">` is followed so any
+oEmbed-capable site gets provider-quality metadata without being hardcoded.
+Relative image paths are resolved and re-checked against the egress rules.
+
 Egress is hardened: http(s) only, private and metadata IPs blocked, redirects
 re-validated manually, timeout and response-size caps. It never loses a save —
 a dead or login-walled link still stores the raw URL.
@@ -143,6 +151,11 @@ Full walkthrough — local dev, deploying, and self-hosting — in
 | `cd workers && npm run dev` | Run the Worker locally (`wrangler dev`) |
 | `cd extension && npx wxt build` | Build the extension |
 | `cd extension && node scripts/verify-e2e.mjs` | Extension e2e against a real browser |
+| `node scripts/verify-triggers.mjs` | Trigger-engine rules (pure; no device needed) |
+| `node scripts/verify-degradation.mjs` | Accounts + subscriptions degrade to "everything open" when unconfigured |
+| `node workers/scripts/verify-extract.mjs` | Extractor against fixed HTML (starts its own Worker) |
+| `node workers/scripts/verify-auth.mjs` | Worker session + space authorization (starts its own fleet) |
+| `cd extension && node scripts/verify-tokens.mjs` | shadcn resolves to Silo's tokens |
 
 ## Conventions
 
@@ -155,6 +168,9 @@ Full walkthrough — local dev, deploying, and self-hosting — in
 - **Categories** — the single source of truth is `CLASSIFICATIONS` in
   `lib/types.ts`. The Worker and the Swift target keep in-sync copies, marked as
   such.
+- **Triggers** — a condition the device can't evaluate is `unknown`, never
+  `false`. Pass `null` for missing context (no location fix, calendar refused)
+  rather than a default; the engine will not call an item ready on a guess.
 - **Completions** — mark done through `buildReview` (`lib/resurface`), not a bare
   `viewed: true`. A completion that doesn't bump `times_done` never reaches the
   north-star metric.
