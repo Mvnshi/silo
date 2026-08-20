@@ -92,7 +92,8 @@ async function readClipboardString(): Promise<string> {
 }
 import TagPicker from '@/components/TagPicker';
 import ChatBot from '@/components/ChatBot';
-import { analyzeImage, extractLink, suggestScheduleTime } from '@/lib/api';
+import { analyzeImage, extractLink, isPremiumRequired, suggestScheduleTime } from '@/lib/api';
+import { describeRemaining, shouldWarn } from '@/lib/allowance';
 import OptionCard from '@/components/ui/OptionCard';
 import PressableScale from '@/components/ui/PressableScale';
 import Glass from '@/components/ui/Glass';
@@ -671,17 +672,38 @@ export default function AddScreen() {
       setClassification(analysis.classification);
       setTags(analysis.tags || []);
       setScript(analysis.script || ''); // Store script for audio generation
+      // Warn only as the allowance runs low. Counting down from ten would make
+      // a working feature feel like a countdown timer from the first use.
+      if (shouldWarn()) {
+        setImageNotice({
+          message: `${describeRemaining()}. Premium keeps this running.`,
+          actionLabel: 'See Premium',
+          onAction: () => router.push('/paywall?context=screenshot'),
+        });
+      }
     } catch (error) {
       if (controller.signal.aborted) return;
-      console.error('Failed to analyze image:', error);
       const stamp = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       setTitle((prev) => prev || `Photo from ${stamp}`);
       setClassification('other');
-      setImageNotice({
-        message: 'Couldn’t read that one. Add a title yourself and it’s still saved.',
-        actionLabel: 'Try again',
-        onAction: () => analyzeSelectedImage(uri),
-      });
+      // The gate is not a failure, and dressing it as one ("couldn't read that")
+      // teaches the user the app is broken rather than that there is something
+      // to buy. This is the moment the feature has just proven itself, so it is
+      // the moment to make the offer — with the photo still saved either way.
+      if (isPremiumRequired(error)) {
+        setImageNotice({
+          message: 'Silo can title and file this for you with Premium. It’s saved either way.',
+          actionLabel: 'See Premium',
+          onAction: () => router.push('/paywall?context=screenshot'),
+        });
+      } else {
+        console.error('Failed to analyze image:', error);
+        setImageNotice({
+          message: 'Couldn’t read that one. Add a title yourself and it’s still saved.',
+          actionLabel: 'Try again',
+          onAction: () => analyzeSelectedImage(uri),
+        });
+      }
     } finally {
       if (analyzeAbortRef.current === controller) analyzeAbortRef.current = null;
       setLoading(false);
@@ -743,13 +765,45 @@ export default function AddScreen() {
         description: item.description,
         duration: item.duration,
       });
-      await scheduleItemReview(item, suggestion.date, suggestion.time, item.duration || 15);
+      const scheduledEvent = await scheduleItemReview(
+        item,
+        suggestion.date,
+        suggestion.time,
+        item.duration || 15
+      );
+      // A null return is a real failure (permission denied, no writable
+      // calendar) — celebrating it would promise a slot that doesn't exist.
+      if (!scheduledEvent) {
+        toast.show({
+          message: 'Couldn’t add that to your calendar.',
+          tone: 'danger',
+          action: { label: 'Retry', onPress: () => scheduleSavedItem(item) },
+        });
+        return;
+      }
+      // Persist the slot too, or the item reads as unscheduled next to a live event.
+      await updateItem(item.id, {
+        scheduled_date: suggestion.date,
+        scheduled_time: suggestion.time,
+      });
       void celebrationHaptic();
       toast.show({
         message: `On your calendar — ${suggestion.date}, ${suggestion.time}`,
         tone: 'success',
       });
     } catch (error) {
+      // Same rule as image analysis: a closed gate is an offer, not an error.
+      if (isPremiumRequired(error)) {
+        toast.show({
+          message: 'Premium picks the time for you.',
+          tone: 'neutral',
+          action: {
+            label: 'See Premium',
+            onPress: () => router.push('/paywall?context=schedule'),
+          },
+        });
+        return;
+      }
       console.error('Failed to schedule item:', error);
       toast.show({
         message: 'Couldn’t add that to your calendar.',

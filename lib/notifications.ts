@@ -39,10 +39,21 @@ import { isSchedulable, nextReadyAt } from './triggers';
 /** Tags every notification this module owns, so we never cancel someone else's. */
 const OWNER = 'silo';
 
-export type SiloNotificationKind = 'digest' | 'checkin' | 'tidy' | 'ready';
+/**
+ * The trial reminder is tagged separately on purpose.
+ *
+ * `syncNotifications` rebuilds its whole schedule cancel-then-schedule on every
+ * foreground, driven by items and settings. The trial reminder is driven by the
+ * entitlement instead and has a completely different lifecycle — scheduled once
+ * when a trial starts, cancelled when it converts or ends. Sharing the owner tag
+ * would mean every foreground silently deleted it.
+ */
+const TRIAL_OWNER = 'silo-trial';
+
+export type SiloNotificationKind = 'digest' | 'checkin' | 'tidy' | 'ready' | 'trial';
 
 interface SiloNotificationData extends Record<string, unknown> {
-  owner: typeof OWNER;
+  owner: typeof OWNER | typeof TRIAL_OWNER;
   kind: SiloNotificationKind;
   /** Deep-link target, so tapping the notification lands somewhere useful. */
   route: string;
@@ -320,6 +331,87 @@ async function scheduleReadyTriggers(items: Item[], now: Date): Promise<void> {
 
 export function routeForResponse(response: Notifications.NotificationResponse): string | null {
   const data = response.notification.request.content.data as SiloNotificationData | undefined;
-  if (!data || data.owner !== OWNER) return null;
+  if (!data || (data.owner !== OWNER && data.owner !== TRIAL_OWNER)) return null;
   return data.route ?? null;
+}
+
+/* ---------------------------------------------------------------------------
+ * The trial reminder
+ * ------------------------------------------------------------------------- */
+
+/** Cancel the trial reminder, leaving every other Silo notification alone. */
+export async function cancelTrialReminder(): Promise<void> {
+  try {
+    const pending = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+      pending
+        .filter((n) => (n.content.data as SiloNotificationData | undefined)?.owner === TRIAL_OWNER)
+        .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier))
+    );
+  } catch (error) {
+    console.warn('Failed to clear the trial reminder:', error);
+  }
+}
+
+/**
+ * Keep the "your trial is ending" reminder in step with the entitlement.
+ *
+ * ## Why send this at all
+ *
+ * It costs conversions — some people will be reminded and cancel. It buys back
+ * more than it costs: a surprise charge is the single most common cause of a
+ * refund request, a chargeback, and a one-star review that outlives the
+ * subscription by years. Apple sends its own reminder inconsistently and only
+ * in some regions, so relying on that is relying on nothing. Telling someone
+ * plainly what is about to happen is also just the honest thing to do, and it
+ * is the version of this product worth building.
+ *
+ * ## Why it routes to the stats screen
+ *
+ * The content is fixed when it is scheduled, so it cannot contain the numbers
+ * from a week that has not happened yet. It therefore promises nothing about
+ * them and instead lands on "Your Silo", where the user's real save→do rate,
+ * streak and level are computed live. Their own numbers are the most persuasive
+ * argument available, and they are the one argument we do not have to write.
+ *
+ * Idempotent: cancels its own lane first, so calling it on every entitlement
+ * change can never accumulate duplicates.
+ */
+export async function syncTrialReminder(
+  entitlement: { inTrial: boolean; willRenew: boolean; expiresAt: string | null },
+  daysBefore: number,
+  now: Date = new Date()
+): Promise<void> {
+  try {
+    await cancelTrialReminder();
+
+    // Only for a trial that is actually going to convert. A cancelled trial
+    // does not need a warning about a charge that will never happen.
+    if (!entitlement.inTrial || !entitlement.willRenew || !entitlement.expiresAt) return;
+    if (!(await hasNotificationPermission())) return;
+
+    const ends = new Date(entitlement.expiresAt);
+    if (Number.isNaN(ends.getTime())) return;
+
+    const at = new Date(ends.getTime() - daysBefore * 86_400_000);
+    // A trial shorter than the lead time, or one we learned about late: there
+    // is no useful moment left, and firing immediately would just be alarming.
+    if (at.getTime() <= now.getTime()) return;
+
+    const date = ends.toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Your free trial ends soon',
+        body: `Here's what you got done with it. Silo Premium starts ${date} unless you cancel.`,
+        data: {
+          owner: TRIAL_OWNER,
+          kind: 'trial',
+          route: '/stats',
+        } satisfies SiloNotificationData,
+      },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: at },
+    });
+  } catch (error) {
+    console.warn('Trial reminder sync failed:', error);
+  }
 }

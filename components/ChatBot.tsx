@@ -32,7 +32,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { aiSearch, ragQuery } from '@/lib/api';
+import { aiSearch, isPremiumRequired, ragQuery } from '@/lib/api';
 import { getItems } from '@/lib/storage';
 import type { Item } from '@/lib/types';
 import Glass from '@/components/ui/Glass';
@@ -92,6 +92,13 @@ interface ChatMessage {
   sources?: ChatSource[];
   /** This bubble is a failure, not an answer: distinct styling + retryable. */
   isError?: boolean;
+  /**
+   * This bubble is the premium gate, not a failure. It is deliberately NOT an
+   * error: the previous behaviour surfaced the raw gate message in a red
+   * "Couldn't answer" bubble with a Try again button that could never work, so
+   * the one moment the assistant proves what it is worth read as a bug.
+   */
+  isUpgrade?: boolean;
   /** The question to re-run when the user taps "Try again". */
   retryQuery?: string;
 }
@@ -170,6 +177,8 @@ function makeDynamicStyles(c: ThemeColors) {
     botBubble: { backgroundColor: c.field },
     botBubbleText: { color: c.text },
     errorBubble: { backgroundColor: c.dangerSoft, borderColor: c.danger },
+    // The gate bubble wears the brand, not the danger palette — it is an offer.
+    upgradeBubble: { backgroundColor: c.brandSoft, borderColor: c.brandBorder },
     errorLabel: { color: c.danger },
     retryButton: { backgroundColor: c.card, borderColor: c.danger },
     retryText: { color: c.danger },
@@ -308,6 +317,20 @@ export default function ChatBot({ onClose }: ChatBotProps) {
         { id: nextId(), text: response.answer, isUser: false, sources },
       ]);
     } catch (error) {
+      // The gate is an offer, not a failure. Retrying it can never succeed, so
+      // this bubble gets a way forward instead of a way to try again.
+      if (isPremiumRequired(error)) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            text: 'Asking Silo about your library is part of Premium. Everything you’ve saved stays right where it is.',
+            isUser: false,
+            isUpgrade: true,
+          },
+        ]);
+        return;
+      }
       console.error('Assistant query failed:', error);
       setMessages((prev) => [
         ...prev,
@@ -460,7 +483,9 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                           ? styles.userBubble
                           : message.isError
                             ? [styles.errorBubble, dyn.errorBubble]
-                            : [styles.botBubble, dyn.botBubble],
+                            : message.isUpgrade
+                              ? [styles.upgradeBubble, dyn.upgradeBubble]
+                              : [styles.botBubble, dyn.botBubble],
                       ]}
                     >
                       {message.isError && (
@@ -468,6 +493,15 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                           <Ionicons name="alert-circle" size={15} color={c.danger} />
                           <Text style={[styles.errorLabel, dyn.errorLabel]}>
                             Couldn&apos;t answer
+                          </Text>
+                        </View>
+                      )}
+
+                      {message.isUpgrade && (
+                        <View style={styles.errorHeader}>
+                          <Ionicons name="sparkles" size={15} color={c.brand} />
+                          <Text style={[styles.errorLabel, { color: c.textBrand }]}>
+                            Silo Premium
                           </Text>
                         </View>
                       )}
@@ -480,6 +514,23 @@ export default function ChatBot({ onClose }: ChatBotProps) {
                       >
                         {message.text}
                       </Text>
+
+                      {message.isUpgrade && (
+                        <PressableScale
+                          haptic="light"
+                          accessibilityLabel="See Silo Premium"
+                          style={[styles.retryButton, { borderColor: c.brandBorder }]}
+                          onPress={() => {
+                            onClose();
+                            router.push('/paywall?context=assistant');
+                          }}
+                        >
+                          <Ionicons name="sparkles" size={14} color={c.brand} />
+                          <Text style={[styles.retryText, { color: c.textBrand }]}>
+                            See Premium
+                          </Text>
+                        </PressableScale>
+                      )}
 
                       {message.isError && !!message.retryQuery && (
                         <PressableScale
@@ -691,6 +742,11 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: RADIUS.xs,
   },
   errorBubble: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderBottomLeftRadius: RADIUS.xs,
+  },
+  upgradeBubble: {
     alignSelf: 'flex-start',
     borderWidth: 1,
     borderBottomLeftRadius: RADIUS.xs,

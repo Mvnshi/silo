@@ -16,19 +16,29 @@ import { AppState } from 'react-native';
 import {
   Entitlement,
   OPEN,
+  SubscriptionHistory,
   initBilling,
   isBillingAvailable,
   isBillingConfigured,
   linkBillingUser,
   refreshEntitlement,
+  subscriptionHistory,
   unlinkBillingUser,
 } from '@/lib/billing';
 import { useAuth } from '@/components/AuthProvider';
+import { syncTrialReminder } from '@/lib/notifications';
+import { TRIAL_REMINDER_DAYS_BEFORE } from '@/lib/config';
 
 interface PremiumContextValue {
   /** False until the entitlement has been resolved at least once. */
   ready: boolean;
   entitlement: Entitlement;
+  /**
+   * What this install has held before. Needed to tell a lapsed subscriber from
+   * someone who never subscribed — the entitlement alone cannot, because a
+   * lapse resolves to the locked state and forgets there ever was one.
+   */
+  history: SubscriptionHistory;
   /** The single question screens ask. True whenever billing is unconfigured. */
   isPremium: boolean;
   /** True when this build can actually sell — gates the whole billing UI. */
@@ -38,9 +48,16 @@ interface PremiumContextValue {
   refresh: () => Promise<void>;
 }
 
+const NO_HISTORY: SubscriptionHistory = {
+  everSubscribed: false,
+  lastExpiry: null,
+  productId: null,
+};
+
 const PremiumContext = createContext<PremiumContextValue>({
   ready: true,
   entitlement: OPEN,
+  history: NO_HISTORY,
   isPremium: true,
   configured: false,
   unavailable: false,
@@ -55,12 +72,16 @@ export default function PremiumProvider({ children }: { children: React.ReactNod
   const configured = isBillingConfigured();
   const { user } = useAuth();
   const [entitlement, setEntitlement] = useState<Entitlement>(OPEN);
+  const [history, setHistory] = useState<SubscriptionHistory>(NO_HISTORY);
   const [ready, setReady] = useState(!configured);
   const linkedUserRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!configured) return;
     setEntitlement(await refreshEntitlement());
+    // Read AFTER the refresh: the entitlement write is what records history,
+    // so reading first would miss the subscription that just became known.
+    setHistory(subscriptionHistory());
   }, [configured]);
 
   useEffect(() => {
@@ -70,6 +91,7 @@ export default function PremiumProvider({ children }: { children: React.ReactNod
       .then((next) => {
         if (!alive) return;
         setEntitlement(next);
+        setHistory(subscriptionHistory());
         setReady(true);
       })
       .catch(() => {
@@ -102,6 +124,20 @@ export default function PremiumProvider({ children }: { children: React.ReactNod
   }, [configured, user?.id, refresh]);
 
   /**
+   * Keep the trial reminder in step with whatever the entitlement now says.
+   *
+   * Driven from here rather than from the purchase call site so it is
+   * self-healing: a restore on a new device, a trial cancelled in iOS Settings,
+   * or an entitlement that arrived through the SDK's own update listener all
+   * land here on the next refresh. `syncTrialReminder` cancels its own lane
+   * first, so this is safe to run on every change.
+   */
+  useEffect(() => {
+    if (!configured) return;
+    void syncTrialReminder(entitlement, TRIAL_REMINDER_DAYS_BEFORE);
+  }, [configured, entitlement]);
+
+  /**
    * Re-check on foreground. A subscription can be started, cancelled or
    * recovered in the App Store while Silo is backgrounded, and the entitlement
    * would otherwise stay stale until the next launch.
@@ -118,12 +154,13 @@ export default function PremiumProvider({ children }: { children: React.ReactNod
     () => ({
       ready,
       entitlement,
+      history,
       isPremium: !configured || entitlement.active,
       configured,
       unavailable: configured && !isBillingAvailable(),
       refresh,
     }),
-    [ready, entitlement, configured, refresh]
+    [ready, entitlement, history, configured, refresh]
   );
 
   return <PremiumContext.Provider value={value}>{children}</PremiumContext.Provider>;
