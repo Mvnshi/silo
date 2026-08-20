@@ -16,6 +16,11 @@
  *     "How did the HIIT workout go?" Nothing else on the phone asks this, and
  *     it is what feeds the north-star metric.
  *  3. **Weekly tidy-up** — "N saves are going stale", the anti-hoarding nudge.
+ *  4. **Trigger fired** — the conditions you attached to a bucket-list item just
+ *     became true ("You said when you had half an hour"). This is the one lane
+ *     that is genuinely proactive rather than periodic, and it is why the
+ *     trigger engine exists: the recommendation arrives at the moment it is
+ *     actionable, without the app being open.
  *
  * We deliberately do NOT mirror calendar reminders: `scheduleItemReview` already
  * creates a real calendar event, and iOS Calendar fires its own alert. Doubling
@@ -29,11 +34,12 @@ import { Platform } from 'react-native';
 import { Item, UserSettings } from './types';
 import { getCleanupCandidates } from './stats';
 import { scheduledEnd } from './resurface';
+import { isSchedulable, nextReadyAt } from './triggers';
 
 /** Tags every notification this module owns, so we never cancel someone else's. */
 const OWNER = 'silo';
 
-export type SiloNotificationKind = 'digest' | 'checkin' | 'tidy';
+export type SiloNotificationKind = 'digest' | 'checkin' | 'tidy' | 'ready';
 
 interface SiloNotificationData extends Record<string, unknown> {
   owner: typeof OWNER;
@@ -47,6 +53,8 @@ interface SiloNotificationData extends Record<string, unknown> {
 const CHECKIN_DELAY_MIN = 20;
 /** Don't queue more than this many check-ins — iOS caps pending locals at 64. */
 const MAX_CHECKINS = 24;
+/** And leave room for the trigger lane inside that same 64. */
+const MAX_READY = 16;
 
 /**
  * Install the foreground presentation handler. Call once at app boot, at module
@@ -139,6 +147,7 @@ export async function syncNotifications(
       scheduleDigest(items, settings),
       scheduleCheckins(items, now),
       scheduleTidyNudge(items, settings, now),
+      scheduleReadyTriggers(items, now),
     ]);
   } catch (error) {
     // Notifications are a nicety; a failure here must never affect the app.
@@ -257,6 +266,58 @@ function parseTime(value: string): [number, number] {
 }
 
 /** The route a tapped notification should open. */
+/**
+ * The trigger lane: one notification per item, fired at the instant its
+ * conditions become true.
+ *
+ * Only items whose conditions are predictable from the clock get one — see
+ * `isSchedulable`. An item gated on where you are, or on how free your
+ * afternoon is, cannot be scheduled ahead of time without background location
+ * or a calendar daemon, so it stays a foreground evaluation and appears in
+ * Today (and in the digest) instead. Being honest about that boundary is what
+ * keeps this lane trustworthy: every notification it sends is one the user
+ * actually asked for, at a moment that is actually true.
+ *
+ * Rebuilt from scratch on every sync, like every other lane, so a condition the
+ * user edits or an item they complete cannot leave a stale alarm behind.
+ */
+async function scheduleReadyTriggers(items: Item[], now: Date): Promise<void> {
+  const candidates = items
+    .filter((item) => {
+      if (item.archived || item.status === 'archived') return false;
+      if (item.status === 'done' || item.bucketlist_completed) return false;
+      if (item.rating === 'retired') return false;
+      // Something already on the calendar will produce its own event alert;
+      // two notifications for one intention is how permission gets revoked.
+      if (item.scheduled_date) return false;
+      return isSchedulable(item);
+    })
+    .map((item) => ({ item, at: nextReadyAt(item, now) }))
+    .filter((entry): entry is { item: Item; at: Date } => entry.at !== null)
+    .sort((a, b) => a.at.getTime() - b.at.getTime())
+    .slice(0, MAX_READY);
+
+  await Promise.all(
+    candidates.map(({ item, at }) =>
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: 'Now’s a good time',
+          // The item's own words, not ours — the user wrote the condition, so
+          // the notification should read like their note coming back.
+          body: item.title,
+          data: {
+            owner: OWNER,
+            kind: 'ready',
+            route: `/item/${item.id}`,
+            itemId: item.id,
+          } satisfies SiloNotificationData,
+        },
+        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: at },
+      })
+    )
+  );
+}
+
 export function routeForResponse(response: Notifications.NotificationResponse): string | null {
   const data = response.notification.request.content.data as SiloNotificationData | undefined;
   if (!data || data.owner !== OWNER) return null;

@@ -51,6 +51,7 @@ import {
   isRepeatableDue,
   ReviewOutcome,
 } from '@/lib/resurface';
+import { freeMinutesFrom, getReadyItems } from '@/lib/triggers';
 
 /**
  * Alpha suffix on the palette's own `card` colour (both palettes state it as a
@@ -75,6 +76,8 @@ interface Props {
   /** All events relevant to today — calendar imports + Silo scheduled events. */
   events: TodayEvent[];
   currentLocation: { latitude: number; longitude: number } | null;
+  /** Whether the phone calendar is readable; null when it hasn't been asked. */
+  calendarAccess?: boolean | null;
   /** First load still in flight — render skeletons rather than "inbox is clear". */
   loading?: boolean;
   /** Foreground-location permission; drives the "Near you" priming row. */
@@ -195,6 +198,7 @@ export default function TodayView({
   allItems,
   events,
   currentLocation,
+  calendarAccess,
   loading = false,
   locationStatus,
   onRequestLocation,
@@ -227,6 +231,27 @@ export default function TodayView({
     [events, todayKey]
   );
 
+  /**
+   * Trigger engine (lib/triggers): which saved items have their conditions met
+   * right now. `currentLocation` is null until the user grants location, and a
+   * null there means "can't tell" — the engine will refuse to call an item ready
+   * rather than guess, so an ungranted permission simply yields no ready items.
+   */
+  const readyReasons = useMemo(() => {
+    const ctx = {
+      now,
+      location: currentLocation,
+      // Without the grant this is null, not a number: an unreadable calendar is
+      // unknown, and the engine refuses to call an item ready on unknown context.
+      freeMinutes: calendarAccess ? freeMinutesFrom(todayEvents, now) : null,
+    };
+    const map = new Map<string, string | undefined>();
+    for (const { item, readiness } of getReadyItems(allItems, ctx, Number.MAX_SAFE_INTEGER)) {
+      map.set(item.id, readiness.readyReason);
+    }
+    return map;
+  }, [allItems, currentLocation, todayEvents, now, calendarAccess]);
+
   // Now / Next Up: the next event that hasn't already ended.
   const nextEvent = useMemo(
     () => todayEvents.find((e) => e.endDate >= now) || null,
@@ -250,13 +275,19 @@ export default function TodayView({
           !i.bucketlist_completed &&
           // A loved repeatable is 'done' but deliberately resurfaced again.
           (i.status !== 'done' || isRepeatableDue(i, now)) &&
-          (!i.viewed || isRepeatableDue(i, now)) &&
+          // A fired trigger overrides "already seen": the item said it only
+          // mattered under these conditions, and the conditions just arrived.
+          (!i.viewed || isRepeatableDue(i, now) || readyReasons.has(i.id)) &&
           !i.scheduled_date
       )
       .map((i) => ({
         item: i,
         repeat: isRepeatableDue(i, now),
+        readyReason: readyReasons.get(i.id),
         score:
+          // A met condition outranks everything else on this screen — it is the
+          // only signal that knows where you are and what your day looks like.
+          (readyReasons.has(i.id) ? 5000 : 0) +
           (isRepeatableDue(i, now) ? 1000 : 0) +
           (i.bucketlist ? 100 : 0) +
           timeOfDayFit(i.classification, hour) * 10 +
@@ -264,8 +295,8 @@ export default function TodayView({
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 3)
-      .map((x) => ({ item: x.item, repeat: x.repeat }));
-  }, [allItems, now]);
+      .map((x) => ({ item: x.item, repeat: x.repeat, readyReason: x.readyReason }));
+  }, [allItems, now, readyReasons]);
 
   // Near you: items with coordinates within ~25 mi, sorted ascending. Up to 2.
   const nearYou = useMemo(() => {
@@ -314,7 +345,9 @@ export default function TodayView({
     >
       {/* Greeting */}
       <Animated.View entering={enterList(0, reduced)} style={styles.greeting}>
-        <Text style={[styles.greetingTitle, dyn.greetingTitle]}>Today</Text>
+        <Text style={[styles.greetingTitle, dyn.greetingTitle]} accessibilityRole="header">
+          Today
+        </Text>
         <Text style={[styles.greetingSub, dyn.greetingSub]}>{format(now, 'EEEE, MMMM d')}</Text>
       </Animated.View>
 
@@ -456,7 +489,7 @@ export default function TodayView({
             {/* Text only — the fade can't reach the material below it. */}
             <Animated.View entering={enterList(5, reduced)}>
               <Text style={[styles.picksOverline, dyn.picksOverline]}>PICKED FOR YOU</Text>
-              <Text style={[styles.picksHeading, dyn.picksHeading]}>
+              <Text style={[styles.picksHeading, dyn.picksHeading]} accessibilityRole="header">
                 {picksHeading(topThree.length)}
               </Text>
             </Animated.View>
@@ -491,7 +524,7 @@ export default function TodayView({
                   tintColor={`${c.card}${GLASS_TINT}`}
                   style={[styles.picksCard, dyn.picksCard]}
                 >
-                  {topThree.map(({ item, repeat }, index) => {
+                  {topThree.map(({ item, repeat, readyReason }, index) => {
                     const cfg = classConfig(item.classification);
                     return (
                       // Safe to fade: this row is a CHILD of the glass, not an
@@ -526,7 +559,20 @@ export default function TodayView({
                             <Text style={[styles.rowTitle, dyn.rowTitle]} numberOfLines={1}>
                               {item.title}
                             </Text>
-                            {repeat ? (
+                            {readyReason ? (
+                              // Why this is on the list right now, in the
+                              // engine's own words — "250 m from the trailhead ·
+                              // you have 2h free".
+                              <View style={styles.lovedTag}>
+                                <Ionicons name="flash" size={11} color={c.textBrand} />
+                                <Text
+                                  style={[styles.lovedTagText, dyn.lovedTagText]}
+                                  numberOfLines={1}
+                                >
+                                  {readyReason}
+                                </Text>
+                              </View>
+                            ) : repeat ? (
                               <View style={styles.lovedTag}>
                                 <Ionicons name="heart" size={11} color={c.textBrand} />
                                 <Text style={[styles.lovedTagText, dyn.lovedTagText]}>

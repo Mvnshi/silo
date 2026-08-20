@@ -84,6 +84,7 @@ import { useThemeColors } from '@/lib/useTheme';
 import { Item, ScheduledEvent } from '@/lib/types';
 import { getItems, getItemById, updateItem, addItem, getEvents, touchSeen } from '@/lib/storage';
 import { buildReview, ReviewOutcome } from '@/lib/resurface';
+import { buildReadinessPatch, evaluateItem, freeMinutesFrom } from '@/lib/triggers';
 import { createItem } from '@/lib/items';
 import { requestCalendarPermissions, scheduleItemReview, REVIEW_PREFIX } from '@/lib/scheduler';
 import { celebrationHaptic } from '@/lib/haptics';
@@ -176,6 +177,16 @@ export default function CalendarScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  /**
+   * Whether the phone calendar is readable. null = not asked yet.
+   *
+   * The trigger engine needs this to tell "your day is clear" apart from "I
+   * can't see your day": with permission refused, `calendarEvents` is empty,
+   * which is indistinguishable from a genuinely free afternoon unless we track
+   * the grant separately. Passing null makes `calendar_free` evaluate to
+   * `unknown` instead of silently claiming free time.
+   */
+  const [calendarAccess, setCalendarAccess] = useState<boolean | null>(null);
   const [locationStatus, setLocationStatus] = useState<LocationStatus>('idle');
   const mapRef = useRef<MapView | null>(null);
   const [mapRegion, setMapRegion] = useState<Region>({
@@ -299,6 +310,7 @@ export default function CalendarScreen() {
   async function loadCalendarEvents() {
     try {
       const hasPermission = await requestCalendarPermissions();
+      setCalendarAccess(hasPermission);
       if (!hasPermission) {
         return;
       }
@@ -700,6 +712,60 @@ export default function CalendarScreen() {
     });
   }, [todayScheduledEvents, calendarEvents]);
 
+  /**
+   * Persist what the trigger engine computed.
+   *
+   * `TodayView` evaluates readiness for display on every render — that is pure
+   * and free. This is the other half: when an item actually crosses into (or out
+   * of) "ready", write it down, so the state survives a relaunch and so a
+   * notification can be fired against it later without re-deriving anything.
+   *
+   * `buildReadinessPatch` returns null when nothing meaningful changed, which is
+   * what stops this from writing (and syncing) a row on every foreground. It
+   * also means the pass converges: the writes it makes produce no patch on the
+   * next run.
+   */
+  const evaluatingRef = useRef(false);
+  useEffect(() => {
+    if (evaluatingRef.current || allItems.length === 0) return;
+    let alive = true;
+
+    (async () => {
+      evaluatingRef.current = true;
+      try {
+        const ctx = {
+          now: new Date(),
+          location: currentLocation,
+          freeMinutes: calendarAccess ? freeMinutesFrom(todayFeed, new Date()) : null,
+        };
+        const patched: { id: string; patch: Partial<Item> }[] = [];
+        for (const item of allItems) {
+          if (!item.bucketlist_meta) continue;
+          const patch = buildReadinessPatch(item, evaluateItem(item, ctx));
+          if (patch) patched.push({ id: item.id, patch });
+        }
+        if (patched.length === 0 || !alive) return;
+
+        for (const { id, patch } of patched) await updateItem(id, patch);
+        if (!alive) return;
+        const byId = new Map(patched.map((p) => [p.id, p.patch]));
+        setAllItems((prev) =>
+          prev.map((item) => (byId.has(item.id) ? { ...item, ...byId.get(item.id) } : item))
+        );
+      } catch (error) {
+        // A failed readiness write is not worth interrupting the screen for —
+        // the next foreground re-derives it from scratch.
+        console.error('[silo] trigger evaluation failed:', error);
+      } finally {
+        evaluatingRef.current = false;
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [allItems, currentLocation, todayFeed, calendarAccess]);
+
   /** Open an item detail screen. */
   const openItem = useCallback(
     (itemId: string) => {
@@ -917,6 +983,7 @@ export default function CalendarScreen() {
             allItems={allItems}
             events={todayFeed}
             currentLocation={currentLocation}
+            calendarAccess={calendarAccess}
             loading={loading}
             locationStatus={locationStatus}
             onRequestLocation={requestLocation}

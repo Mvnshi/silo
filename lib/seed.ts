@@ -78,6 +78,62 @@ const SAMPLE_STACKS: Stack[] = [
  * Sample items for demonstration - 10 legit pieces of content
  */
 const SAMPLE_ITEMS: Item[] = [
+  // TRIGGER-ENGINE ITEMS (2) — dev-only fixtures for lib/triggers.
+  // One whose conditions are satisfiable right now and one that is deliberately
+  // years out, so the Today screen shows both a fired trigger and a trigger that
+  // correctly refuses to fire. Without these the engine has nothing to act on in
+  // a fresh install and its behaviour can't be seen.
+  {
+    id: 'item_trigger_ready',
+    type: 'note',
+    classification: 'other',
+    title: 'Read the essay you saved on deep work',
+    description: 'Short enough to finish in one sitting.',
+    tags: ['reading'],
+    duration: 25,
+    created_at: new Date(Date.now() - 5 * 86400000).toISOString(),
+    viewed: false,
+    archived: false,
+    bucketlist: true,
+    status: 'bucketed',
+    bucketlist_meta: {
+      conditions: [
+        // "Read it when I've got half an hour" — a real condition that is
+        // satisfiable at any hour, so the fired state is observable whenever
+        // the app is opened. It still needs calendar access to evaluate: with
+        // the grant refused this goes to `unknown` and correctly does not fire.
+        { id: 'cond_ready_free', type: 'calendar_free', minFreeMinutes: 25 },
+      ],
+    },
+  },
+  {
+    id: 'item_trigger_blocked',
+    type: 'note',
+    classification: 'place',
+    title: 'Hike the coastal trail at sunrise',
+    description: 'Needs to be there, and needs the season.',
+    tags: ['outdoors'],
+    created_at: new Date(Date.now() - 12 * 86400000).toISOString(),
+    viewed: false,
+    archived: false,
+    bucketlist: true,
+    status: 'bucketed',
+    bucketlist_meta: {
+      blockedReason: 'location_far',
+      conditions: [
+        {
+          id: 'cond_blocked_loc',
+          type: 'location_proximity',
+          latitude: 36.9741,
+          longitude: -122.0308,
+          radiusMeters: 2000,
+          placeLabel: 'the trailhead',
+        },
+        { id: 'cond_blocked_date', type: 'date_range', startDate: '2027-06-01', endDate: '2027-08-31' },
+      ],
+    },
+  },
+
   // FITNESS ITEMS (3)
   {
     id: 'item_fitness_1',
