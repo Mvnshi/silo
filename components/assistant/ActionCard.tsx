@@ -39,6 +39,7 @@ import {
   type AssistantAction,
 } from '@/lib/assistant';
 import PressableScale from '@/components/ui/PressableScale';
+import SiloMascot from '@/components/ui/SiloMascot';
 import { ShimmerSweep, ShimmerText } from '@/components/ui/Shimmer';
 import { LAYOUT, usePrefersReducedMotion } from '@/lib/motion';
 import { BRAND, MIN_TAP, RADIUS, SPACE, TEXT, TYPE, type ThemeColors } from '@/lib/theme';
@@ -108,11 +109,14 @@ export default function ActionCard({ action, items, state, error, onRun, onDismi
 
       <View style={styles.header}>
         <View style={[styles.badge, dyn.badge]}>
-          <Ionicons
-            name={state === 'done' ? 'checkmark' : ICON[action.tool]}
-            size={15}
-            color={state === 'done' ? c.success : c.textBrand}
-          />
+          {/* The one moment he gets to be pleased: the action landed. He hops
+              once and settles — a nod, not a party. The rest of the card's
+              life he stays out of it and the tool's own glyph does the work. */}
+          {state === 'done' ? (
+            <SiloMascot size={24} mood="pleased" reaction="hop" />
+          ) : (
+            <Ionicons name={ICON[action.tool]} size={15} color={c.textBrand} />
+          )}
         </View>
         <Text style={[styles.headline, dyn.headline]}>{headline}</Text>
       </View>

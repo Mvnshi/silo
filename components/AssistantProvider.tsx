@@ -29,13 +29,13 @@
  */
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ChatBot from '@/components/ChatBot';
 import Glass from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
-import { BRAND, SHADOW, SPACE, TEXT } from '@/lib/theme';
+import SiloMascot from '@/components/ui/SiloMascot';
+import { BRAND, SHADOW, SPACE } from '@/lib/theme';
 
 interface AssistantContextValue {
   isOpen: boolean;
@@ -123,9 +123,13 @@ export default function AssistantProvider({ children }: { children: React.ReactN
           >
             {/* A control, so the material takes the press (Apple's specular
                 response) — and a brand tint so it still reads as THE button
-                rather than a blurred hole. The glyph stays white on it. */}
+                rather than a blurred hole.
+
+                The mascot rides it in its inverse colourway: the violet body it
+                wears everywhere else is this exact tint, and disappears into
+                it. White body, dark eyes. */}
             <Glass interactive radius={FAB_SIZE / 2} tintColor={FAB_TINT} style={styles.fab}>
-              <Ionicons name="sparkles" size={26} color={TEXT.inverse} />
+              <SiloMascot size={38} mood="idle" tone="inverse" />
             </Glass>
           </PressableScale>
         )}

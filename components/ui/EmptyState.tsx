@@ -12,11 +12,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import PressableScale from './PressableScale';
+import SiloMascot, { type MascotMood } from './SiloMascot';
 import { DURATION, GRADIENTS, RADIUS, SPRING } from '@/lib/theme';
 import { useThemeColors } from '@/lib/useTheme';
 
 interface EmptyStateProps {
   icon: keyof typeof Ionicons.glyphMap;
+  /**
+   * Show the assistant instead of the glyph. Only for surfaces that ARE the
+   * assistant — a mascot on an empty search result would be him taking credit
+   * for someone else's screen.
+   */
+  mascot?: MascotMood;
   title: string;
   subtitle?: string;
   colors?: readonly [string, string];
@@ -33,6 +40,7 @@ interface EmptyStateProps {
 
 export default function EmptyState({
   icon,
+  mascot,
   title,
   subtitle,
   colors = GRADIENTS.brand,
@@ -64,7 +72,11 @@ export default function EmptyState({
             shadowRadius: 22,
           }}
         >
-          <Ionicons name={icon} size={42} color="#ffffff" />
+          {mascot ? (
+            <SiloMascot size={62} mood={mascot} tone="inverse" />
+          ) : (
+            <Ionicons name={icon} size={42} color="#ffffff" />
+          )}
         </LinearGradient>
       </Animated.View>
 

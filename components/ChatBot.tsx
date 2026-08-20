@@ -58,6 +58,7 @@ import Glass from '@/components/ui/Glass';
 import PressableScale from '@/components/ui/PressableScale';
 import EmptyState from '@/components/ui/EmptyState';
 import { ShimmerText } from '@/components/ui/Shimmer';
+import SiloMascot from '@/components/ui/SiloMascot';
 import { useToast } from '@/components/ui/Toast';
 import { usePrefersReducedMotion } from '@/lib/motion';
 import {
@@ -646,7 +647,7 @@ export default function ChatBot({ visible, onClose, prefill }: ChatBotProps) {
           <View style={[styles.header, dyn.header]}>
             <View style={styles.headerLeft}>
               <View style={[styles.avatar, dyn.avatar]}>
-                <Ionicons name="sparkles" size={22} color={c.textBrand} />
+                <SiloMascot size={30} mood="idle" />
               </View>
               <View>
                 <Text style={[styles.headerTitle, dyn.headerTitle]}>Assistant</Text>
@@ -670,6 +671,7 @@ export default function ChatBot({ visible, onClose, prefill }: ChatBotProps) {
             <ScrollView contentContainerStyle={styles.emptyWrap}>
               <EmptyState
                 icon="sparkles"
+                mascot="waiting"
                 title="Nothing to ask about yet"
                 subtitle="Save a few links or notes and I'll answer questions about them — and do things with them."
                 cta={{ label: 'Start capturing', onPress: onClose }}
@@ -722,7 +724,7 @@ export default function ChatBot({ visible, onClose, prefill }: ChatBotProps) {
 
                       {message.isUpgrade && (
                         <View style={styles.errorHeader}>
-                          <Ionicons name="sparkles" size={15} color={c.brand} />
+                          <SiloMascot size={24} mood="sorry" alive={false} />
                           <Text style={[styles.errorLabel, { color: c.textBrand }]}>
                             Silo Premium
                           </Text>
@@ -809,6 +811,10 @@ export default function ChatBot({ visible, onClose, prefill }: ChatBotProps) {
                     entering={FadeIn.duration(DURATION.fast)}
                     style={[styles.bubble, styles.botBubble, dyn.botBubble, styles.typingBubble]}
                   >
+                    {/* He cocks his head and looks off while he works, which
+                        says "thinking" faster than three dots do. The dots stay
+                        because they carry the rhythm he can't. */}
+                    <SiloMascot size={30} mood="curious" style={styles.thinkingMascot} />
                     {[0, 1, 2].map((i) => (
                       <TypingDot key={i} index={i} reduced={reduced} />
                     ))}
@@ -1050,6 +1056,9 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: RADIUS.pill,
+  },
+  thinkingMascot: {
+    marginRight: SPACE.xs,
   },
   thinkingLabel: {
     marginLeft: SPACE.xs,

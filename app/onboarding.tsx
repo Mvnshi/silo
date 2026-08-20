@@ -59,6 +59,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import PressableScale from '@/components/ui/PressableScale';
+import SiloMascot, { type MascotMood } from '@/components/ui/SiloMascot';
 import { addStack, setOnboarded } from '@/lib/storage';
 import { newId } from '@/lib/items';
 import { isAuthConfigured } from '@/lib/auth';
@@ -115,6 +116,8 @@ interface Slide {
   subtitle: string;
   /** Reassurance line under the copy. */
   note?: string;
+  /** Show the assistant in the orb instead of the glyph — his introduction. */
+  mascot?: MascotMood;
   /** Renders the interest chips. */
   pick?: boolean;
   /** Renders the permission-priming actions instead of the footer CTA. */
@@ -132,6 +135,7 @@ const SLIDES: Slide[] = [
   },
   {
     icon: 'sparkles',
+    mascot: 'curious',
     colors: GRADIENTS.accent,
     title: 'Silo organizes it',
     subtitle:
@@ -340,11 +344,19 @@ function SlideView({
               compact && styles.orbCompact,
             ]}
           >
-            <Ionicons
-              name={slide.icon}
-              size={compact ? ORB_ICON_COMPACT : ORB_ICON}
-              color={TEXT.inverse}
-            />
+            {slide.mascot ? (
+              <SiloMascot
+                size={(compact ? ORB_ICON_COMPACT : ORB_ICON) * 1.5}
+                mood={slide.mascot}
+                tone="inverse"
+              />
+            ) : (
+              <Ionicons
+                name={slide.icon}
+                size={compact ? ORB_ICON_COMPACT : ORB_ICON}
+                color={TEXT.inverse}
+              />
+            )}
           </LinearGradient>
         </Animated.View>
       </Animated.View>
