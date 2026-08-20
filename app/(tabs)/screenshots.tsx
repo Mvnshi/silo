@@ -55,7 +55,8 @@ import {
   Screenshot,
   MediaPermissionStatus,
 } from '@/lib/screenshots';
-import { analyzeImage, suggestScheduleTime } from '@/lib/api';
+import { useRouter } from 'expo-router';
+import { analyzeImage, isPremiumRequired, suggestScheduleTime } from '@/lib/api';
 import { addItem, getItems, deleteItem, updateItem } from '@/lib/storage';
 import { createItem } from '@/lib/items';
 import { scheduleItemReview } from '@/lib/scheduler';
@@ -124,12 +125,19 @@ interface LastAction {
   suggestion?: ScheduleSuggestionResponse;
   /** Terminal state after the user taps Schedule. */
   scheduleResult?: 'ok' | 'error';
+  /**
+   * The import went through, but the AI titling was gated. The screenshot is
+   * saved either way — this only changes what the snackbar offers, so a closed
+   * gate reads as something to buy rather than something that broke.
+   */
+  gated?: boolean;
 }
 
 function snackbarLabel(a: LastAction): string {
   if (a.scheduleResult === 'ok') return 'Added to calendar';
   if (a.scheduleResult === 'error') return "Couldn't add to calendar";
   if (a.kind === 'failed') return "Couldn't import";
+  if (a.kind === 'imported' && a.gated) return 'Saved — AI titles are Premium';
   return a.kind === 'imported' ? 'Imported' : 'Skipped';
 }
 
@@ -150,6 +158,7 @@ export default function ScreenshotsScreen() {
     c.appearance === 'dark'
       ? { color: c.field, sweepColor: 'rgba(255, 255, 255, 0.06)' }
       : {};
+  const router = useRouter();
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
   const [permission, setPermission] = useState<MediaPermissionStatus | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -351,14 +360,14 @@ export default function ScreenshotsScreen() {
     importingRef.current = true;
     setAnalyzing(true);
     try {
-      const item = await importScreenshot(screenshot);
+      const { item, gated } = await importScreenshot(screenshot);
       // Under Unprocessed the imported card drops out of the list at a position
       // <= currentIndex, so advancing as well would silently skip the next one.
       // Either way a new screenshot reaches the top and the reset effect fires.
       const removedFromDeck = activeFilter === 'unprocessed';
       if (!removedFromDeck) moveToNext();
       celebrationHaptic();
-      showSnackbar({ kind: 'imported', itemId: item.id, item, advanced: !removedFromDeck });
+      showSnackbar({ kind: 'imported', itemId: item.id, item, advanced: !removedFromDeck, gated });
       await refreshImportedFromStorage();
 
       // Soft schedule suggestion. Best-effort — it arrives as an extra action on
@@ -374,7 +383,9 @@ export default function ScreenshotsScreen() {
           prev && prev.itemId === item.id ? { ...prev, suggestion } : prev
         );
       } catch {
-        // schedule suggestion is optional (needs the Worker key)
+        // Optional: needs the Worker key, and is premium once the free
+        // allowance is spent. The import snackbar already carries that offer,
+        // so a second prompt here would be nagging.
       }
     } catch (error) {
       console.error('Failed to import screenshot:', error);
@@ -415,12 +426,18 @@ export default function ScreenshotsScreen() {
   async function importScreenshot(screenshot: Screenshot) {
     // Best-effort AI analysis — without the backend we still save the image.
     let analysis: Awaited<ReturnType<typeof analyzeImage>> | null = null;
+    let gated = false;
     try {
       const base64 = await imageUriToBase64(screenshot.uri);
       const mimeType = getMimeTypeFromFilename(screenshot.filename);
       analysis = await analyzeImage(base64, mimeType);
     } catch (error) {
-      console.warn('Screenshot AI analysis unavailable; importing without it:', error);
+      // A closed gate is not a warning worth logging as a failure, and it is
+      // the one case the snackbar should say something about.
+      gated = isPremiumRequired(error);
+      if (!gated) {
+        console.warn('Screenshot AI analysis unavailable; importing without it:', error);
+      }
     }
     const item = createItem({
       type: 'screenshot',
@@ -435,7 +452,7 @@ export default function ScreenshotsScreen() {
       place_address: analysis?.place_address,
     });
     await addItem(item);
-    return item;
+    return { item, gated };
   }
 
   /** Progressive haptic that intensifies with drag distance ("stretch" feel). */
@@ -969,6 +986,18 @@ export default function ScreenshotsScreen() {
                     accessibilityLabel={`Schedule for ${lastAction.suggestion.date} at ${lastAction.suggestion.time}`}
                   >
                     <Text style={styles.snackbarAction}>Schedule</Text>
+                  </PressableScale>
+                )}
+                {!!lastAction.gated && !lastAction.scheduleResult && (
+                  <PressableScale
+                    haptic="light"
+                    onPress={() => {
+                      dismissSnackbar();
+                      router.push('/paywall?context=screenshot');
+                    }}
+                    accessibilityLabel="See Silo Premium"
+                  >
+                    <Text style={styles.snackbarAction}>Premium</Text>
                   </PressableScale>
                 )}
                 {lastAction.kind !== 'failed' && !lastAction.scheduleResult && (

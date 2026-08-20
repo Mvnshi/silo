@@ -38,6 +38,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { seedData, shouldSeedData } from '@/lib/seed';
 import { runMigrations, hasOnboarded, getItems, getSettings } from '@/lib/storage';
+import { hydrateAllowance } from '@/lib/allowance';
 import { drainPendingShares } from '@/lib/shareImport';
 import * as Notifications from 'expo-notifications';
 import { configureNotifications, routeForResponse, syncNotifications } from '@/lib/notifications';
@@ -107,6 +108,9 @@ export default function RootLayout() {
     // then (dev only) seed. Migration is idempotent and never blocks startup.
     async function init() {
       await runMigrations();
+      // Before anything can make an AI call: the gate reads this count
+      // synchronously, and an un-hydrated count reads as "spent nothing".
+      await hydrateAllowance();
       await seedDevData();
       // Import anything the iOS Share Extension queued into the App Group.
       await drainPendingShares();

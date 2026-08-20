@@ -80,6 +80,28 @@ a dead or login-walled link still stores the raw URL.
 Playback uses each platform's own token-free embed (`lib/embed.ts`). No media is
 downloaded; that is a deliberate App Store / ToS choice, not an oversight.
 
+### Onboarding and the paywall
+
+Onboarding is five beats: three of promise, then **pick what you keep losing**
+(the chips create real Stacks, so nobody lands in an empty library) and a
+**permission slide that asks for calendar and reminders with the reason on
+screen**. It hands to the trial offer, then sign-in, then the app — each link
+independently skippable, and each skipped entirely when its feature is
+unconfigured.
+
+`app/paywall.tsx` is one screen with seven `?context=` variants, so the
+Guideline 3.1.2 furniture — price, period, renewal terms, working ToS/Privacy
+links, Restore, and a full-width "Not now" — physically cannot regress in one
+variant while surviving in another. Three rules it will not break: every price
+comes from the store, the trial is only promised to an Apple ID that is still
+eligible for one, and a discount renders only when a real signed offer exists.
+
+The gate is metered rather than absolute: `FREE_AI_ACTIONS` free uses of the
+three Gemini-backed extras, so the upgrade prompt arrives after the feature has
+visibly worked instead of the first time it is tapped. `lib/retention.ts`
+classifies where a subscriber stands (`cancelled` · `lapsed` · `billingIssue` ·
+…) and owns the copy for each.
+
 ### The resurfacing loop
 
 Three mechanics keep saves from rotting (`lib/resurface.ts`):
@@ -133,6 +155,13 @@ EXPO_PUBLIC_API_BASE_URL=    # Worker URL — AI features no-op until set
 EXPO_PUBLIC_CLIENT_TOKEN=    # must match the Worker's APP_CLIENT_TOKEN secret
 ```
 
+**Working on the paywall without a RevenueCat account?** Start Metro with
+`EXPO_PUBLIC_BILLING_FIXTURE=<state>` and `lib/billingFixtures.ts` serves a fake
+store — real-shaped packages, trial eligibility, win-back offers, and any
+entitlement you need (`none` · `trialing` · `subscribed` · `cancelled` ·
+`lapsed` · `billing`). It is `__DEV__`-only and off unless that variable is set;
+`verify-degradation.mjs` pins both guards.
+
 The app runs without a Worker: you can still save links, notes and images, and
 classification falls back to a heuristic.
 
@@ -153,6 +182,7 @@ Full walkthrough — local dev, deploying, and self-hosting — in
 | `cd extension && node scripts/verify-e2e.mjs` | Extension e2e against a real browser |
 | `node scripts/verify-triggers.mjs` | Trigger-engine rules (pure; no device needed) |
 | `node scripts/verify-degradation.mjs` | Accounts + subscriptions degrade to "everything open" when unconfigured |
+| `node scripts/verify-funnel.mjs` | Retention states, paywall copy, price maths, the free AI allowance |
 | `node workers/scripts/verify-extract.mjs` | Extractor against fixed HTML (starts its own Worker) |
 | `node workers/scripts/verify-auth.mjs` | Worker session + space authorization (starts its own fleet) |
 | `cd extension && node scripts/verify-tokens.mjs` | shadcn resolves to Silo's tokens |

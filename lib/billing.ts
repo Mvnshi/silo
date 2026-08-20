@@ -28,10 +28,38 @@
  * opens the app on a plane must not be told to subscribe again, so a cached
  * entitlement stays honoured until it actually expires, plus `GRACE_DAYS` of
  * slack for billing-retry states. Past that it lapses closed.
+ *
+ * ## Retention offers, and the one rule that governs them
+ *
+ * **Never render a price that no real StoreKit product backs.** iOS gives us
+ * exactly three mechanisms, all of which resolve to real products:
+ *
+ * - *Introductory offers* — the 7-day trial. Apple applies it automatically and
+ *   allows ONE per subscription group per Apple ID, which is why
+ *   `introEligibility()` exists: promising a trial to someone who has already
+ *   used theirs is a false claim at the point of purchase.
+ * - *Promotional offers* — a discount for an existing or lapsed subscriber,
+ *   signed server-side. RevenueCat does the signing; we surface whatever
+ *   `product.discounts` actually contains and nothing else.
+ * - *Win-back offers* (iOS 18+) — Apple's native churn recovery, configured in
+ *   App Store Connect and read back through `winBackOffersFor()`.
+ *
+ * Every one of those helpers returns null/empty when nothing is configured, and
+ * the screens above them are written to show no discount at all in that case
+ * rather than a number we made up. That is the difference between an aggressive
+ * funnel and a rejected one.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { PREMIUM_ENTITLEMENT } from './config';
+import {
+  fixtureEntitlement,
+  fixtureHistory,
+  fixtureIntroEligible,
+  fixtureOffer,
+  fixturePackages,
+  fixturesEnabled,
+} from './billingFixtures';
 
 const IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY ?? '';
 const ANDROID_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY ?? '';
@@ -39,14 +67,29 @@ const ANDROID_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY ?? '';
 /** Days a known-good entitlement survives past its expiry (billing retry / offline). */
 const GRACE_DAYS = 3;
 const CACHE_KEY = 'silo:entitlement:v1';
+/**
+ * Durable "this Apple ID once paid us" marker.
+ *
+ * Needed because a lapse resolves to LOCKED, which by design carries no expiry
+ * and no product id — so the moment a subscription ends, the entitlement itself
+ * stops remembering there ever was one. Win-back has to know the difference
+ * between someone who never subscribed and someone who just left; without this
+ * both look identical and the lapsed user gets pitched as a stranger.
+ */
+const HISTORY_KEY = 'silo:subHistory:v1';
 
 function apiKey(): string {
   return Platform.OS === 'android' ? ANDROID_KEY : IOS_KEY;
 }
 
-/** True when this build can actually sell something. */
+/**
+ * True when this build can actually sell something.
+ *
+ * A fixture build counts, so the whole subscription surface renders and can be
+ * looked at. `fixturesEnabled()` is `__DEV__`-only — see `lib/billingFixtures`.
+ */
 export function isBillingConfigured(): boolean {
-  return apiKey().length > 0;
+  return fixturesEnabled() || apiKey().length > 0;
 }
 
 /* ---------------------------------------------------------------------------
@@ -58,16 +101,50 @@ export function isBillingConfigured(): boolean {
  * exactly the environment the degradation contract exists to serve.
  * ------------------------------------------------------------------------- */
 
+/** One period of a discount or introductory offer, as the store describes it. */
+export interface BillingOfferPeriod {
+  price: number;
+  priceString: string;
+  /** 'DAY' | 'WEEK' | 'MONTH' | 'YEAR' */
+  periodUnit: string;
+  periodNumberOfUnits: number;
+  /** How many billing periods the offer runs for. */
+  cycles: number;
+}
+
+/** A promotional/win-back discount attached to a product. */
+export interface BillingDiscount extends BillingOfferPeriod {
+  identifier: string;
+}
+
 export interface BillingPackage {
   identifier: string;
   /** 'MONTHLY' | 'ANNUAL' | … */
   packageType: string;
   product: {
     identifier: string;
+    /** Numeric price in the local currency — the only safe basis for maths. */
+    price: number;
     priceString: string;
     title: string;
     description: string;
+    /** The introductory offer (free trial), when the product has one. */
+    introPrice?: BillingOfferPeriod | null;
+    /** Promotional offers configured for this product. iOS only; null on Android. */
+    discounts?: BillingDiscount[] | null;
   };
+}
+
+/** An offer the store has confirmed this user can actually be given. */
+export interface RedeemableOffer {
+  kind: 'winback' | 'promotional';
+  /** The store's own formatted price for the discounted period. */
+  priceString: string;
+  periodUnit: string;
+  periodNumberOfUnits: number;
+  cycles: number;
+  /** Opaque SDK payload — passed straight back into the purchase call. */
+  payload: unknown;
 }
 
 interface CustomerInfo {
@@ -78,20 +155,50 @@ interface CustomerInfo {
       periodType: string;
       expirationDate: string | null;
       productIdentifier: string;
+      /** Set once Apple reports a failed charge — a real, recoverable churn state. */
+      billingIssueDetectedAt?: string | null;
+      /** Set the moment the user turns off auto-renew, while still entitled. */
+      unsubscribeDetectedAt?: string | null;
     }>;
   };
   managementURL: string | null;
 }
 
+interface BillingOffering {
+  availablePackages: BillingPackage[];
+}
+
 interface PurchasesSdk {
   configure(opts: { apiKey: string; appUserID?: string | null }): void;
   getCustomerInfo(): Promise<CustomerInfo>;
-  getOfferings(): Promise<{ current: { availablePackages: BillingPackage[] } | null }>;
+  getOfferings(): Promise<{
+    current: BillingOffering | null;
+    all?: Record<string, BillingOffering>;
+  }>;
   purchasePackage(pkg: BillingPackage): Promise<{ customerInfo: CustomerInfo }>;
   restorePurchases(): Promise<CustomerInfo>;
   logIn(userId: string): Promise<{ customerInfo: CustomerInfo }>;
   logOut(): Promise<CustomerInfo>;
   addCustomerInfoUpdateListener(cb: (info: CustomerInfo) => void): void;
+  /** iOS only, and absent on older SDKs — always call through `optional()`. */
+  checkTrialOrIntroductoryPriceEligibility?(
+    productIds: string[]
+  ): Promise<Record<string, { status: number }>>;
+  getEligibleWinBackOffersForPackage?(
+    pkg: BillingPackage
+  ): Promise<BillingDiscount[] | undefined>;
+  purchasePackageWithWinBackOffer?(
+    pkg: BillingPackage,
+    offer: unknown
+  ): Promise<{ customerInfo: CustomerInfo }>;
+  getPromotionalOffer?(
+    product: BillingPackage['product'],
+    discount: BillingDiscount
+  ): Promise<unknown>;
+  purchaseDiscountedPackage?(
+    pkg: BillingPackage,
+    offer: unknown
+  ): Promise<{ customerInfo: CustomerInfo }>;
 }
 
 let sdk: PurchasesSdk | null = null;
@@ -116,7 +223,7 @@ function purchases(): PurchasesSdk | null {
 
 /** True when billing is configured AND the native module is actually present. */
 export function isBillingAvailable(): boolean {
-  return purchases() !== null;
+  return fixturesEnabled() || purchases() !== null;
 }
 
 /* ---------------------------------------------------------------------------
@@ -134,6 +241,15 @@ export interface Entitlement {
   inTrial: boolean;
   /** Deep link to the store's manage-subscription page, when the SDK gives one. */
   managementUrl: string | null;
+  /**
+   * When Apple reported a failed charge, if it has. Distinct from a cancel:
+   * the user did not choose to leave, so the fix is a payment method rather
+   * than an offer, and saying "your payment didn't go through" is only honest
+   * when this is actually set.
+   */
+  billingIssueAt: string | null;
+  /** When auto-renew was switched off, if it has been. */
+  unsubscribedAt: string | null;
 }
 
 /** An unconfigured build is entitled to everything: no gate exists to fail. */
@@ -144,9 +260,75 @@ export const OPEN: Entitlement = {
   productId: null,
   inTrial: false,
   managementUrl: null,
+  billingIssueAt: null,
+  unsubscribedAt: null,
 };
 
 const LOCKED: Entitlement = { ...OPEN, active: false };
+
+/* ---------------------------------------------------------------------------
+ * Subscription history
+ * ------------------------------------------------------------------------- */
+
+export interface SubscriptionHistory {
+  /** True once we have ever seen this install hold an active entitlement. */
+  everSubscribed: boolean;
+  /** The last expiry we saw while they were still entitled. */
+  lastExpiry: string | null;
+  /** The last product they held — the one a win-back offer should target. */
+  productId: string | null;
+}
+
+const NO_HISTORY: SubscriptionHistory = {
+  everSubscribed: false,
+  lastExpiry: null,
+  productId: null,
+};
+
+let history: SubscriptionHistory = NO_HISTORY;
+
+/** What we know about this install's past subscriptions. Synchronous. */
+export function subscriptionHistory(): SubscriptionHistory {
+  return fixturesEnabled() ? fixtureHistory() : history;
+}
+
+async function loadHistory(): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(HISTORY_KEY);
+    if (raw) history = { ...NO_HISTORY, ...(JSON.parse(raw) as SubscriptionHistory) };
+  } catch {
+    // No history just means we treat a lapsed user as new — the safe direction.
+  }
+}
+
+/**
+ * Remember an active entitlement so a later lapse is recognisable.
+ *
+ * Only ever writes while the entitlement IS active: reconstructing history from
+ * the locked state is what we are trying to avoid, and an expiry recorded after
+ * the fact would be the grace-window expiry rather than the real one.
+ */
+async function rememberActive(e: Entitlement): Promise<void> {
+  if (!e.active) return;
+  const next: SubscriptionHistory = {
+    everSubscribed: true,
+    lastExpiry: e.expiresAt ?? history.lastExpiry,
+    productId: e.productId ?? history.productId,
+  };
+  if (
+    next.everSubscribed === history.everSubscribed &&
+    next.lastExpiry === history.lastExpiry &&
+    next.productId === history.productId
+  ) {
+    return;
+  }
+  history = next;
+  try {
+    await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  } catch {
+    /* non-fatal */
+  }
+}
 
 /**
  * Last known entitlement, readable synchronously.
@@ -157,6 +339,8 @@ const LOCKED: Entitlement = { ...OPEN, active: false };
 let cached: Entitlement = OPEN;
 
 export function cachedEntitlement(): Entitlement {
+  const fixture = fixtureEntitlement();
+  if (fixture) return fixture;
   return isBillingConfigured() ? cached : OPEN;
 }
 
@@ -175,6 +359,8 @@ function fromCustomerInfo(info: CustomerInfo): Entitlement {
     productId: e.productIdentifier ?? null,
     inTrial: e.periodType === 'TRIAL' || e.periodType === 'INTRO',
     managementUrl: info.managementURL ?? null,
+    billingIssueAt: e.billingIssueDetectedAt ?? null,
+    unsubscribedAt: e.unsubscribeDetectedAt ?? null,
   };
 }
 
@@ -188,6 +374,9 @@ function withinGrace(e: Entitlement, now: Date): boolean {
 }
 
 async function persist(e: Entitlement): Promise<void> {
+  // Every entitlement write funnels through here, so this is the one place
+  // history can be recorded without a caller being able to forget to.
+  await rememberActive(e);
   try {
     await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(e));
   } catch {
@@ -215,8 +404,11 @@ async function readCache(): Promise<Entitlement | null> {
  * user for as long as the network takes to fail, then reconciles with the store.
  */
 export async function initBilling(userId?: string | null): Promise<Entitlement> {
+  const fixture = fixtureEntitlement();
+  if (fixture) return fixture;
   if (!isBillingConfigured()) return OPEN;
 
+  await loadHistory();
   const stored = await readCache();
   if (stored && withinGrace(stored, new Date())) cached = stored;
   else if (stored) cached = LOCKED;
@@ -246,6 +438,8 @@ export async function initBilling(userId?: string | null): Promise<Entitlement> 
 
 /** Ask the store what the user actually owns. Falls back to the cache offline. */
 export async function refreshEntitlement(): Promise<Entitlement> {
+  const fixture = fixtureEntitlement();
+  if (fixture) return fixture;
   if (!isBillingConfigured()) return OPEN;
   const P = purchases();
   if (!P) return cached;
@@ -271,15 +465,179 @@ const NOT_AVAILABLE: BillingResult = {
   message: 'Subscriptions aren’t available in this build.',
 };
 
-/** The packages to show on the paywall, in the order RevenueCat returns them. */
-export async function getPackages(): Promise<BillingPackage[]> {
+/**
+ * The packages to show on a paywall, in the order RevenueCat returns them.
+ *
+ * `offeringId` selects a NAMED offering — the retention and win-back surfaces
+ * ask for their own so a discounted product can be swapped in from the
+ * dashboard without an app update. A named offering that does not exist falls
+ * back to the current one, which is the honest default: the user sees the
+ * standard price rather than a discount that was never configured.
+ */
+export async function getPackages(offeringId?: string): Promise<BillingPackage[]> {
+  if (fixturesEnabled()) return fixturePackages();
   const P = purchases();
   if (!P) return [];
   try {
     const offerings = await P.getOfferings();
+    if (offeringId) {
+      const named = offerings.all?.[offeringId]?.availablePackages;
+      if (named && named.length > 0) return named;
+    }
     return offerings.current?.availablePackages ?? [];
   } catch {
     return [];
+  }
+}
+
+/** True when a named offering actually exists in the dashboard. */
+export async function hasOffering(offeringId: string): Promise<boolean> {
+  const P = purchases();
+  if (!P) return false;
+  try {
+    const offerings = await P.getOfferings();
+    return (offerings.all?.[offeringId]?.availablePackages?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Offers
+ *
+ * Everything here answers the same question — "what is this specific user
+ * actually allowed to be shown?" — and every one of them returns nothing when
+ * the answer is unknown. A screen that gets null renders no offer, never a
+ * placeholder discount.
+ * ------------------------------------------------------------------------- */
+
+/** RevenueCat's INTRO_ELIGIBILITY_STATUS. 2 = eligible. */
+const ELIGIBLE = 2;
+
+/**
+ * Can this Apple ID still be given the introductory free trial?
+ *
+ * Apple allows one intro offer per subscription group per Apple ID, so a
+ * returning user is often ineligible — and telling them "start your 7-day free
+ * trial" when Apple will charge them immediately is a false claim at the point
+ * of purchase, which is exactly what Guideline 3.1.2 is about.
+ *
+ * Returns `null` when we genuinely cannot tell (older SDK, Android, a store
+ * error). Callers treat null as "don't promise a trial", not as "no trial".
+ */
+export async function introEligibility(productId: string): Promise<boolean | null> {
+  if (fixturesEnabled()) return fixtureIntroEligible();
+  const P = purchases();
+  if (!P?.checkTrialOrIntroductoryPriceEligibility) return null;
+  try {
+    const result = await P.checkTrialOrIntroductoryPriceEligibility([productId]);
+    const status = result?.[productId]?.status;
+    if (typeof status !== 'number') return null;
+    return status === ELIGIBLE;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The best offer Apple will actually honour for this package right now.
+ *
+ * Tries win-back offers first (iOS 18+, configured in App Store Connect, and
+ * the only mechanism aimed squarely at someone who has already lapsed), then
+ * falls back to a signed promotional offer built from the product's own
+ * discounts. Null means: show the standard price.
+ */
+export async function bestOfferFor(pkg: BillingPackage): Promise<RedeemableOffer | null> {
+  if (fixturesEnabled()) return fixtureOffer();
+  const P = purchases();
+  if (!P) return null;
+
+  if (P.getEligibleWinBackOffersForPackage) {
+    try {
+      const offers = await P.getEligibleWinBackOffersForPackage(pkg);
+      const offer = offers?.[0];
+      if (offer) {
+        return {
+          kind: 'winback',
+          priceString: offer.priceString,
+          periodUnit: offer.periodUnit,
+          periodNumberOfUnits: offer.periodNumberOfUnits,
+          cycles: offer.cycles,
+          payload: offer,
+        };
+      }
+    } catch {
+      // Not on iOS 18, or none configured — fall through to promotional.
+    }
+  }
+
+  const discount = pkg.product.discounts?.[0];
+  if (discount && P.getPromotionalOffer) {
+    try {
+      // RevenueCat signs this with the subscription key; an unsigned discount
+      // is rejected by StoreKit, so a null here must not become a rendered price.
+      const signed = await P.getPromotionalOffer(pkg.product, discount);
+      if (signed) {
+        return {
+          kind: 'promotional',
+          priceString: discount.priceString,
+          periodUnit: discount.periodUnit,
+          periodNumberOfUnits: discount.periodNumberOfUnits,
+          cycles: discount.cycles,
+          payload: signed,
+        };
+      }
+    } catch {
+      // Signing failed — show the standard price rather than a broken offer.
+    }
+  }
+
+  return null;
+}
+
+/**
+ * The annual saving against the monthly plan, as a whole percent.
+ *
+ * Computed from the NUMERIC prices, never from `priceString` — that is
+ * localised ("39,99 €", "¥4,800") and parsing it would produce wrong numbers in
+ * most of the world. Returns null unless both real prices are present and the
+ * annual plan genuinely costs less, so the badge simply does not render rather
+ * than claiming a saving that isn't there.
+ */
+export function annualSavingPercent(
+  annual: BillingPackage | undefined,
+  monthly: BillingPackage | undefined
+): number | null {
+  const yearly = annual?.product.price;
+  const perMonth = monthly?.product.price;
+  if (!yearly || !perMonth || yearly <= 0 || perMonth <= 0) return null;
+  const full = perMonth * 12;
+  if (yearly >= full) return null;
+  return Math.round((1 - yearly / full) * 100);
+}
+
+/**
+ * The real length of a package's free trial, in days.
+ *
+ * Read from the store rather than from `TRIAL_DAYS` so the screen can never
+ * disagree with what App Store Connect is configured to give. Null when the
+ * product carries no introductory offer.
+ */
+export function trialDaysFor(pkg: BillingPackage | undefined): number | null {
+  const intro = pkg?.product.introPrice;
+  if (!intro || intro.price !== 0) return null;
+  const n = intro.periodNumberOfUnits;
+  switch (intro.periodUnit) {
+    case 'DAY':
+      return n;
+    case 'WEEK':
+      return n * 7;
+    case 'MONTH':
+      return n * 30;
+    case 'YEAR':
+      return n * 365;
+    default:
+      return null;
   }
 }
 
@@ -288,6 +646,41 @@ export async function purchasePackage(pkg: BillingPackage): Promise<BillingResul
   if (!P) return NOT_AVAILABLE;
   try {
     const { customerInfo } = await P.purchasePackage(pkg);
+    const entitlement = fromCustomerInfo(customerInfo);
+    cached = entitlement;
+    await persist(entitlement);
+    if (!entitlement.active) {
+      return { ok: false, message: 'That purchase didn’t activate. Try Restore.' };
+    }
+    return { ok: true, entitlement };
+  } catch (error) {
+    if (isUserCancelled(error)) return { ok: false, message: '' };
+    return { ok: false, message: readableError(error) };
+  }
+}
+
+/**
+ * Buy a package with a store-issued offer applied.
+ *
+ * The offer must have come from `bestOfferFor` — that is what guarantees the
+ * discount is real, signed and eligible. If the SDK on this build has no
+ * discounted-purchase entry point, this falls back to the standard price rather
+ * than failing: charging the normal amount is recoverable, showing a discount
+ * that cannot be honoured is not.
+ */
+export async function purchaseWithOffer(
+  pkg: BillingPackage,
+  offer: RedeemableOffer
+): Promise<BillingResult> {
+  const P = purchases();
+  if (!P) return NOT_AVAILABLE;
+
+  const buy =
+    offer.kind === 'winback' ? P.purchasePackageWithWinBackOffer : P.purchaseDiscountedPackage;
+  if (!buy) return purchasePackage(pkg);
+
+  try {
+    const { customerInfo } = await buy.call(P, pkg, offer.payload);
     const entitlement = fromCustomerInfo(customerInfo);
     cached = entitlement;
     await persist(entitlement);

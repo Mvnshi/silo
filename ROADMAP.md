@@ -79,15 +79,37 @@ taken per week from saved items*. Anything that doesn't move that number waits.
 
 ### Product
 
-5. **Turn on billing.** The code ships (`lib/billing.ts`, `app/paywall.tsx`,
-   Settings → Subscription): purchase, restore, lapsed handling with an offline
-   grace window, and a gate that genuinely closes — premium buys the Gemini-backed
-   features while capture, extraction and the whole resurfacing loop stay free.
-   `scripts/verify-degradation.mjs` pins the contract, including the case that
-   matters most: configured-to-sell but unable to (Expo Go / an old dev client)
-   stays LOCKED rather than giving the paid tier away. What remains is account
-   work — a RevenueCat project, the two App Store Connect products, and a sandbox
-   tester on an EAS build, since purchases cannot be exercised in a simulator.
+5. **Turn on billing.** The funnel ships end to end. Onboarding is five beats
+   (three of promise, an interest picker that creates real Stacks, and a
+   permission slide that primes calendar *and* reminders in context), handing to
+   a soft trial offer, then sign-in, then the app. `app/paywall.tsx` is one
+   screen with seven `?context=` variants so the Guideline 3.1.2 furniture
+   cannot regress in one and survive in another. The gate is metered —
+   `FREE_AI_ACTIONS` free uses of the Gemini-backed extras — so the ask lands
+   after the feature has visibly worked, and `lib/retention.ts` classifies
+   cancelled / lapsed / billing-issue subscribers and owns what each is told.
+   Every price comes from the store, the trial is offered only to an Apple ID
+   still eligible for one, and a discount renders only when a real signed offer
+   exists.
+
+   Verified without an account: `scripts/verify-funnel.mjs` (66 checks) drives
+   every retention state from synthetic entitlements, plus the price maths, the
+   trial-length reader and the allowance; `scripts/verify-degradation.mjs` (37)
+   pins the unconfigured contract, the configured-but-unusable case that must
+   stay LOCKED, the free/metered/premium split read straight out of `lib/api.ts`,
+   and the `__DEV__` guards on `lib/billingFixtures.ts`. The simulator confirmed
+   the flows themselves — first run → onboarding → offer → decline → app, the
+   cancelled-but-active banner and its "before you go" screen, and the whole
+   paywall in light, dark and at `accessibility-extra-large`.
+
+   What still needs the accounts: a RevenueCat project, the two App Store Connect
+   products, and a sandbox tester on an EAS build. Purchases, real trials,
+   promotional offers and iOS 18 win-back offers cannot be exercised in a
+   simulator, so the buy/restore round-trip and the offer-eligibility calls are
+   written and typed but unproven against a live store. Configure a `retention`
+   and a `winback` offering in RevenueCat to light up the discounted paths;
+   without them those screens deliberately show no price at all rather than one
+   no product backs.
 6. **Submit.** Usage strings, the Apple Sign-In entitlement and export compliance
    are fixed in `app.json`; the privacy policy, ToS, nutrition-label answers and
    review notes are written in [`docs/legal/`](docs/legal/) and

@@ -17,6 +17,7 @@ import {
   ExtractedLinkResponse,
 } from './types';
 import { isPremium } from './billing';
+import { consumeAction, hasFreeAction } from './allowance';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || '';
 const CLIENT_TOKEN = process.env.EXPO_PUBLIC_CLIENT_TOKEN || '';
@@ -32,7 +33,7 @@ function apiHeaders(): Record<string, string> {
 const REQUEST_TIMEOUT_MS = 20000;
 
 /**
- * Tasks that stay free forever.
+ * Tasks that stay free forever, without limit.
  *
  * `extract` is the one that must never be gated: it is what turns a pasted link
  * into a titled, thumbnailed, playable save, and a free tier where saving is
@@ -44,6 +45,20 @@ const REQUEST_TIMEOUT_MS = 20000;
  * it runs entirely on-device and never reaches this function.
  */
 const FREE_TASKS = new Set(['extract']);
+
+/**
+ * Premium tasks a free user gets a limited number of, before the gate closes.
+ *
+ * This is the "earn the ask" mechanism. Hard-gating these three from the first
+ * tap puts the upgrade prompt at the moment of curiosity — before the feature
+ * has ever visibly worked — which is the single most common way a good product
+ * builds a funnel that converts once and churns forever. Metering them instead
+ * moves the ask to the moment the user has watched it work and wants it to
+ * keep working. See `lib/allowance.ts` and `FREE_AI_ACTIONS`.
+ *
+ * Set `FREE_AI_ACTIONS` to 0 to restore a hard gate without touching this file.
+ */
+const METERED_TASKS = new Set(['classify_image', 'assistant', 'suggest_schedule']);
 
 /**
  * Thrown when a premium-only task is called without an entitlement. Callers
@@ -89,7 +104,18 @@ async function postGemini<T>(body: Record<string, unknown>, signal?: AbortSignal
   }
   // `isPremium()` is synchronous and returns true whenever billing is
   // unconfigured, so an unpaid build behaves exactly as it always has.
-  if (!FREE_TASKS.has(String(body.task ?? '')) && !isPremium()) {
+  const task = String(body.task ?? '');
+  const free = FREE_TASKS.has(task);
+  const premium = isPremium();
+  // A metered task is allowed on the free allowance; anything else premium is
+  // not. `hasFreeAction()` is synchronous for the same reason `isPremium()` is
+  // — this decision happens before the request, and awaiting storage here would
+  // put a disk read in front of every AI call.
+  const metered = !free && !premium && METERED_TASKS.has(task);
+  if (!free && !premium && !metered) {
+    throw new Error(PREMIUM_REQUIRED);
+  }
+  if (metered && !hasFreeAction()) {
     throw new Error(PREMIUM_REQUIRED);
   }
   const response = await fetch(`${API_BASE_URL}/api/gemini`, {
@@ -113,7 +139,11 @@ async function postGemini<T>(body: Record<string, unknown>, signal?: AbortSignal
     }
     throw new Error(msg);
   }
-  return (await response.json()) as T;
+  const parsed = (await response.json()) as T;
+  // Charged only against work that actually came back. A dropped connection or
+  // a Worker error must never cost someone one of their free actions.
+  if (metered) void consumeAction();
+  return parsed;
 }
 
 /** Classify/title/tag an image (e.g. a screenshot) via the Gemini proxy. */

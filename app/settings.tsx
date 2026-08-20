@@ -60,6 +60,8 @@ import { useAuth } from '@/components/AuthProvider';
 import { deleteAccount, displayName } from '@/lib/auth';
 import { usePremium } from '@/components/PremiumProvider';
 import { restorePurchases } from '@/lib/billing';
+import { retentionCopy, situationFor } from '@/lib/retention';
+import { actionsRemaining, describeRemaining } from '@/lib/allowance';
 import {
   cancelSiloNotifications,
   requestNotificationPermission,
@@ -81,6 +83,7 @@ import { useTheme, useThemeColors, type AppearancePreference } from '@/lib/useTh
 import { UserSettings } from '@/lib/types';
 import {
   APP_VERSION,
+  FREE_AI_ACTIONS,
   PRICE_MONTHLY,
   PRICE_YEARLY,
   PRIVACY_URL,
@@ -96,19 +99,6 @@ const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
 /** Must match the server's SPACE_KEY_RE (workers/sync.ts). */
 const SPACE_KEY_RE = /^[A-Za-z0-9_-]{6,128}$/;
-
-/**
- * "Renews 4 Sep" vs "Ends 4 Sep" — a cancelled subscription that still says
- * "renews" is the kind of copy that generates support mail and refund requests.
- */
-function subscriptionStatus(e: { willRenew: boolean; expiresAt: string | null; inTrial: boolean }): string {
-  if (!e.expiresAt) return e.willRenew ? 'Renews automatically' : 'Active';
-  const when = new Date(e.expiresAt);
-  if (Number.isNaN(when.getTime())) return 'Active';
-  const date = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  if (e.inTrial) return e.willRenew ? `Trial — first charge ${date}` : `Trial ends ${date}`;
-  return e.willRenew ? `Renews ${date}` : `Ends ${date}`;
-}
 
 /**
  * Entrance order — every block on this screen animates in with the same
@@ -362,10 +352,14 @@ export default function Settings() {
     unavailable: billingUnavailable,
     isPremium,
     entitlement,
+    history: billingHistory,
     refresh: refreshPremium,
   } = usePremium();
   const [accountBusy, setAccountBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  /** Where this subscriber stands, and what we're allowed to say about it. */
+  const retention = situationFor(entitlement, billingHistory, billingConfigured);
+  const retentionMessage = retentionCopy(retention);
 
   // --- Sync section state (S1) ---
   const [sync, setSync] = useState<SyncState>({
@@ -799,13 +793,37 @@ export default function Settings() {
             sell anything, so an unconfigured clone shows no dead billing UI. */}
         {billingConfigured && !billingUnavailable && (
           <Section title="Subscription" index={ORDER.subscription}>
+            {/* The retention moments Silo can actually see. iOS never tells us a
+                cancellation is coming — we learn about it from a changed
+                entitlement — so this banner IS the intervention. It sits above
+                everything else in the section because by the time someone opens
+                Settings in one of these states, the decision is already live. */}
+            {retention.urgent && (
+              <Row
+                icon={
+                  retention.state === 'billingIssue' ? 'card-outline' : 'alert-circle-outline'
+                }
+                tint={retention.state === 'billingIssue' ? tint.danger : tint.brand}
+                label={retentionMessage.title}
+                sub={retentionMessage.body}
+                onPress={() =>
+                  retention.state === 'billingIssue'
+                    ? Linking.openURL(
+                        entitlement.managementUrl ??
+                          'https://apps.apple.com/account/subscriptions'
+                      )
+                    : router.push(`/paywall?context=${retention.paywallContext}`)
+                }
+              />
+            )}
+
             {isPremium ? (
               <>
                 <Row
                   icon="sparkles"
                   tint={tint.brand}
                   label={entitlement.inTrial ? 'Premium — free trial' : 'Silo Premium'}
-                  sub={subscriptionStatus(entitlement)}
+                  sub={retentionMessage.status}
                 />
                 <Row
                   icon="open-outline"
@@ -814,9 +832,12 @@ export default function Settings() {
                   sub="Change plan or cancel in the App Store"
                   divider={false}
                   onPress={() =>
-                    Linking.openURL(
-                      entitlement.managementUrl ?? 'https://apps.apple.com/account/subscriptions'
-                    )
+                    // One beat before Apple, never instead of it: the paywall
+                    // shown here carries a labelled "Manage subscription"
+                    // control straight to the App Store. Making someone hunt
+                    // for the way out is how a funnel gets rejected — and how a
+                    // quiet cancellation becomes a one-star review.
+                    router.push('/paywall?context=retention&manage=1')
                   }
                 />
               </>
@@ -825,10 +846,26 @@ export default function Settings() {
                 <Row
                   icon="sparkles"
                   tint={tint.brand}
-                  label="Upgrade to Premium"
+                  label={retention.state === 'lapsed' ? 'Bring Premium back' : 'Upgrade to Premium'}
                   sub={`AI titles, the assistant and smart scheduling · from ${PRICE_YEARLY}/yr or ${PRICE_MONTHLY}/mo`}
-                  onPress={() => router.push('/paywall')}
+                  onPress={() => router.push(`/paywall?context=${retention.paywallContext}`)}
                 />
+                {/* The free allowance, stated plainly. Someone deciding whether
+                    to pay deserves to know exactly how much of the paid layer
+                    they still have, and a number they can check is a far better
+                    argument than a claim we could make about the product. */}
+                {FREE_AI_ACTIONS > 0 && (
+                  <Row
+                    icon="flash-outline"
+                    tint={tint.ink}
+                    label="Free AI actions"
+                    sub={
+                      actionsRemaining() > 0
+                        ? `${describeRemaining()} of ${FREE_AI_ACTIONS}. Saving, stacks and every nudge stay free.`
+                        : 'All used. Saving, stacks and every nudge stay free.'
+                    }
+                  />
+                )}
                 <Row
                   icon="refresh-outline"
                   tint={tint.ink}
