@@ -202,19 +202,27 @@ degrades to a cross-fade under **Reduce Motion**.
 
 ## Website
 
-`site/` is the public site: a landing page plus the privacy policy and terms,
-which are rendered from `docs/legal/` (edit the markdown, not the HTML). The
-legal pages land at `/privacy/` and `/terms/`, the addresses `PRIVACY_URL` and
-`TERMS_URL` in `lib/config.ts` point at. `.github/workflows/pages.yml` builds it
-on every PR and deploys it to GitHub Pages on merge to `main`.
+`site/` is the public website: a Next.js landing page, exported as static files
+and hosted on GitHub Pages, plus the privacy policy and terms, which are rendered
+from `docs/legal/` at build time (edit the markdown, not the page). Those two land
+at `/privacy/` and `/terms/`, the addresses `PRIVACY_URL` and `TERMS_URL` in
+`lib/config.ts` point at. It is its own project (pnpm, its own lockfile), separate
+from the app's dependencies and excluded from the app's lint and type-check.
+
+`.github/workflows/pages.yml` builds it on every PR and deploys on merge to `main`.
 
 ```sh
-cd site && npm ci && npm run build   # output in site/dist
+cd site
+pnpm install
+pnpm dev                                         # http://localhost:3000
+NEXT_PUBLIC_BASE_PATH=/silo pnpm build           # exactly what CI builds, into site/out
 ```
 
 One-time setup: **Settings → Pages → Build and deployment → Source: GitHub
-Actions**. On a custom domain, set `SITE_URL` for the build so canonical and
-social-preview URLs match.
+Actions**. It is a static export, so there are no API routes; anything dynamic
+(like a real waitlist) needs a separate backend. To serve it from a custom domain
+instead, delete `NEXT_PUBLIC_BASE_PATH` from the workflow and add a `CNAME` file
+to `site/public/`.
 
 ## Quick start
 

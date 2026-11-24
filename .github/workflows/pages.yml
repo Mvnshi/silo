@@ -1,8 +1,8 @@
 name: Site
 
-# Builds site/ (landing page + the legal docs from docs/legal) and publishes it
-# to GitHub Pages. Pull requests only build, so a broken page is caught before
-# it merges; pushes to main also deploy.
+# Builds site/ (the Next.js landing page, plus the legal docs from docs/legal) as
+# a static export and publishes it to GitHub Pages. Pull requests only build, so a
+# broken page is caught before it merges; pushes to main also deploy.
 #
 # One-time setup: repo Settings -> Pages -> Build and deployment -> Source:
 # "GitHub Actions". Until that is set, the deploy job fails and nothing is live.
@@ -31,26 +31,39 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # A project site is served from https://<user>.github.io/silo/. Remove this
+      # line if the site moves to the root of a custom domain.
+      NEXT_PUBLIC_BASE_PATH: /silo
+      NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
+
+      # The pnpm version comes from "packageManager" in site/package.json.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: site/package.json
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: site/package-lock.json
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
 
       - name: Install
-        run: npm ci
+        run: pnpm install --frozen-lockfile
         working-directory: site
 
       - name: Build
-        run: npm run build
+        run: pnpm build
         working-directory: site
+
+      # Static output only; make sure Pages never runs it through Jekyll.
+      - run: touch site/out/.nojekyll
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site/dist
+          path: site/out
 
   deploy:
     if: github.event_name != 'pull_request'

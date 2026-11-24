@@ -30,7 +30,7 @@ module.exports = [
       '.expo/**',
       '.wrangler/**', // wrangler dev build artifacts
       'dist/**', // expo export output
-      'site/dist/**', // static site build output
+      'site/**', // the Next.js website: its own project, deps and tooling
       'expo-env.d.ts',
     ],
   },
