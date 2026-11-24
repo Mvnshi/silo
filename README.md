@@ -200,6 +200,22 @@ independently of the system setting.
 Motion lives in `lib/motion.ts` (`enterList`, `enterFromBottom`, `LAYOUT`, …) and
 degrades to a cross-fade under **Reduce Motion**.
 
+## Website
+
+`site/` is the public site: a landing page plus the privacy policy and terms,
+which are rendered from `docs/legal/` (edit the markdown, not the HTML). The
+legal pages land at `/privacy/` and `/terms/`, the addresses `PRIVACY_URL` and
+`TERMS_URL` in `lib/config.ts` point at. `.github/workflows/pages.yml` builds it
+on every PR and deploys it to GitHub Pages on merge to `main`.
+
+```sh
+cd site && npm ci && npm run build   # output in site/dist
+```
+
+One-time setup: **Settings → Pages → Build and deployment → Source: GitHub
+Actions**. On a custom domain, set `SITE_URL` for the build so canonical and
+social-preview URLs match.
+
 ## Quick start
 
 ```sh

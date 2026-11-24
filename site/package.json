@@ -1,0 +1,12 @@
+{
+  "name": "silo-site",
+  "private": true,
+  "type": "module",
+  "description": "Static site for Silo: landing page plus the privacy policy and terms rendered from docs/legal",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "marked": "15.0.12"
+  }
+}

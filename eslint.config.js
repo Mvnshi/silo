@@ -30,6 +30,7 @@ module.exports = [
       '.expo/**',
       '.wrangler/**', // wrangler dev build artifacts
       'dist/**', // expo export output
+      'site/dist/**', // static site build output
       'expo-env.d.ts',
     ],
   },
